@@ -290,8 +290,8 @@ public abstract class AbstractAWSProcessor<ClientType extends AmazonWebServiceCl
 
     @OnShutdown
     public void onShutdown() {
-    	if ( getClient() != null ) {
-    		getClient().shutdown();
-    	}
+        if ( getClient() != null ) {
+            getClient().shutdown();
+        }
     }
 }
