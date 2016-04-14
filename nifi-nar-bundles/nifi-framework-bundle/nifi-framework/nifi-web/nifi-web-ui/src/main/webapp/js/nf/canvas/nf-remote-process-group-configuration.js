@@ -36,7 +36,8 @@ nf.RemoteProcessGroupConfiguration = (function () {
                                     remoteProcessGroup: {
                                         id: remoteProcessGroupId,
                                         communicationsTimeout: $('#remote-process-group-timeout').val(),
-                                        yieldDuration: $('#remote-process-group-yield-duration').val()
+                                        yieldDuration: $('#remote-process-group-yield-duration').val(),
+                                        useHttp: $('#remote-process-group-use-http').hasClass('checkbox-checked')
                                     }
                                 };
 
@@ -94,6 +95,7 @@ nf.RemoteProcessGroupConfiguration = (function () {
                         $('#remote-process-group-url').text('');
                         $('#remote-process-group-timeout').val('');
                         $('#remote-process-group-yield-duration').val('');
+                        $('#remote-process-group-use-http').removeClass('checkbox-checked checkbox-unchecked');
                     }
                 }
             }).draggable({
@@ -120,6 +122,7 @@ nf.RemoteProcessGroupConfiguration = (function () {
                 // populate the text fields
                 $('#remote-process-group-timeout').val(selectionData.component.communicationsTimeout);
                 $('#remote-process-group-yield-duration').val(selectionData.component.yieldDuration);
+                $('#remote-process-group-use-http').addClass(selectionData.component.useHttp ? 'checkbox-checked' : 'checkbox-unchecked');
 
                 // show the details
                 $('#remote-process-group-configuration').modal('show');

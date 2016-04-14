@@ -50,5 +50,11 @@
                 <input type="text" id="remote-process-group-yield-duration"/>
             </div>
         </div>
+        <div class="setting">
+            <div class="use-http-container">
+                <div id="remote-process-group-use-http" class="nf-checkbox checkbox-unchecked"></div>
+                <span>Use HTTP</span>
+            </div>
+        </div>
     </div>
 </div>

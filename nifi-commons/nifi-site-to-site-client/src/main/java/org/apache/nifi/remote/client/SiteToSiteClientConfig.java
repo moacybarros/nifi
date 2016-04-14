@@ -99,6 +99,8 @@ public interface SiteToSiteClientConfig extends Serializable {
      */
     boolean isUseCompression();
 
+    boolean isUseHttp();
+
     /**
      * @return the name of the port that the client is to communicate with
      */

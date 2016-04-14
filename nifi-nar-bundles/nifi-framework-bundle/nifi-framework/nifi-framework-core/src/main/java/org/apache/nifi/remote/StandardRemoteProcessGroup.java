@@ -110,6 +110,7 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
     private volatile String communicationsTimeout = "30 sec";
     private volatile String targetId;
     private volatile String yieldDuration = "10 sec";
+    private boolean useHttp;
 
     private final ReadWriteLock rwLock = new ReentrantReadWriteLock();
     private final Lock readLock = rwLock.readLock();
@@ -221,6 +222,10 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
 
     public void setTargetId(final String targetId) {
         this.targetId = targetId;
+    }
+
+    public void setUseHttp(final boolean useHttp){
+        this.useHttp = useHttp;
     }
 
     /**
@@ -1067,6 +1072,11 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
         } finally {
             readLock.unlock();
         }
+    }
+
+    @Override
+    public boolean isUseHttp() {
+        return useHttp;
     }
 
     @Override

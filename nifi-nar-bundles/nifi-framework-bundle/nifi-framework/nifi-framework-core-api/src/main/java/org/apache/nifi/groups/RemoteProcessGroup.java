@@ -137,6 +137,10 @@ public interface RemoteProcessGroup {
      */
     boolean isSecure() throws CommunicationsException;
 
+    boolean isUseHttp();
+
+    void setUseHttp(boolean useHttp);
+
     /**
      * @return Indicates whether or not communications with this RemoteProcessGroup will
      * be secure (2-way authentication). Returns null if unknown.

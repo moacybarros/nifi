@@ -254,6 +254,7 @@ public class FlowFromDOMFactory {
         dto.setPosition(getPosition(DomUtils.getChild(element, "position")));
         dto.setCommunicationsTimeout(getString(element, "timeout"));
         dto.setComments(getString(element, "comment"));
+        dto.setUseHttp(getBoolean(element, "useHttp"));
 
         return dto;
     }
@@ -330,6 +331,7 @@ public class FlowFromDOMFactory {
         descriptor.setConcurrentlySchedulableTaskCount(getInt(element, "maxConcurrentTasks"));
         descriptor.setUseCompression(getBoolean(element, "useCompression"));
         descriptor.setTransmitting("RUNNING".equalsIgnoreCase(getString(element, "scheduledState")));
+        // TODO: I think I should add useHttp here, too.
 
         return descriptor;
     }
