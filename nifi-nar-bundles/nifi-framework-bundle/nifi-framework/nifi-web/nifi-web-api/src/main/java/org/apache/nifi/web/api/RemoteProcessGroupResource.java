@@ -1003,7 +1003,8 @@ public class RemoteProcessGroupResource extends ApplicationResource {
             @FormParam("x") DoubleParameter x,
             @FormParam("y") DoubleParameter y,
             @FormParam("communicationsTimeout") String communicationsTimeout,
-            @FormParam("yieldDuration") String yieldDuration) {
+            @FormParam("yieldDuration") String yieldDuration,
+            @FormParam("useHttp") boolean useHttp) {
 
         // create the remote process group DTO
         final RemoteProcessGroupDTO remoteProcessGroup = new RemoteProcessGroupDTO();
@@ -1011,6 +1012,7 @@ public class RemoteProcessGroupResource extends ApplicationResource {
         remoteProcessGroup.setTransmitting(isTransmitting);
         remoteProcessGroup.setCommunicationsTimeout(communicationsTimeout);
         remoteProcessGroup.setYieldDuration(yieldDuration);
+        remoteProcessGroup.setUseHttp(useHttp);
 
         // require both coordinates to be specified
         if (x != null && y != null) {

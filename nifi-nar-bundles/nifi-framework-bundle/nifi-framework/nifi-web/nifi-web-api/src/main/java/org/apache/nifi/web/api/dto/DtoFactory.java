@@ -1363,6 +1363,7 @@ public final class DtoFactory {
         dto.setTargetUri(group.getTargetUri().toString());
         dto.setFlowRefreshed(group.getLastRefreshTime());
         dto.setContents(contents);
+        dto.setUseHttp(group.isUseHttp());
 
         // only specify the secure flag if we know the target system has site to site enabled
         if (group.isSiteToSiteEnabled()) {
@@ -2346,6 +2347,7 @@ public final class DtoFactory {
         copy.setParentGroupId(original.getParentGroupId());
         copy.setTargetUri(original.getTargetUri());
         copy.setUri(original.getUri());
+        copy.setUseHttp(original.isUseHttp());
 
         copy.setContents(copyContents);
 

@@ -343,6 +343,8 @@ public class StandardRemoteProcessGroupDAO extends ComponentDAO implements Remot
             remoteProcessGroup.setPosition(new Position(remoteProcessGroupDTO.getPosition().getX(), remoteProcessGroupDTO.getPosition().getY()));
         }
 
+        remoteProcessGroup.setUseHttp(remoteProcessGroupDTO.isUseHttp());
+
         final Boolean isTransmitting = remoteProcessGroupDTO.isTransmitting();
         if (isNotNull(isTransmitting)) {
             // start or stop as necessary

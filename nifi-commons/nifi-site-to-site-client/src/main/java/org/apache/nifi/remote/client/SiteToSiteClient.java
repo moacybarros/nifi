@@ -33,6 +33,7 @@ import javax.net.ssl.TrustManagerFactory;
 import org.apache.nifi.events.EventReporter;
 import org.apache.nifi.remote.Transaction;
 import org.apache.nifi.remote.TransferDirection;
+import org.apache.nifi.remote.client.http.HttpClient;
 import org.apache.nifi.remote.client.socket.SocketClient;
 import org.apache.nifi.remote.exception.HandshakeException;
 import org.apache.nifi.remote.exception.PortNotRunningException;
@@ -163,6 +164,8 @@ public interface SiteToSiteClient extends Closeable {
         private int batchCount;
         private long batchSize;
         private long batchNanos;
+        // TODO: I should create an Enum representing available protocol.
+        private boolean useHttp;
 
         /**
          * Populates the builder with values from the provided config
@@ -185,6 +188,7 @@ public interface SiteToSiteClient extends Closeable {
             this.eventReporter = config.getEventReporter();
             this.peerPersistenceFile = config.getPeerPersistenceFile();
             this.useCompression = config.isUseCompression();
+            this.useHttp = config.isUseHttp();
             this.portName = config.getPortName();
             this.portIdentifier = config.getPortIdentifier();
             this.batchCount = config.getPreferredBatchCount();
@@ -440,6 +444,11 @@ public interface SiteToSiteClient extends Closeable {
             return this;
         }
 
+        public Builder useHttp(final boolean useHttp) {
+            this.useHttp = useHttp;
+            return this;
+        }
+
         /**
          * Specifies the name of the port to communicate with. Either the port
          * name or the port identifier must be specified.
@@ -532,6 +541,9 @@ public interface SiteToSiteClient extends Closeable {
                 throw new IllegalStateException("Must specify either Port Name or Port Identifier to build Site-to-Site client");
             }
 
+            if(isUseHttp()){
+                return new HttpClient(buildConfig());
+            }
             return new SocketClient(buildConfig());
         }
 
@@ -650,6 +662,10 @@ public interface SiteToSiteClient extends Closeable {
             return useCompression;
         }
 
+        public boolean isUseHttp() {
+            return useHttp;
+        }
+
         /**
          * @return the name of the port that the client is to communicate with
          */
@@ -685,6 +701,7 @@ public interface SiteToSiteClient extends Closeable {
         private final EventReporter eventReporter;
         private final File peerPersistenceFile;
         private final boolean useCompression;
+        private final boolean useHttp;
         private final String portName;
         private final String portIdentifier;
         private final int batchCount;
@@ -712,6 +729,7 @@ public interface SiteToSiteClient extends Closeable {
             this.batchCount = 0;
             this.batchSize = 0;
             this.batchNanos = 0;
+            this.useHttp = false;
         }
 
         private StandardSiteToSiteClientConfig(final SiteToSiteClient.Builder builder) {
@@ -734,11 +752,17 @@ public interface SiteToSiteClient extends Closeable {
             this.batchCount = builder.batchCount;
             this.batchSize = builder.batchSize;
             this.batchNanos = builder.batchNanos;
+            this.useHttp = builder.isUseHttp();
         }
 
         @Override
         public boolean isUseCompression() {
             return useCompression;
+        }
+
+        @Override
+        public boolean isUseHttp() {
+            return useHttp;
         }
 
         @Override
