@@ -37,6 +37,7 @@ import java.util.zip.GZIPInputStream;
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletContext;
 import javax.servlet.ServletException;
+import javax.servlet.ServletOutputStream;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -45,6 +46,7 @@ import javax.ws.rs.core.MediaType;
 
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
+import org.apache.nifi.processor.io.InputStreamCallback;
 import org.apache.nifi.stream.io.BufferedOutputStream;
 import org.apache.nifi.stream.io.StreamThrottler;
 import org.apache.nifi.logging.ProcessorLog;
@@ -115,6 +117,38 @@ public class ListenHTTPServlet extends HttpServlet {
         response.addHeader(ACCEPT_ENCODING_NAME, ACCEPT_ENCODING_VALUE);
         response.addHeader(ACCEPT_HEADER_NAME, ACCEPT_HEADER_VALUE);
         response.addHeader(PROTOCOL_VERSION_HEADER, PROTOCOL_VERSION);
+    }
+
+    @Override
+    protected void doGet(HttpServletRequest req, final HttpServletResponse resp) throws ServletException, IOException {
+        ProcessSessionFactory sessionFactory;
+        do {
+            sessionFactory = sessionFactoryHolder.get();
+            if (sessionFactory == null) {
+                try {
+                    Thread.sleep(10);
+                } catch (final InterruptedException e) {
+                }
+            }
+        } while (sessionFactory == null);
+
+        final ProcessSession session = sessionFactory.createSession();
+        final FlowFile flowFile = session.get();
+        if(flowFile == null){
+            resp.sendError(HttpServletResponse.SC_NOT_MODIFIED);
+            return;
+        }
+
+        session.read(flowFile, new InputStreamCallback() {
+            @Override
+            public void process(InputStream in) throws IOException {
+                ServletOutputStream out = resp.getOutputStream();
+                IOUtils.copy(in, out);
+                out.flush();
+            }
+        });
+        session.transfer(flowFile, ListenHTTP.RELATIONSHIP_TRANSFERRED);
+        session.commit();
     }
 
     @Override

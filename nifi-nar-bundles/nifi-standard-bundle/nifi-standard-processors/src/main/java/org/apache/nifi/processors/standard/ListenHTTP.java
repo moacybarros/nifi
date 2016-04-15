@@ -63,7 +63,7 @@ import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
 
-@InputRequirement(Requirement.INPUT_FORBIDDEN)
+@InputRequirement(Requirement.INPUT_ALLOWED)
 @Tags({"ingest", "http", "https", "rest", "listen"})
 @CapabilityDescription("Starts an HTTP Server that is used to receive FlowFiles from remote sources. The default URI of the Service will be http://{hostname}:{port}/contentListener")
 public class ListenHTTP extends AbstractSessionFactoryProcessor {
@@ -75,6 +75,11 @@ public class ListenHTTP extends AbstractSessionFactoryProcessor {
         .name("success")
         .description("Relationship for successfully received FlowFiles")
         .build();
+
+    public static final Relationship RELATIONSHIP_TRANSFERRED = new Relationship.Builder()
+            .name("transferred")
+            .description("Relationship for successfully transferred FlowFiles to HTTP client")
+            .build();
 
     public static final PropertyDescriptor BASE_PATH = new PropertyDescriptor.Builder()
         .name("Base Path")
@@ -141,6 +146,7 @@ public class ListenHTTP extends AbstractSessionFactoryProcessor {
     protected void init(final ProcessorInitializationContext context) {
         final Set<Relationship> relationships = new HashSet<>();
         relationships.add(RELATIONSHIP_SUCCESS);
+        relationships.add(RELATIONSHIP_TRANSFERRED);
         this.relationships = Collections.unmodifiableSet(relationships);
 
         final List<PropertyDescriptor> descriptors = new ArrayList<>();
