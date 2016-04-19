@@ -272,11 +272,7 @@
         <property name="kerberosService" ref="kerberosService"/>
     </bean>
     <bean id="siteToSiteResource" class="org.apache.nifi.web.api.SiteToSiteResource" scope="singleton">
-        <property name="serviceFacade" ref="serviceFacade"/>
-        <property name="properties" ref="nifiProperties"/>
-        <property name="clusterManager" ref="clusterManager"/>
-    </bean>
-    <bean id="siteToSiteResource" class="org.apache.nifi.web.api.SiteToSiteResource" scope="singleton">
+        <property name="controllerFacade" ref="controllerFacade"/>
         <property name="serviceFacade" ref="serviceFacade"/>
         <property name="properties" ref="nifiProperties"/>
         <property name="clusterManager" ref="clusterManager"/>

@@ -23,14 +23,21 @@ import org.apache.nifi.remote.protocol.CommunicationsInput;
 import org.apache.nifi.remote.protocol.CommunicationsOutput;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.channels.SocketChannel;
 
 public class HttpCommunicationsSession extends AbstractCommunicationsSession {
 
     private int timeout = 30000;
 
-    public HttpCommunicationsSession(final String uri) {
-        super(uri);
+    private final HttpInput input;
+    private final HttpOutput output;
+
+    public HttpCommunicationsSession(InputStream inputStream, OutputStream outputStream){
+        super(null);
+        this.input = new HttpInput(inputStream);
+        this.output = new HttpOutput(outputStream);
     }
 
     @Override
@@ -45,12 +52,12 @@ public class HttpCommunicationsSession extends AbstractCommunicationsSession {
 
     @Override
     public CommunicationsInput getInput() {
-        return null;
+        return input;
     }
 
     @Override
     public CommunicationsOutput getOutput() {
-        return null;
+        return output;
     }
 
     @Override
@@ -70,7 +77,6 @@ public class HttpCommunicationsSession extends AbstractCommunicationsSession {
 
     @Override
     public void interrupt() {
-
     }
 
     @Override

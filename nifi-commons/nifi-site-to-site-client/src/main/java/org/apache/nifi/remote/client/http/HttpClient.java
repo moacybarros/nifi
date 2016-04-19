@@ -61,7 +61,8 @@ public class HttpClient extends AbstractSiteToSiteClient {
         PeerDTO peerDTO = peers.iterator().next();
 
         PeerDescription description = new PeerDescription(peerDTO.getHostname(), peerDTO.getPort(), peerDTO.isSecure());
-        CommunicationsSession commSession = new HttpCommunicationsSession(apiUri);
+        CommunicationsSession commSession = new HttpCommunicationsSession(null, null);
+        commSession.setUri(apiUri);
         Peer peer =  new Peer(description, commSession, apiUri, clusterUrl);
 
         HttpClientTransaction transaction = new HttpClientTransaction(peer);
