@@ -306,6 +306,7 @@ public class StandardRemoteProcessGroupDAO extends ComponentDAO implements Remot
         final String comments = remoteProcessGroupDTO.getComments();
         final String communicationsTimeout = remoteProcessGroupDTO.getCommunicationsTimeout();
         final String yieldDuration = remoteProcessGroupDTO.getYieldDuration();
+        final Boolean useHttp = remoteProcessGroupDTO.isUseHttp();
 
         if (isNotNull(name)) {
             remoteProcessGroup.setName(name);
@@ -322,8 +323,9 @@ public class StandardRemoteProcessGroupDAO extends ComponentDAO implements Remot
         if (isNotNull(remoteProcessGroupDTO.getPosition())) {
             remoteProcessGroup.setPosition(new Position(remoteProcessGroupDTO.getPosition().getX(), remoteProcessGroupDTO.getPosition().getY()));
         }
-
-        remoteProcessGroup.setUseHttp(remoteProcessGroupDTO.isUseHttp());
+        if (isNotNull(useHttp)) {
+            remoteProcessGroup.setUseHttp(useHttp);
+        }
 
         final Boolean isTransmitting = remoteProcessGroupDTO.isTransmitting();
         if (isNotNull(isTransmitting)) {

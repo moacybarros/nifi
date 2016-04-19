@@ -19,7 +19,9 @@ package org.apache.nifi.remote.util;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.HttpURLConnection;
+import java.net.URI;
 import java.net.URL;
+import java.util.Collection;
 
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.HttpsURLConnection;
@@ -28,7 +30,9 @@ import javax.net.ssl.SSLSession;
 
 import org.apache.nifi.stream.io.StreamUtils;
 import org.apache.nifi.web.api.dto.ControllerDTO;
-import org.codehaus.jackson.JsonNode;
+import org.apache.nifi.web.api.dto.remote.PeerDTO;
+import org.apache.nifi.web.api.entity.ControllerEntity;
+import org.apache.nifi.web.api.entity.PeersEntity;
 import org.codehaus.jackson.map.ObjectMapper;
 
 public class NiFiRestApiUtil {
@@ -60,7 +64,7 @@ public class NiFiRestApiUtil {
         return connection;
     }
 
-    public ControllerDTO getController(final String url, final int timeoutMillis) throws IOException {
+    private <T> T getEntity(final String url, final Class<T> entityClass, final int timeoutMillis) throws IOException {
         final HttpURLConnection connection = getConnection(url, timeoutMillis);
         connection.setRequestMethod("GET");
         final int responseCode = connection.getResponseCode();
@@ -71,12 +75,18 @@ public class NiFiRestApiUtil {
 
         if (responseCode == RESPONSE_CODE_OK) {
             final ObjectMapper mapper = new ObjectMapper();
-            final JsonNode jsonNode = mapper.readTree(responseMessage);
-            final JsonNode controllerNode = jsonNode.get("controller");
-            return mapper.readValue(controllerNode, ControllerDTO.class);
+            return mapper.readValue(responseMessage, entityClass);
         } else {
             throw new IOException("Got HTTP response Code " + responseCode + ": " + connection.getResponseMessage() + " with explanation: " + responseMessage);
         }
+    }
+
+    public ControllerDTO getController(final String url, final int timeoutMillis) throws IOException {
+        return getEntity(url, ControllerEntity.class, timeoutMillis).getController();
+    }
+
+    public Collection<PeerDTO> getPeers(final String url, final int timeoutMillis) throws IOException {
+        return getEntity(url, PeersEntity.class, timeoutMillis).getPeers();
     }
 
     private static class OverrideHostnameVerifier implements HostnameVerifier {
@@ -96,5 +106,14 @@ public class NiFiRestApiUtil {
             }
             return delegate.verify(hostname, session);
         }
+    }
+
+    public static String resolveApiUri(URI clusterUrl) {
+        String uriPath = clusterUrl.getPath();
+        if (uriPath.endsWith("/")) {
+            uriPath = uriPath.substring(0, uriPath.length() - 1);
+        }
+        String apiUri = clusterUrl.getScheme() + "://" + clusterUrl.getHost() + ":" + clusterUrl.getPort() + uriPath + "-api";
+        return apiUri;
     }
 }
