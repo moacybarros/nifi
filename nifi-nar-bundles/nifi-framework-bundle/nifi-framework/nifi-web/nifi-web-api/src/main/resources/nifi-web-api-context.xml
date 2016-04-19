@@ -267,6 +267,11 @@
         <property name="kerberosService" ref="kerberosService"/>
         <property name="userDetailsService" ref="userDetailsService"/>
     </bean>
+    <bean id="siteToSiteResource" class="org.apache.nifi.web.api.SiteToSiteResource" scope="singleton">
+        <property name="serviceFacade" ref="serviceFacade"/>
+        <property name="properties" ref="nifiProperties"/>
+        <property name="clusterManager" ref="clusterManager"/>
+    </bean>
 
     <!-- configuration for jaxb serialization -->
     <bean class="org.apache.nifi.web.util.ObjectMapperResolver" scope="singleton"/>

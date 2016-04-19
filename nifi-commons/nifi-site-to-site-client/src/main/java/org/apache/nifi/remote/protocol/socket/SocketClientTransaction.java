@@ -16,21 +16,19 @@
  */
 package org.apache.nifi.remote.protocol.socket;
 
-import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.Map;
 import java.util.zip.CRC32;
 import java.util.zip.CheckedInputStream;
 import java.util.zip.CheckedOutputStream;
 
 import org.apache.nifi.events.EventReporter;
-import org.apache.nifi.remote.Communicant;
+import org.apache.nifi.remote.AbstractTransaction;
+import org.apache.nifi.remote.ClientTransactionCompletion;
 import org.apache.nifi.remote.Peer;
-import org.apache.nifi.remote.Transaction;
 import org.apache.nifi.remote.TransactionCompletion;
 import org.apache.nifi.remote.TransferDirection;
 import org.apache.nifi.remote.codec.FlowFileCodec;
@@ -39,12 +37,11 @@ import org.apache.nifi.remote.io.CompressionInputStream;
 import org.apache.nifi.remote.io.CompressionOutputStream;
 import org.apache.nifi.remote.protocol.DataPacket;
 import org.apache.nifi.remote.protocol.RequestType;
-import org.apache.nifi.remote.util.StandardDataPacket;
 import org.apache.nifi.reporting.Severity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class SocketClientTransaction implements Transaction {
+public class SocketClientTransaction extends AbstractTransaction {
 
     private static final Logger logger = LoggerFactory.getLogger(SocketClientTransaction.class);
 
@@ -56,7 +53,6 @@ public class SocketClientTransaction implements Transaction {
     private final DataOutputStream dos;
     private final TransferDirection direction;
     private final boolean compress;
-    private final Peer peer;
     private final int penaltyMillis;
     private final String destinationId;
     private final EventReporter eventReporter;
@@ -64,19 +60,17 @@ public class SocketClientTransaction implements Transaction {
     private boolean dataAvailable = false;
     private int transfers = 0;
     private long contentBytes = 0;
-    private TransactionState state;
 
     SocketClientTransaction(final int protocolVersion, final String destinationId, final Peer peer, final FlowFileCodec codec,
             final TransferDirection direction, final boolean useCompression, final int penaltyMillis, final EventReporter eventReporter) throws IOException {
+        super(peer);
         this.protocolVersion = protocolVersion;
         this.destinationId = destinationId;
-        this.peer = peer;
         this.codec = codec;
         this.direction = direction;
         this.dis = new DataInputStream(peer.getCommunicationsSession().getInput().getInputStream());
         this.dos = new DataOutputStream(peer.getCommunicationsSession().getOutput().getOutputStream());
         this.compress = useCompression;
-        this.state = TransactionState.TRANSACTION_STARTED;
         this.penaltyMillis = penaltyMillis;
         this.eventReporter = eventReporter;
 
@@ -178,11 +172,6 @@ public class SocketClientTransaction implements Transaction {
     }
 
     @Override
-    public void send(final byte[] content, final Map<String, String> attributes) throws IOException {
-        send(new StandardDataPacket(attributes, new ByteArrayInputStream(content), content.length));
-    }
-
-    @Override
     public void send(final DataPacket dataPacket) throws IOException {
         try {
             try {
@@ -251,7 +240,7 @@ public class SocketClientTransaction implements Transaction {
                 if (direction == TransferDirection.RECEIVE) {
                     if (transfers == 0) {
                         state = TransactionState.TRANSACTION_COMPLETED;
-                        return new SocketClientTransactionCompletion(false, 0, 0L, System.nanoTime() - creationNanoTime);
+                        return new ClientTransactionCompletion(false, 0, 0L, System.nanoTime() - creationNanoTime);
                     }
 
                     // Confirm that we received the data and the peer can now discard it
@@ -279,7 +268,7 @@ public class SocketClientTransaction implements Transaction {
                     state = TransactionState.TRANSACTION_COMPLETED;
                 }
 
-                return new SocketClientTransactionCompletion(backoff, transfers, contentBytes, System.nanoTime() - creationNanoTime);
+                return new ClientTransactionCompletion(backoff, transfers, contentBytes, System.nanoTime() - creationNanoTime);
             } catch (final IOException ioe) {
                 throw new IOException("Failed to complete transaction with " + peer + " due to " + ioe, ioe);
             }
@@ -382,21 +371,6 @@ public class SocketClientTransaction implements Transaction {
             error();
             throw e;
         }
-    }
-
-    @Override
-    public void error() {
-        this.state = TransactionState.ERROR;
-    }
-
-    @Override
-    public TransactionState getState() {
-        return state;
-    }
-
-    @Override
-    public Communicant getCommunicant() {
-        return peer;
     }
 
     @Override

@@ -17,48 +17,65 @@
 package org.apache.nifi.remote.client.http;
 
 import org.apache.nifi.remote.*;
-import org.apache.nifi.remote.client.SiteToSiteClient;
+import org.apache.nifi.remote.client.AbstractSiteToSiteClient;
 import org.apache.nifi.remote.client.SiteToSiteClientConfig;
-import org.apache.nifi.remote.client.socket.EndpointConnection;
-import org.apache.nifi.remote.client.socket.EndpointConnectionPool;
 import org.apache.nifi.remote.exception.HandshakeException;
 import org.apache.nifi.remote.exception.PortNotRunningException;
 import org.apache.nifi.remote.exception.ProtocolException;
 import org.apache.nifi.remote.exception.UnknownPortException;
-import org.apache.nifi.remote.protocol.DataPacket;
-import org.apache.nifi.util.ObjectHolder;
+import org.apache.nifi.remote.io.http.HttpCommunicationsSession;
+import org.apache.nifi.remote.protocol.CommunicationsSession;
+import org.apache.nifi.remote.protocol.http.HttpClientTransaction;
+import org.apache.nifi.remote.util.NiFiRestApiUtil;
+import org.apache.nifi.web.api.dto.remote.PeerDTO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.util.Map;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.Collection;
 import java.util.concurrent.TimeUnit;
 
-public class HttpClient implements SiteToSiteClient {
+public class HttpClient extends AbstractSiteToSiteClient {
 
     private static final Logger logger = LoggerFactory.getLogger(HttpClient.class);
 
     public HttpClient(final SiteToSiteClientConfig config) {
-        logger.info("### creating new HttpClient, config=" + config, new RuntimeException());
+        super(config);
     }
 
     @Override
     public Transaction createTransaction(TransferDirection direction) throws HandshakeException, PortNotRunningException, ProtocolException, UnknownPortException, IOException {
-        return null;
+        String apiUri = null;
+        String clusterUrl = config.getUrl();
+        try {
+            apiUri = NiFiRestApiUtil.resolveApiUri(new URI(clusterUrl)) + "/site-to-site/peers";
+        } catch (URISyntaxException e){
+            throw new IllegalArgumentException("Invalid Cluster URL: " + clusterUrl);
+        }
+        logger.info("### sending API request to " + apiUri);
+        NiFiRestApiUtil apiUtil = new NiFiRestApiUtil(config.getSslContext());
+        Collection<PeerDTO> peers = apiUtil.getPeers(apiUri, (int) config.getTimeout(TimeUnit.MILLISECONDS));
+        logger.info("### Got peers: " + peers);
+        PeerDTO peerDTO = peers.iterator().next();
+
+        PeerDescription description = new PeerDescription(peerDTO.getHostname(), peerDTO.getPort(), peerDTO.isSecure());
+        CommunicationsSession commSession = new HttpCommunicationsSession(apiUri);
+        Peer peer =  new Peer(description, commSession, apiUri, clusterUrl);
+
+        HttpClientTransaction transaction = new HttpClientTransaction(peer);
+        return transaction;
     }
 
     @Override
     public boolean isSecure() throws IOException {
+        // TODO: check config.
         return false;
     }
 
     @Override
-    public SiteToSiteClientConfig getConfig() {
-        return null;
-    }
-
-    @Override
     public void close() throws IOException {
-
+        // TODO: Do we have anything to clean up here? If we adopt connection pooling
     }
 }

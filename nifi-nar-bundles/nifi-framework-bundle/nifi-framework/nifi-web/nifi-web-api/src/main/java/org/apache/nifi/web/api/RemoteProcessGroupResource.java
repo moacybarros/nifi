@@ -1004,7 +1004,7 @@ public class RemoteProcessGroupResource extends ApplicationResource {
             @FormParam("y") DoubleParameter y,
             @FormParam("communicationsTimeout") String communicationsTimeout,
             @FormParam("yieldDuration") String yieldDuration,
-            @FormParam("useHttp") boolean useHttp) {
+            @FormParam("useHttp") Boolean useHttp) {
 
         // create the remote process group DTO
         final RemoteProcessGroupDTO remoteProcessGroup = new RemoteProcessGroupDTO();

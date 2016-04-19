@@ -36,7 +36,7 @@ public class RemoteProcessGroupDTO extends NiFiComponentDTO {
     private String comments;
     private String communicationsTimeout;
     private String yieldDuration;
-    private boolean useHttp;
+    private Boolean useHttp;
 
     private List<String> authorizationIssues;
     private Boolean transmitting;
@@ -162,11 +162,11 @@ public class RemoteProcessGroupDTO extends NiFiComponentDTO {
         this.communicationsTimeout = communicationsTimeout;
     }
 
-    public boolean isUseHttp() {
+    public Boolean isUseHttp() {
         return useHttp;
     }
 
-    public void setUseHttp(boolean useHttp) {
+    public void setUseHttp(Boolean useHttp) {
         this.useHttp = useHttp;
     }
 

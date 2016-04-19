@@ -148,11 +148,7 @@ public class EndpointConnectionPool {
         }
 
         // Trim the trailing /
-        String uriPath = this.clusterUrl.getPath();
-        if (uriPath.endsWith("/")) {
-            uriPath = uriPath.substring(0, uriPath.length() - 1);
-        }
-        apiUri = this.clusterUrl.getScheme() + "://" + this.clusterUrl.getHost() + ":" + this.clusterUrl.getPort() + uriPath + "-api";
+        apiUri = NiFiRestApiUtil.resolveApiUri(this.clusterUrl);
 
         this.remoteDestination = remoteDestination;
         this.sslContext = sslContext;
