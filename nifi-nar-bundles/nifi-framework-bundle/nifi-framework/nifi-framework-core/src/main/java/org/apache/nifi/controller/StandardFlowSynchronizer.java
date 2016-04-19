@@ -913,6 +913,10 @@ public class StandardFlowSynchronizer implements FlowSynchronizer {
                 remoteGroup.setYieldDuration(remoteGroupDto.getYieldDuration());
             }
 
+            if (remoteGroupDto.isUseHttp() != null) {
+                remoteGroup.setUseHttp(remoteGroupDto.isUseHttp());
+            }
+
             final Set<RemoteProcessGroupPortDescriptor> inputPorts = new HashSet<>();
             for (final Element portElement : getChildrenByTagName(remoteProcessGroupElement, "inputPort")) {
                 inputPorts.add(FlowFromDOMFactory.getRemoteProcessGroupPort(portElement));

@@ -29,7 +29,6 @@ import org.apache.nifi.web.api.entity.PeersEntity;
 import org.apache.nifi.web.api.request.ClientIdParameter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.security.access.prepost.PreAuthorize;
 
 import javax.ws.rs.*;
 import javax.ws.rs.core.Context;
@@ -69,7 +68,7 @@ public class SiteToSiteResource extends ApplicationResource {
     @Path("/peers")
     @Consumes(MediaType.WILDCARD)
     @Produces({MediaType.APPLICATION_JSON, MediaType.APPLICATION_XML})
-    @PreAuthorize("hasRole('ROLE_NIFI')")
+    // TODO: @PreAuthorize("hasRole('ROLE_NIFI')")
     @ApiOperation(
             value = "Returns the details about this NiFi necessary to communicate via site to site",
             response = ControllerEntity.class,

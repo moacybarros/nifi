@@ -229,6 +229,7 @@ public class StandardFlowSerializer implements FlowSerializer {
         addTextElement(element, "timeout", remoteRef.getCommunicationsTimeout());
         addTextElement(element, "yieldPeriod", remoteRef.getYieldDuration());
         addTextElement(element, "transmitting", String.valueOf(remoteRef.isTransmitting()));
+        addTextElement(element, "useHttp", String.valueOf(remoteRef.isUseHttp()));
 
         for (final RemoteGroupPort port : remoteRef.getInputPorts()) {
             if (port.hasIncomingConnection()) {
