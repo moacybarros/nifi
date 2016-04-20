@@ -37,14 +37,13 @@ public class HttpFlowFileCodec implements FlowFileCodec {
 
     @Override
     public void encode(final DataPacket dataPacket, final OutputStream outStream) throws IOException {
-        // TODO: This encoding is written in SiteToSiteRestApiUtil directly for now.
         setAttributes(dataPacket.getAttributes());
         StreamUtils.copy(dataPacket.getData(), outStream);
-        outStream.flush();
     }
 
     @Override
     public DataPacket decode(final InputStream stream) throws IOException, ProtocolException {
+        // TODO: This encoding is written in SiteToSiteRestApiUtil directly for now.
         if(numBytes < 0L) {
             throw new ProtocolException("numBytes should be set based on HTTP request's content-length before decoding input stream.");
         }
@@ -72,5 +71,9 @@ public class HttpFlowFileCodec implements FlowFileCodec {
 
     public void setAttributes(Map<String, String> attributes) {
         this.attributes = attributes;
+    }
+
+    public Map<String, String> getAttributes() {
+        return attributes;
     }
 }

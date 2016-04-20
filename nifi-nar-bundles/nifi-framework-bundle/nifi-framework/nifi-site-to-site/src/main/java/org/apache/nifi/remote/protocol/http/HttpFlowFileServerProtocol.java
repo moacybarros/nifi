@@ -109,8 +109,8 @@ public class HttpFlowFileServerProtocol implements ServerProtocol {
     public int transferFlowFiles(final Peer peer, final ProcessContext context, final ProcessSession session, final FlowFileCodec codec) throws IOException, ProtocolException {
         logger.debug("{} Sending FlowFiles to {}", this, peer);
         final CommunicationsSession commsSession = peer.getCommunicationsSession();
-        final DataInputStream dis = new DataInputStream(commsSession.getInput().getInputStream());
-        final DataOutputStream dos = new DataOutputStream(commsSession.getOutput().getOutputStream());
+        final InputStream is = commsSession.getInput().getInputStream();
+        final OutputStream os = commsSession.getOutput().getOutputStream();
         String remoteDn = commsSession.getUserDn();
         if (remoteDn == null) {
             remoteDn = "none";
@@ -120,126 +120,61 @@ public class HttpFlowFileServerProtocol implements ServerProtocol {
         if (flowFile == null) {
             // we have no data to send. Notify the peer.
             logger.debug("{} No data to send to {}", this, peer);
-            ResponseCode.NO_MORE_DATA.writeResponse(dos);
             return 0;
         }
 
         // we have data to send.
         logger.debug("{} Data is available to send to {}", this, peer);
-        ResponseCode.MORE_DATA.writeResponse(dos);
 
         final StopWatch stopWatch = new StopWatch(true);
         long bytesSent = 0L;
-        final Set<FlowFile> flowFilesSent = new HashSet<>();
-        final CRC32 crc = new CRC32();
 
-        // send data until we reach some batch size
-        boolean continueTransaction = true;
-        final long startNanos = System.nanoTime();
-        String calculatedCRC = "";
-        while (continueTransaction) {
-            final OutputStream flowFileOutputStream = dos;
-            logger.debug("{} Sending {} to {}", new Object[]{this, flowFile, peer});
 
-            final CheckedOutputStream checkedOutputStream = new CheckedOutputStream(flowFileOutputStream, crc);
+        logger.debug("{} Sending {} to {}", new Object[]{this, flowFile, peer});
 
-            final StopWatch transferWatch = new StopWatch(true);
+        final StopWatch transferWatch = new StopWatch(true);
 
-            final FlowFile toSend = flowFile;
-            session.read(flowFile, new InputStreamCallback() {
-                @Override
-                public void process(final InputStream in) throws IOException {
-                    final DataPacket dataPacket = new StandardDataPacket(toSend.getAttributes(), in, toSend.getSize());
-                    codec.encode(dataPacket, checkedOutputStream);
-                }
-            });
-
-            final long transmissionMillis = transferWatch.getElapsed(TimeUnit.MILLISECONDS);
-
-            flowFilesSent.add(flowFile);
-            bytesSent += flowFile.getSize();
-
-            final String transitUri = (transitUriPrefix == null) ? peer.getUrl() : transitUriPrefix + flowFile.getAttribute(CoreAttributes.UUID.key());
-            session.getProvenanceReporter().send(flowFile, transitUri, "Remote Host=" + peer.getHost() + ", Remote DN=" + remoteDn, transmissionMillis, false);
-            session.remove(flowFile);
-
-            // determine if we should check for more data on queue.
-            final long sendingNanos = System.nanoTime() - startNanos;
-            boolean poll = true;
-            if (sendingNanos >= requestedBatchNanos && requestedBatchNanos > 0L) {
-                poll = false;
+        final FlowFile toSend = flowFile;
+        session.read(flowFile, new InputStreamCallback() {
+            @Override
+            public void process(final InputStream in) throws IOException {
+                final DataPacket dataPacket = new StandardDataPacket(toSend.getAttributes(), in, toSend.getSize());
+                codec.encode(dataPacket, os);
+                os.flush();
             }
-            if (bytesSent >= requestedBatchBytes && requestedBatchBytes > 0L) {
-                poll = false;
-            }
-            if (flowFilesSent.size() >= requestedBatchCount && requestedBatchCount > 0) {
-                poll = false;
-            }
+        });
 
-            if (requestedBatchNanos == 0 && requestedBatchBytes == 0 && requestedBatchCount == 0) {
-                poll = (sendingNanos < DEFAULT_BATCH_NANOS);
-            }
+        final long transmissionMillis = transferWatch.getElapsed(TimeUnit.MILLISECONDS);
 
-            if (poll) {
-                // we've not elapsed the requested sending duration, so get more data.
-                flowFile = session.get();
-            } else {
-                flowFile = null;
-            }
+        bytesSent += flowFile.getSize();
 
-            continueTransaction = (flowFile != null);
-            if (continueTransaction) {
-                logger.debug("{} Sending ContinueTransaction indicator to {}", this, peer);
-                ResponseCode.CONTINUE_TRANSACTION.writeResponse(dos);
-            } else {
-                logger.debug("{} Sending FinishTransaction indicator to {}", this, peer);
-                ResponseCode.FINISH_TRANSACTION.writeResponse(dos);
-                calculatedCRC = String.valueOf(checkedOutputStream.getChecksum().getValue());
-            }
-        }
+        final String transitUri = (transitUriPrefix == null) ? peer.getUrl() : transitUriPrefix + flowFile.getAttribute(CoreAttributes.UUID.key());
+        session.getProvenanceReporter().send(flowFile, transitUri, "Remote Host=" + peer.getHost() + ", Remote DN=" + remoteDn, transmissionMillis, false);
+        session.remove(flowFile);
 
-        // we've sent a FINISH_TRANSACTION. Now we'll wait for the peer to send a 'Confirm Transaction' response
-        final Response transactionConfirmationResponse = Response.read(dis);
-        if (transactionConfirmationResponse.getCode() == ResponseCode.CONFIRM_TRANSACTION) {
-            // Confirm Checksum and echo back the confirmation.
-            logger.debug("{} Received {}  from {}", this, transactionConfirmationResponse, peer);
-            final String receivedCRC = transactionConfirmationResponse.getMessage();
 
-            if (versionNegotiator.getVersion() > 3) {
-                if (!receivedCRC.equals(calculatedCRC)) {
-                    ResponseCode.BAD_CHECKSUM.writeResponse(dos);
-                    session.rollback();
-                    throw new IOException(this + " Sent data to peer " + peer + " but calculated CRC32 Checksum as "
-                            + calculatedCRC + " while peer calculated CRC32 Checksum as " + receivedCRC
-                            + "; canceling transaction and rolling back session");
-                }
-            }
+        final String flowFileDescription = flowFile.toString();
 
-            ResponseCode.CONFIRM_TRANSACTION.writeResponse(dos, "");
-        } else {
-            throw new ProtocolException("Expected to receive 'Confirm Transaction' response from peer " + peer + " but received " + transactionConfirmationResponse);
-        }
+        // TODO: Should we wait for receiving tx completed request from client? Otherwise we can't determine if the client successfully stored the flow file.
+//        final Response transactionResponse;
+//        try {
+//            transactionResponse = Response.read(dis);
+//        } catch (final IOException e) {
+//            logger.error("{} Failed to receive a response from {} when expecting a TransactionFinished Indicator."
+//                    + " It is unknown whether or not the peer successfully received/processed the data."
+//                    + " Therefore, {} will be rolled back, possibly resulting in data duplication of {}",
+//                    this, peer, session, flowFileDescription);
+//            session.rollback();
+//            throw e;
+//        }
 
-        final String flowFileDescription = flowFilesSent.size() < 20 ? flowFilesSent.toString() : flowFilesSent.size() + " FlowFiles";
-
-        final Response transactionResponse;
-        try {
-            transactionResponse = Response.read(dis);
-        } catch (final IOException e) {
-            logger.error("{} Failed to receive a response from {} when expecting a TransactionFinished Indicator."
-                    + " It is unknown whether or not the peer successfully received/processed the data."
-                    + " Therefore, {} will be rolled back, possibly resulting in data duplication of {}",
-                    this, peer, session, flowFileDescription);
-            session.rollback();
-            throw e;
-        }
-
-        logger.debug("{} received {} from {}", new Object[]{this, transactionResponse, peer});
-        if (transactionResponse.getCode() == ResponseCode.TRANSACTION_FINISHED_BUT_DESTINATION_FULL) {
-            peer.penalize(port.getIdentifier(), port.getYieldPeriod(TimeUnit.MILLISECONDS));
-        } else if (transactionResponse.getCode() != ResponseCode.TRANSACTION_FINISHED) {
-            throw new ProtocolException("After sending data, expected TRANSACTION_FINISHED response but got " + transactionResponse);
-        }
+        // TODO: How to penalize?
+//        logger.debug("{} received {} from {}", new Object[]{this, transactionResponse, peer});
+//        if (transactionResponse.getCode() == ResponseCode.TRANSACTION_FINISHED_BUT_DESTINATION_FULL) {
+//            peer.penalize(port.getIdentifier(), port.getYieldPeriod(TimeUnit.MILLISECONDS));
+//        } else if (transactionResponse.getCode() != ResponseCode.TRANSACTION_FINISHED) {
+//            throw new ProtocolException("After sending data, expected TRANSACTION_FINISHED response but got " + transactionResponse);
+//        }
 
         session.commit();
 
@@ -248,9 +183,9 @@ public class HttpFlowFileServerProtocol implements ServerProtocol {
         final long uploadMillis = stopWatch.getDuration(TimeUnit.MILLISECONDS);
         final String dataSize = FormatUtils.formatDataSize(bytesSent);
         logger.info("{} Successfully sent {} ({}) to {} in {} milliseconds at a rate of {}", new Object[]{
-            this, flowFileDescription, dataSize, peer, uploadMillis, uploadDataRate});
+        this, flowFileDescription, dataSize, peer, uploadMillis, uploadDataRate});
 
-        return flowFilesSent.size();
+        return 1;
     }
 
     @Override

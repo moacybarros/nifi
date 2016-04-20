@@ -34,8 +34,7 @@ public class HttpClientTransaction extends AbstractTransaction {
 
     @Override
     public DataPacket receive() throws IOException {
-        // TODO: implementation.
-        return null;
+        return apiUtil.receiveFlowFile(portId);
     }
 
     @Override

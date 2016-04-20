@@ -50,6 +50,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.DefaultValue;
 import javax.ws.rs.GET;
@@ -59,14 +60,19 @@ import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
+import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+import javax.ws.rs.core.StreamingOutput;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -190,31 +196,9 @@ public class SiteToSiteResource extends ApplicationResource {
 
         logger.info("### Received transferFlowFile request: id=" + id + " inputStream=" + inputStream, " req=" + req);
 
-        // Get Port
-        RootGroupPort port = null;
-        for(RootGroupPort p : controllerFacade.getInputPorts()){
-            if(p.getIdentifier().equals(id)){
-                port = p;
-                break;
-            }
-        }
+        RootGroupPort port = getRootGroupPort(id, true);
 
-        if(port == null){
-            // TODO: Illegal Argument.
-            throw new IllegalArgumentException(id);
-        }
-
-        String clientHostName = req.getRemoteHost();
-        int clientPort = req.getRemotePort();
-        PeerDescription peerDescription = new PeerDescription(clientHostName, clientPort, req.isSecure());
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        CommunicationsSession communicationsSession = new HttpCommunicationsSession(inputStream, out);
-
-        // TODO: Are those values used?
-        String clusterUrl = "Unkown";
-        String peerUrl = "Unkown";
-        Peer peer = new Peer(peerDescription, communicationsSession, peerUrl, clusterUrl);
-        HttpFlowFileServerProtocol serverProtocol = new HttpFlowFileServerProtocol();
+        Peer peer = constructPeer(req, inputStream);
 
         HashMap<String, String> attributes = new HashMap<>();
         Enumeration<String> headerNames = req.getHeaderNames();
@@ -226,6 +210,8 @@ public class SiteToSiteResource extends ApplicationResource {
                 attributes.put(k, v);
             }
         }
+
+        HttpFlowFileServerProtocol serverProtocol = new HttpFlowFileServerProtocol();
         serverProtocol.setTransferredData(attributes, req.getContentLength());
         try {
             // TODO: this request Headers is never used, target for refactoring.
@@ -238,6 +224,119 @@ public class SiteToSiteResource extends ApplicationResource {
 
         TransactionResultEntity entity = new TransactionResultEntity();
         return clusterContext(noCache(Response.ok(entity))).build();
+    }
+
+    private Peer constructPeer(@Context HttpServletRequest req, InputStream inputStream) {
+        String clientHostName = req.getRemoteHost();
+        int clientPort = req.getRemotePort();
+        PeerDescription peerDescription = new PeerDescription(clientHostName, clientPort, req.isSecure());
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        CommunicationsSession communicationsSession = new HttpCommunicationsSession(inputStream, out);
+
+        // TODO: Are those values used?
+        String clusterUrl = "Unkown";
+        String peerUrl = "Unkown";
+        return new Peer(peerDescription, communicationsSession, peerUrl, clusterUrl);
+    }
+
+    private RootGroupPort getRootGroupPort(String id, boolean input) {
+        RootGroupPort port = null;
+        for(RootGroupPort p : input ? controllerFacade.getInputPorts() : controllerFacade.getOutputPorts()){
+            if(p.getIdentifier().equals(id)){
+                port = p;
+                break;
+            }
+        }
+
+        if(port == null){
+            // TODO: Illegal Argument.
+            throw new IllegalArgumentException(id);
+        }
+        return port;
+    }
+
+    @GET
+    @Consumes(MediaType.WILDCARD)
+    @Produces(MediaType.APPLICATION_OCTET_STREAM)
+    @Path("ports/{id}")
+    // TODO - @PreAuthorize("hasAnyRole('ROLE_MONITOR', 'ROLE_DFM', 'ROLE_ADMIN')")
+    @ApiOperation(
+            value = "Receive flow files from output port",
+            response = TransactionResultEntity.class,
+            authorizations = {
+                    @Authorization(value = "Read Only", type = "ROLE_MONITOR"),
+                    @Authorization(value = "Data Flow Manager", type = "ROLE_DFM"),
+                    @Authorization(value = "Administrator", type = "ROLE_ADMIN")
+            }
+    )
+    @ApiResponses(
+            value = {
+                    @ApiResponse(code = 204, message = "There is no flow file to return."),
+                    @ApiResponse(code = 400, message = "NiFi was unable to complete the request because it was invalid. The request should not be retried without modification."),
+                    @ApiResponse(code = 401, message = "Client could not be authenticated."),
+                    @ApiResponse(code = 403, message = "Client is not authorized to make this request."),
+                    @ApiResponse(code = 404, message = "The specified resource could not be found."),
+                    @ApiResponse(code = 409, message = "The request was valid but NiFi was not in the appropriate state to process it. Retrying the same request later may be successful.")
+            }
+    )
+    public Response receiveFlowFile(
+            @ApiParam(
+                    value = "If the client id is not specified, new one will be generated. This value (whether specified or generated) is included in the response.",
+                    required = false
+            )
+            @QueryParam(CLIENT_ID) @DefaultValue(StringUtils.EMPTY) ClientIdParameter clientId,
+            @ApiParam(
+                    value = "The input port id.",
+                    required = true
+            )
+            @PathParam("id") String id,
+            @Context HttpServletRequest req,
+            @Context HttpServletResponse res,
+            InputStream inputStream) {
+
+        logger.info("### Received receiveFlowFile request: id=" + id + " inputStream=" + inputStream, " req=" + req);
+
+        RootGroupPort port = getRootGroupPort(id, false);
+
+        Peer peer = constructPeer(req, inputStream);
+
+        HttpFlowFileServerProtocol serverProtocol = new HttpFlowFileServerProtocol();
+
+
+        try {
+            // TODO: this request Headers is never used, target for refactoring.
+            int numOfFlowFiles = port.transferFlowFiles(peer, serverProtocol, null);
+
+            if(numOfFlowFiles < 1){
+                return Response.noContent().build();
+            }
+
+            ByteArrayOutputStream bos = (ByteArrayOutputStream)peer.getCommunicationsSession().getOutput().getOutputStream();
+            HttpFlowFileCodec codec = (HttpFlowFileCodec)serverProtocol.getPreNegotiatedCodec();
+            Map<String, String> attributes = codec.getAttributes();
+            if(attributes != null){
+                for(String k : attributes.keySet()){
+                    res.addHeader(HttpFlowFileCodec.ATTRIBUTE_HTTP_HEADER_PREFIX + k, attributes.get(k));
+                }
+            }
+
+            StreamingOutput flowFileContent = new StreamingOutput() {
+                @Override
+                public void write(OutputStream output) throws IOException, WebApplicationException {
+                    output.write(bos.toByteArray());
+                    output.flush();
+                }
+            };
+
+            return clusterContext(noCache(Response.ok(flowFileContent))).build();
+
+
+        } catch (IOException | NotAuthorizedException | BadRequestException | RequestExpiredException e) {
+            // TODO: error handling.
+            logger.error("Failed to process the request.", e);
+            return Response.serverError().build();
+        }
     }
 
     // setters
