@@ -30,11 +30,14 @@ import java.util.Map;
 
 public class HttpFlowFileCodec implements FlowFileCodec {
 
+    public static final String ATTRIBUTE_HTTP_HEADER_PREFIX = "X-FlowFile-Attr-";
+
     private long numBytes = -1L;
     private Map<String, String> attributes;
 
     @Override
     public void encode(final DataPacket dataPacket, final OutputStream outStream) throws IOException {
+        // TODO: This encoding is written in SiteToSiteRestApiUtil directly for now.
         setAttributes(dataPacket.getAttributes());
         StreamUtils.copy(dataPacket.getData(), outStream);
         outStream.flush();

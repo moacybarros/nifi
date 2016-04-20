@@ -29,6 +29,7 @@ import org.apache.nifi.groups.ProcessGroup;
 import org.apache.nifi.remote.Peer;
 import org.apache.nifi.remote.PeerDescription;
 import org.apache.nifi.remote.RootGroupPort;
+import org.apache.nifi.remote.codec.HttpFlowFileCodec;
 import org.apache.nifi.remote.exception.BadRequestException;
 import org.apache.nifi.remote.exception.NotAuthorizedException;
 import org.apache.nifi.remote.exception.RequestExpiredException;
@@ -64,6 +65,7 @@ import javax.ws.rs.core.Response;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -213,10 +215,20 @@ public class SiteToSiteResource extends ApplicationResource {
         String peerUrl = "Unkown";
         Peer peer = new Peer(peerDescription, communicationsSession, peerUrl, clusterUrl);
         HttpFlowFileServerProtocol serverProtocol = new HttpFlowFileServerProtocol();
-        // TODO: get headers.
-        serverProtocol.setTransferredData(new HashMap<>(), req.getContentLength());
+
+        HashMap<String, String> attributes = new HashMap<>();
+        Enumeration<String> headerNames = req.getHeaderNames();
+        while(headerNames.hasMoreElements()){
+            String headerName = headerNames.nextElement();
+            if(headerName.startsWith(HttpFlowFileCodec.ATTRIBUTE_HTTP_HEADER_PREFIX)){
+                String k = headerName.substring(HttpFlowFileCodec.ATTRIBUTE_HTTP_HEADER_PREFIX.length());
+                String v = req.getHeader(headerName);
+                attributes.put(k, v);
+            }
+        }
+        serverProtocol.setTransferredData(attributes, req.getContentLength());
         try {
-            // TODO: this request Headers is never used.
+            // TODO: this request Headers is never used, target for refactoring.
             port.receiveFlowFiles(peer, serverProtocol, null);
         } catch (NotAuthorizedException | BadRequestException | RequestExpiredException e) {
             // TODO: error handling.
