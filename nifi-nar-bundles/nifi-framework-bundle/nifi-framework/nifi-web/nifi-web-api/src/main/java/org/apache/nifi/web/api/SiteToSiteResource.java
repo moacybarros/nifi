@@ -26,15 +26,20 @@ import com.wordnik.swagger.annotations.Authorization;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.nifi.cluster.manager.impl.WebClusterManager;
 import org.apache.nifi.groups.ProcessGroup;
+import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.remote.Peer;
 import org.apache.nifi.remote.PeerDescription;
 import org.apache.nifi.remote.RootGroupPort;
+import org.apache.nifi.remote.codec.FlowFileCodec;
+import org.apache.nifi.remote.codec.StandardFlowFileCodec;
 import org.apache.nifi.remote.exception.BadRequestException;
 import org.apache.nifi.remote.exception.NotAuthorizedException;
 import org.apache.nifi.remote.exception.RequestExpiredException;
 import org.apache.nifi.remote.io.http.HttpCommunicationsSession;
 import org.apache.nifi.remote.protocol.CommunicationsSession;
 import org.apache.nifi.remote.protocol.http.HttpFlowFileServerProtocol;
+import org.apache.nifi.remote.util.StandardDataPacket;
+import org.apache.nifi.stream.io.ByteArrayInputStream;
 import org.apache.nifi.stream.io.ByteArrayOutputStream;
 import org.apache.nifi.util.NiFiProperties;
 import org.apache.nifi.web.NiFiServiceFacade;
@@ -69,6 +74,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -195,13 +201,14 @@ public class SiteToSiteResource extends ApplicationResource {
         RootGroupPort port = getRootGroupPort(id, true);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        Peer peer = constructPeer(req, inputStream, out);
+        Peer peer = initiatePeer(req, inputStream, out);
 
-        HttpFlowFileServerProtocol serverProtocol = new HttpFlowFileServerProtocol();
         try {
+            HttpFlowFileServerProtocol serverProtocol = initiateServerProtocol(peer);
+
             // TODO: this request Headers is never used, target for refactoring.
             port.receiveFlowFiles(peer, serverProtocol, null);
-        } catch (NotAuthorizedException | BadRequestException | RequestExpiredException e) {
+        } catch (IOException | NotAuthorizedException | BadRequestException | RequestExpiredException e) {
             // TODO: error handling.
             logger.error("Failed to process the request.", e);
             return Response.serverError().build();
@@ -212,14 +219,24 @@ public class SiteToSiteResource extends ApplicationResource {
         return clusterContext(noCache(Response.ok(entity))).build();
     }
 
-    private Peer constructPeer(@Context HttpServletRequest req, InputStream inputStream, OutputStream outputStream) {
+    private HttpFlowFileServerProtocol initiateServerProtocol(Peer peer) throws IOException {
+        // TODO: get rootGroup
+        // Socket version impl is SocketRemoteSiteListener
+        // serverProtocol.setRootProcessGroup(rootGroup.get());
+        HttpFlowFileServerProtocol serverProtocol = new HttpFlowFileServerProtocol();
+        serverProtocol.setNodeInformant(clusterManager);
+        serverProtocol.handshake(peer);
+        return serverProtocol;
+    }
+
+    private Peer initiatePeer(@Context HttpServletRequest req, InputStream inputStream, OutputStream outputStream) {
         String clientHostName = req.getRemoteHost();
         int clientPort = req.getRemotePort();
         PeerDescription peerDescription = new PeerDescription(clientHostName, clientPort, req.isSecure());
 
         CommunicationsSession commSession = new HttpCommunicationsSession(inputStream, outputStream);
 
-        // TODO: Are those values used?
+        // TODO: Are those values used? Yes, for logging.
         String clusterUrl = "Unkown";
         String peerUrl = "Unkown";
         return new Peer(peerDescription, commSession, peerUrl, clusterUrl);
@@ -289,9 +306,9 @@ public class SiteToSiteResource extends ApplicationResource {
             @Override
             public void write(OutputStream outputStream) throws IOException, WebApplicationException {
 
-                Peer peer = constructPeer(req, inputStream, outputStream);
+                Peer peer = initiatePeer(req, inputStream, outputStream);
 
-                HttpFlowFileServerProtocol serverProtocol = new HttpFlowFileServerProtocol();
+                HttpFlowFileServerProtocol serverProtocol = initiateServerProtocol(peer);
 
                 try {
                     // TODO: this request Headers is never used, target for refactoring.
@@ -301,6 +318,18 @@ public class SiteToSiteResource extends ApplicationResource {
                     }
                 } catch (NotAuthorizedException | BadRequestException | RequestExpiredException e) {
                     throw new IOException("Failed to process the request.", e);
+                } catch (ProcessException e){
+                    // Indicating other type of exception happened during network communication at FlowFile transfer protocol level.
+                    // And already some data were sent to the client.
+                    // So, we can't overwrite StatusCode.
+                    // Instead, telling the client by sending a special type of FlowFile.
+                    logger.error("### Something happened", e);
+                    FlowFileCodec codec = new StandardFlowFileCodec();
+                    OutputStream errStream = peer.getCommunicationsSession().getOutput().getOutputStream();
+                    byte[] errMsgBytes = e.getMessage().getBytes("UTF-8");
+                    ByteArrayInputStream bis = new ByteArrayInputStream(errMsgBytes);
+                    StandardDataPacket errPacket = new StandardDataPacket(new HashMap<>(0), bis, errMsgBytes.length);
+                    codec.encode(errPacket, errStream);
                 }
             }
         };

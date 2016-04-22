@@ -52,7 +52,7 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
         urlConnection = getConnection("/site-to-site/ports/" + portId + "/flow-files");
         urlConnection.setDoOutput(true);
         urlConnection.setRequestMethod("POST");
-        urlConnection.setRequestProperty("Content-Type", "application/flowfile-v3");
+        urlConnection.setRequestProperty("Content-Type", "application/octet-stream");
         urlConnection.setRequestProperty("Accept", "application/json");
 
         ((HttpOutput)commSession.getOutput()).setOutputStream(urlConnection.getOutputStream());

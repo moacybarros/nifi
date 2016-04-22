@@ -18,72 +18,44 @@ package org.apache.nifi.remote.protocol.http;
 
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
-import org.apache.nifi.groups.ProcessGroup;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.Relationship;
-import org.apache.nifi.processor.io.InputStreamCallback;
 import org.apache.nifi.remote.Peer;
-import org.apache.nifi.remote.RootGroupPort;
 import org.apache.nifi.remote.StandardVersionNegotiator;
 import org.apache.nifi.remote.VersionNegotiator;
-import org.apache.nifi.remote.cluster.NodeInformant;
 import org.apache.nifi.remote.codec.FlowFileCodec;
 import org.apache.nifi.remote.codec.StandardFlowFileCodec;
+import org.apache.nifi.remote.exception.HandshakeException;
 import org.apache.nifi.remote.exception.ProtocolException;
+import org.apache.nifi.remote.protocol.AbstractFlowFileServerProtocol;
 import org.apache.nifi.remote.protocol.CommunicationsSession;
 import org.apache.nifi.remote.protocol.DataPacket;
+import org.apache.nifi.remote.protocol.HandshakenProperties;
 import org.apache.nifi.remote.protocol.RequestType;
-import org.apache.nifi.remote.protocol.ServerProtocol;
+import org.apache.nifi.remote.protocol.socket.Response;
 import org.apache.nifi.remote.protocol.socket.ResponseCode;
-import org.apache.nifi.remote.util.StandardDataPacket;
+import org.apache.nifi.stream.io.ByteArrayInputStream;
+import org.apache.nifi.stream.io.ByteArrayOutputStream;
 import org.apache.nifi.util.FormatUtils;
 import org.apache.nifi.util.StopWatch;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
+import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
-public class HttpFlowFileServerProtocol implements ServerProtocol {
+public class HttpFlowFileServerProtocol extends AbstractFlowFileServerProtocol {
 
     public static final String RESOURCE_NAME = "HttpFlowFileProtocol";
 
-    private RootGroupPort port;
-    private String transitUriPrefix = null;
     private final FlowFileCodec codec = new StandardFlowFileCodec();
 
-    private int requestedBatchCount = 0;
-    private long requestedBatchBytes = 0L;
-    private long requestedBatchNanos = 0L;
-    private static final long DEFAULT_BATCH_NANOS = TimeUnit.SECONDS.toNanos(5L);
 
     private final VersionNegotiator versionNegotiator = new StandardVersionNegotiator(5, 4, 3, 2, 1);
-    private final Logger logger = LoggerFactory.getLogger(HttpFlowFileServerProtocol.class);
-
-    @Override
-    public void setRootProcessGroup(final ProcessGroup group) {
-    }
-
-    @Override
-    public void handshake(final Peer peer) throws IOException {
-    }
-
-    @Override
-    public boolean isHandshakeSuccessful() {
-        return true;
-    }
-
-    @Override
-    public RootGroupPort getPort() {
-        return port;
-    }
 
     @Override
     public FlowFileCodec negotiateCodec(final Peer peer) throws IOException {
@@ -95,6 +67,39 @@ public class HttpFlowFileServerProtocol implements ServerProtocol {
         return codec;
     }
 
+    @Override
+    protected HandshakenProperties doHandshake(Peer peer) throws IOException, HandshakeException {
+        // TODO: implement handshake logic.
+        HandshakenProperties confirmed = new HandshakenProperties();
+        logger.debug("### Done handshake, confirmed=" + confirmed);
+        return confirmed;
+    }
+
+    @Override
+    protected void writeTransactionResponse(ResponseCode response, CommunicationsSession commsSession) throws IOException {
+        switch (response) {
+            case CONTINUE_TRANSACTION:
+                logger.debug("### continue transaction... expecting more flow files.");
+                break;
+            case BAD_CHECKSUM:
+                logger.debug("### received BAD_CHECKSUM.");
+                break;
+            case FINISH_TRANSACTION:
+                logger.debug("### transaction finished... proceeding to Checksum.");
+                break;
+        }
+    }
+
+    @Override
+    protected Response readTransactionResponse(CommunicationsSession commsSession) throws IOException {
+        // TODO: return ResponseCode.CONFIRM_TRANSACTION
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        ResponseCode.CONFIRM_TRANSACTION.writeResponse(new DataOutputStream(bos), "SKIP");
+        ByteArrayInputStream bis = new ByteArrayInputStream(bos.toByteArray());
+        return Response.read(new DataInputStream(bis));
+    }
+
+    /*
     @Override
     public int transferFlowFiles(final Peer peer, final ProcessContext context, final ProcessSession session, final FlowFileCodec codec) throws IOException, ProtocolException {
         logger.debug("{} Sending FlowFiles to {}", this, peer);
@@ -180,6 +185,8 @@ public class HttpFlowFileServerProtocol implements ServerProtocol {
         return flowFilesSent.size();
     }
 
+    */
+
     @Override
     public int receiveFlowFiles(final Peer peer, final ProcessContext context, final ProcessSession session, final FlowFileCodec codec) throws IOException, ProtocolException {
         logger.debug("{} receiving FlowFiles from {}", this, peer);
@@ -245,6 +252,7 @@ public class HttpFlowFileServerProtocol implements ServerProtocol {
         final String sourceSystemFlowFileUuid = dataPacket.getAttributes().get(CoreAttributes.UUID.key());
         flowFile = session.putAttribute(flowFile, CoreAttributes.UUID.key(), UUID.randomUUID().toString());
 
+        String transitUriPrefix = handshakenProperties.getTransitUriPrefix();
         final String transitUri = (transitUriPrefix == null) ? peer.getUrl() : transitUriPrefix + sourceSystemFlowFileUuid;
         session.getProvenanceReporter().receive(flowFile, transitUri, sourceSystemFlowFileUuid == null
                 ? null : "urn:nifi:" + sourceSystemFlowFileUuid, "Remote Host=" + peer.getHost() + ", Remote DN=" + remoteDn, transferMillis);
@@ -263,30 +271,12 @@ public class HttpFlowFileServerProtocol implements ServerProtocol {
     }
 
     @Override
-    public void shutdown(final Peer peer) {
-    }
-
-    @Override
-    public boolean isShutdown() {
-        return false;
-    }
-
-    @Override
     public void sendPeerList(final Peer peer) throws IOException {
     }
 
     @Override
     public String getResourceName() {
         return RESOURCE_NAME;
-    }
-
-    @Override
-    public void setNodeInformant(final NodeInformant nodeInformant) {
-    }
-
-    @Override
-    public long getRequestExpiration() {
-        return 0L;
     }
 
 }

@@ -53,7 +53,6 @@ public class HttpClientTransaction extends AbstractTransaction {
 
     @Override
     public DataPacket receive() throws IOException {
-        // TODO: This logic should be similar to SiteToSiteRestAPiUtil or Codec.
         InputStream is = peer.getCommunicationsSession().getInput().getInputStream();
         return codec.decode(is);
     }
