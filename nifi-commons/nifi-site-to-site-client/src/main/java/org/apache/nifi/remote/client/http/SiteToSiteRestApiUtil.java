@@ -16,11 +16,10 @@
  */
 package org.apache.nifi.remote.client.http;
 
-import org.apache.nifi.remote.codec.HttpFlowFileCodec;
-import org.apache.nifi.remote.protocol.DataPacket;
+import org.apache.nifi.remote.io.http.HttpInput;
+import org.apache.nifi.remote.io.http.HttpOutput;
+import org.apache.nifi.remote.protocol.CommunicationsSession;
 import org.apache.nifi.remote.util.NiFiRestApiUtil;
-import org.apache.nifi.remote.util.StandardDataPacket;
-import org.apache.nifi.stream.io.ByteArrayInputStream;
 import org.apache.nifi.stream.io.ByteArrayOutputStream;
 import org.apache.nifi.stream.io.StreamUtils;
 import org.apache.nifi.web.api.dto.remote.PeerDTO;
@@ -30,16 +29,14 @@ import org.slf4j.LoggerFactory;
 
 import javax.net.ssl.SSLContext;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 
+// TODO: I'd like to encapsulate this in HttpClientTransaction
 public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
 
     private static final Logger logger = LoggerFactory.getLogger(SiteToSiteRestApiUtil.class);
+    private HttpURLConnection urlConnection;
 
     public SiteToSiteRestApiUtil(SSLContext sslContext) {
         super(sslContext);
@@ -49,69 +46,49 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
         return getEntity("/site-to-site/peers", PeersEntity.class).getPeers();
     }
 
-    public void transferFlowFile(String portId, DataPacket dataPacket) throws IOException {
-        logger.info("### Sending transferFlowFile request to port: " + portId);
-        HttpURLConnection conn = getConnection("/site-to-site/ports/" + portId);
-        conn.setDoOutput(true);
-        conn.setRequestMethod("POST");
-        conn.setRequestProperty("Content-Type", "application/octet-stream");
-        conn.setRequestProperty("Content-length", String.valueOf(dataPacket.getSize()));
-        conn.setRequestProperty("Accept", "application/json");
+    public void openConnectionForSend(String portId, CommunicationsSession commSession) throws IOException {
+        logger.info("### openConnectionForSend to port: " + portId);
 
-        Map<String, String> attributes = dataPacket.getAttributes();
-        if(attributes != null){
-            for(String k : attributes.keySet()){
-                conn.setRequestProperty(HttpFlowFileCodec.ATTRIBUTE_HTTP_HEADER_PREFIX + k, attributes.get(k));
-            }
-        }
+        urlConnection = getConnection("/site-to-site/ports/" + portId + "/flow-files");
+        urlConnection.setDoOutput(true);
+        urlConnection.setRequestMethod("POST");
+        urlConnection.setRequestProperty("Content-Type", "application/flowfile-v3");
+        urlConnection.setRequestProperty("Accept", "application/json");
 
-        OutputStream outputStream = conn.getOutputStream();
-        long transferredByteLen = StreamUtils.copy(dataPacket.getData(), outputStream);
-        logger.info("### Sent request to port: " + portId + " transferredByteLen=" + transferredByteLen);
+        ((HttpOutput)commSession.getOutput()).setOutputStream(urlConnection.getOutputStream());
 
-        outputStream.flush();
-        outputStream.close();
-
-        ByteArrayOutputStream bos = new ByteArrayOutputStream();
-        StreamUtils.copy(conn.getInputStream(), bos);
-        String result = bos.toString("UTF-8");
-        logger.info("### Sent request to port: " + portId + " result=" + result);
     }
 
-    public DataPacket receiveFlowFile(String portId) throws IOException {
-        logger.info("### Sending receiveFlowFile request to port: " + portId);
-        HttpURLConnection conn = getConnection("/site-to-site/ports/" + portId);
-        conn.setRequestMethod("GET");
-        conn.setRequestProperty("Accept", "application/octet-stream");
+    public void openConnectionForReceive(String portId, CommunicationsSession commSession) throws IOException {
+        logger.info("### openConnectionForSend to port: " + portId);
+        urlConnection = getConnection("/site-to-site/ports/" + portId + "/flow-files");
+        urlConnection.setRequestMethod("GET");
+        urlConnection.setRequestProperty("Accept", "application/octet-stream");
 
-        int responseCode = conn.getResponseCode();
+        ((HttpInput)commSession.getInput()).setInputStream(urlConnection.getInputStream());
+
+        // TODO: Capture responseCode and transaction confirmation URL.
+        int responseCode = urlConnection.getResponseCode();
         if(responseCode == 204){
-            return null;
+            return;
         } else if(responseCode != 200){
             // TODO: more sophisticated error handling.
             throw new RuntimeException("Unexpected response code: " + responseCode);
         }
 
-        Map<String, String> attributes = null;
-        Map<String, List<String>> responseHeaders = conn.getHeaderFields();
-        logger.info("### responseHeaders=" + responseHeaders);
-        if(responseHeaders != null){
-            attributes = new HashMap<>();
-            for(String h : responseHeaders.keySet()){
-                // HTTP Status Code is returned as null header key.
-                if(h != null && h.startsWith(HttpFlowFileCodec.ATTRIBUTE_HTTP_HEADER_PREFIX)){
-                    String k = h.substring(HttpFlowFileCodec.ATTRIBUTE_HTTP_HEADER_PREFIX.length());
-                    String v = responseHeaders.get(h).get(0);
-                    attributes.put(k, v);
-                }
-            }
-        }
-
-        ByteArrayOutputStream bos = new ByteArrayOutputStream();
-        StreamUtils.copy(conn.getInputStream(), bos);
-        byte[] buf = bos.toByteArray();
-        ByteArrayInputStream bin = new ByteArrayInputStream(buf);
-        logger.info("### Sent request to port: " + portId + " byteReceived=" + buf.length);
-        return new StandardDataPacket(attributes, bin, buf.length);
     }
+
+    public void transferFlowFile(String portId, CommunicationsSession commSession) throws IOException {
+        logger.info("### Sending transferFlowFile request to port: " + portId);
+
+        commSession.getOutput().getOutputStream().flush();
+
+        // TODO: Check response.
+        ((HttpInput)commSession.getInput()).setInputStream(urlConnection.getInputStream());
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        StreamUtils.copy(commSession.getInput().getInputStream(), bos);
+        String result = bos.toString("UTF-8");
+        logger.info("### Sent request to port: " + portId + " result=" + result);
+    }
+
 }

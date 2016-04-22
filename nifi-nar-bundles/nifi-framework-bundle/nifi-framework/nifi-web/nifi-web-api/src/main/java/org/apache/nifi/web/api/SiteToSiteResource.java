@@ -29,7 +29,6 @@ import org.apache.nifi.groups.ProcessGroup;
 import org.apache.nifi.remote.Peer;
 import org.apache.nifi.remote.PeerDescription;
 import org.apache.nifi.remote.RootGroupPort;
-import org.apache.nifi.remote.codec.HttpFlowFileCodec;
 import org.apache.nifi.remote.exception.BadRequestException;
 import org.apache.nifi.remote.exception.NotAuthorizedException;
 import org.apache.nifi.remote.exception.RequestExpiredException;
@@ -70,9 +69,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
-import java.util.Enumeration;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -160,7 +156,7 @@ public class SiteToSiteResource extends ApplicationResource {
     @POST
     @Consumes(MediaType.APPLICATION_OCTET_STREAM)
     @Produces(MediaType.APPLICATION_JSON)
-    @Path("ports/{id}")
+    @Path("ports/{id}/flow-files")
     // TODO - @PreAuthorize("hasAnyRole('ROLE_MONITOR', 'ROLE_DFM', 'ROLE_ADMIN')")
     @ApiOperation(
             value = "Transfer flow files to input port",
@@ -180,7 +176,7 @@ public class SiteToSiteResource extends ApplicationResource {
                     @ApiResponse(code = 409, message = "The request was valid but NiFi was not in the appropriate state to process it. Retrying the same request later may be successful.")
             }
     )
-    public Response transferFlowFile(
+    public Response receiveFlowFiles(
             @ApiParam(
                     value = "If the client id is not specified, new one will be generated. This value (whether specified or generated) is included in the response.",
                     required = false
@@ -194,25 +190,14 @@ public class SiteToSiteResource extends ApplicationResource {
             @Context HttpServletRequest req,
             InputStream inputStream) {
 
-        logger.info("### Received transferFlowFile request: id=" + id + " inputStream=" + inputStream, " req=" + req);
+        logger.info("### receiveFlowFiles request: id=" + id + " inputStream=" + inputStream, " req=" + req);
 
         RootGroupPort port = getRootGroupPort(id, true);
 
-        Peer peer = constructPeer(req, inputStream);
-
-        HashMap<String, String> attributes = new HashMap<>();
-        Enumeration<String> headerNames = req.getHeaderNames();
-        while(headerNames.hasMoreElements()){
-            String headerName = headerNames.nextElement();
-            if(headerName.startsWith(HttpFlowFileCodec.ATTRIBUTE_HTTP_HEADER_PREFIX)){
-                String k = headerName.substring(HttpFlowFileCodec.ATTRIBUTE_HTTP_HEADER_PREFIX.length());
-                String v = req.getHeader(headerName);
-                attributes.put(k, v);
-            }
-        }
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Peer peer = constructPeer(req, inputStream, out);
 
         HttpFlowFileServerProtocol serverProtocol = new HttpFlowFileServerProtocol();
-        serverProtocol.setTransferredData(attributes, req.getContentLength());
         try {
             // TODO: this request Headers is never used, target for refactoring.
             port.receiveFlowFiles(peer, serverProtocol, null);
@@ -222,22 +207,22 @@ public class SiteToSiteResource extends ApplicationResource {
             return Response.serverError().build();
         }
 
+        // TODO: Construct meaningful result.
         TransactionResultEntity entity = new TransactionResultEntity();
         return clusterContext(noCache(Response.ok(entity))).build();
     }
 
-    private Peer constructPeer(@Context HttpServletRequest req, InputStream inputStream) {
+    private Peer constructPeer(@Context HttpServletRequest req, InputStream inputStream, OutputStream outputStream) {
         String clientHostName = req.getRemoteHost();
         int clientPort = req.getRemotePort();
         PeerDescription peerDescription = new PeerDescription(clientHostName, clientPort, req.isSecure());
 
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        CommunicationsSession communicationsSession = new HttpCommunicationsSession(inputStream, out);
+        CommunicationsSession commSession = new HttpCommunicationsSession(inputStream, outputStream);
 
         // TODO: Are those values used?
         String clusterUrl = "Unkown";
         String peerUrl = "Unkown";
-        return new Peer(peerDescription, communicationsSession, peerUrl, clusterUrl);
+        return new Peer(peerDescription, commSession, peerUrl, clusterUrl);
     }
 
     private RootGroupPort getRootGroupPort(String id, boolean input) {
@@ -259,7 +244,7 @@ public class SiteToSiteResource extends ApplicationResource {
     @GET
     @Consumes(MediaType.WILDCARD)
     @Produces(MediaType.APPLICATION_OCTET_STREAM)
-    @Path("ports/{id}")
+    @Path("ports/{id}/flow-files")
     // TODO - @PreAuthorize("hasAnyRole('ROLE_MONITOR', 'ROLE_DFM', 'ROLE_ADMIN')")
     @ApiOperation(
             value = "Receive flow files from output port",
@@ -280,7 +265,7 @@ public class SiteToSiteResource extends ApplicationResource {
                     @ApiResponse(code = 409, message = "The request was valid but NiFi was not in the appropriate state to process it. Retrying the same request later may be successful.")
             }
     )
-    public Response receiveFlowFile(
+    public Response transferFlowFiles(
             @ApiParam(
                     value = "If the client id is not specified, new one will be generated. This value (whether specified or generated) is included in the response.",
                     required = false
@@ -295,48 +280,32 @@ public class SiteToSiteResource extends ApplicationResource {
             @Context HttpServletResponse res,
             InputStream inputStream) {
 
-        logger.info("### Received receiveFlowFile request: id=" + id + " inputStream=" + inputStream, " req=" + req);
+        logger.info("### transferFlowFiles request: id=" + id + " inputStream=" + inputStream, " req=" + req);
 
         RootGroupPort port = getRootGroupPort(id, false);
 
-        Peer peer = constructPeer(req, inputStream);
 
-        HttpFlowFileServerProtocol serverProtocol = new HttpFlowFileServerProtocol();
+        StreamingOutput flowFileContent = new StreamingOutput() {
+            @Override
+            public void write(OutputStream outputStream) throws IOException, WebApplicationException {
 
+                Peer peer = constructPeer(req, inputStream, outputStream);
 
-        try {
-            // TODO: this request Headers is never used, target for refactoring.
-            int numOfFlowFiles = port.transferFlowFiles(peer, serverProtocol, null);
+                HttpFlowFileServerProtocol serverProtocol = new HttpFlowFileServerProtocol();
 
-            if(numOfFlowFiles < 1){
-                return Response.noContent().build();
-            }
-
-            ByteArrayOutputStream bos = (ByteArrayOutputStream)peer.getCommunicationsSession().getOutput().getOutputStream();
-            HttpFlowFileCodec codec = (HttpFlowFileCodec)serverProtocol.getPreNegotiatedCodec();
-            Map<String, String> attributes = codec.getAttributes();
-            if(attributes != null){
-                for(String k : attributes.keySet()){
-                    res.addHeader(HttpFlowFileCodec.ATTRIBUTE_HTTP_HEADER_PREFIX + k, attributes.get(k));
+                try {
+                    // TODO: this request Headers is never used, target for refactoring.
+                    int numOfFlowFiles = port.transferFlowFiles(peer, serverProtocol, null);
+                    if(numOfFlowFiles < 1) {
+                        throw new WebApplicationException(HttpServletResponse.SC_NO_CONTENT);
+                    }
+                } catch (NotAuthorizedException | BadRequestException | RequestExpiredException e) {
+                    throw new IOException("Failed to process the request.", e);
                 }
             }
+        };
 
-            StreamingOutput flowFileContent = new StreamingOutput() {
-                @Override
-                public void write(OutputStream output) throws IOException, WebApplicationException {
-                    output.write(bos.toByteArray());
-                    output.flush();
-                }
-            };
-
-            return clusterContext(noCache(Response.ok(flowFileContent))).build();
-
-
-        } catch (IOException | NotAuthorizedException | BadRequestException | RequestExpiredException e) {
-            // TODO: error handling.
-            logger.error("Failed to process the request.", e);
-            return Response.serverError().build();
-        }
+        return clusterContext(noCache(Response.ok(flowFileContent))).build();
     }
 
     // setters

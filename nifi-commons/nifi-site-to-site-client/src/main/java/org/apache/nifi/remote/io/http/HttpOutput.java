@@ -23,12 +23,7 @@ import java.io.OutputStream;
 
 public class HttpOutput implements CommunicationsOutput {
 
-    private final OutputStream outputStream;
-
-    HttpOutput(OutputStream outputStream){
-        super();
-        this.outputStream = outputStream;
-    }
+    private OutputStream outputStream;
 
     @Override
     public OutputStream getOutputStream() throws IOException {
@@ -39,5 +34,9 @@ public class HttpOutput implements CommunicationsOutput {
     public long getBytesWritten() {
         // TODO: OWhat should I return?
         return 0;
+    }
+
+    public void setOutputStream(OutputStream outputStream) {
+        this.outputStream = outputStream;
     }
 }

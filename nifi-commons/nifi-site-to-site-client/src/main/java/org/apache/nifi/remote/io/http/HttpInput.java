@@ -23,12 +23,7 @@ import java.io.InputStream;
 
 public class HttpInput implements CommunicationsInput {
 
-    private final InputStream inputStream;
-
-    HttpInput(InputStream inputStream){
-        super();
-        this.inputStream = inputStream;
-    }
+    private InputStream inputStream;
 
     @Override
     public InputStream getInputStream() throws IOException {
@@ -43,5 +38,9 @@ public class HttpInput implements CommunicationsInput {
 
     @Override
     public void consume() throws IOException {
+    }
+
+    public void setInputStream(InputStream inputStream) {
+        this.inputStream = inputStream;
     }
 }

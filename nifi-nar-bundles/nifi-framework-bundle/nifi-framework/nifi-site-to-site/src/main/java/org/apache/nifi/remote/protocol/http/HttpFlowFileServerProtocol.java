@@ -29,13 +29,12 @@ import org.apache.nifi.remote.StandardVersionNegotiator;
 import org.apache.nifi.remote.VersionNegotiator;
 import org.apache.nifi.remote.cluster.NodeInformant;
 import org.apache.nifi.remote.codec.FlowFileCodec;
-import org.apache.nifi.remote.codec.HttpFlowFileCodec;
+import org.apache.nifi.remote.codec.StandardFlowFileCodec;
 import org.apache.nifi.remote.exception.ProtocolException;
 import org.apache.nifi.remote.protocol.CommunicationsSession;
 import org.apache.nifi.remote.protocol.DataPacket;
 import org.apache.nifi.remote.protocol.RequestType;
 import org.apache.nifi.remote.protocol.ServerProtocol;
-import org.apache.nifi.remote.protocol.socket.Response;
 import org.apache.nifi.remote.protocol.socket.ResponseCode;
 import org.apache.nifi.remote.util.StandardDataPacket;
 import org.apache.nifi.util.FormatUtils;
@@ -43,18 +42,14 @@ import org.apache.nifi.util.StopWatch;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.HashSet;
-import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.zip.CRC32;
-import java.util.zip.CheckedOutputStream;
 
 public class HttpFlowFileServerProtocol implements ServerProtocol {
 
@@ -62,7 +57,7 @@ public class HttpFlowFileServerProtocol implements ServerProtocol {
 
     private RootGroupPort port;
     private String transitUriPrefix = null;
-    private final HttpFlowFileCodec codec = new HttpFlowFileCodec();
+    private final FlowFileCodec codec = new StandardFlowFileCodec();
 
     private int requestedBatchCount = 0;
     private long requestedBatchBytes = 0L;
@@ -71,11 +66,6 @@ public class HttpFlowFileServerProtocol implements ServerProtocol {
 
     private final VersionNegotiator versionNegotiator = new StandardVersionNegotiator(5, 4, 3, 2, 1);
     private final Logger logger = LoggerFactory.getLogger(HttpFlowFileServerProtocol.class);
-
-    public void setTransferredData(Map<String, String> attributes, int numBytes){
-        codec.setAttributes(attributes);
-        codec.setNumBytes(numBytes);
-    }
 
     @Override
     public void setRootProcessGroup(final ProcessGroup group) {
@@ -116,44 +106,44 @@ public class HttpFlowFileServerProtocol implements ServerProtocol {
             remoteDn = "none";
         }
 
-        FlowFile flowFile = session.get();
-        if (flowFile == null) {
-            // we have no data to send. Notify the peer.
-            logger.debug("{} No data to send to {}", this, peer);
-            return 0;
-        }
-
-        // we have data to send.
-        logger.debug("{} Data is available to send to {}", this, peer);
-
         final StopWatch stopWatch = new StopWatch(true);
         long bytesSent = 0L;
+        final Set<FlowFile> flowFilesSent = new HashSet<>();
 
 
-        logger.debug("{} Sending {} to {}", new Object[]{this, flowFile, peer});
-
-        final StopWatch transferWatch = new StopWatch(true);
-
-        final FlowFile toSend = flowFile;
-        session.read(flowFile, new InputStreamCallback() {
-            @Override
-            public void process(final InputStream in) throws IOException {
-                final DataPacket dataPacket = new StandardDataPacket(toSend.getAttributes(), in, toSend.getSize());
-                codec.encode(dataPacket, os);
-                os.flush();
+        while(true){
+            FlowFile flowFile = session.get();
+            if (flowFile == null) {
+                // we have no data to send. Notify the peer.
+                logger.debug("{} No more data to send to {}", this, peer);
+                break;
             }
-        });
 
-        final long transmissionMillis = transferWatch.getElapsed(TimeUnit.MILLISECONDS);
+            logger.debug("{} Sending {} to {}", new Object[]{this, flowFile, peer});
 
-        bytesSent += flowFile.getSize();
+            final StopWatch transferWatch = new StopWatch(true);
 
-        final String transitUri = (transitUriPrefix == null) ? peer.getUrl() : transitUriPrefix + flowFile.getAttribute(CoreAttributes.UUID.key());
-        session.getProvenanceReporter().send(flowFile, transitUri, "Remote Host=" + peer.getHost() + ", Remote DN=" + remoteDn, transmissionMillis, false);
-        session.remove(flowFile);
+            final FlowFile toSend = flowFile;
+            session.read(flowFile, new InputStreamCallback() {
+                @Override
+                public void process(final InputStream in) throws IOException {
+                    final DataPacket dataPacket = new StandardDataPacket(toSend.getAttributes(), in, toSend.getSize());
+                    codec.encode(dataPacket, os);
+                    os.flush();
+                }
+            });
+
+            final long transmissionMillis = transferWatch.getElapsed(TimeUnit.MILLISECONDS);
+
+            flowFilesSent.add(flowFile);
+            bytesSent += flowFile.getSize();
+
+            final String transitUri = (transitUriPrefix == null) ? peer.getUrl() : transitUriPrefix + flowFile.getAttribute(CoreAttributes.UUID.key());
+            session.getProvenanceReporter().send(flowFile, transitUri, "Remote Host=" + peer.getHost() + ", Remote DN=" + remoteDn, transmissionMillis, false);
+            session.remove(flowFile);
+        }
 
 
-        final String flowFileDescription = flowFile.toString();
 
         // TODO: Should we wait for receiving tx completed request from client? Otherwise we can't determine if the client successfully stored the flow file.
 //        final Response transactionResponse;
@@ -176,6 +166,8 @@ public class HttpFlowFileServerProtocol implements ServerProtocol {
 //            throw new ProtocolException("After sending data, expected TRANSACTION_FINISHED response but got " + transactionResponse);
 //        }
 
+        final String flowFileDescription = flowFilesSent.size() < 20 ? flowFilesSent.toString() : flowFilesSent.size() + " FlowFiles";
+
         session.commit();
 
         stopWatch.stop();
@@ -183,9 +175,9 @@ public class HttpFlowFileServerProtocol implements ServerProtocol {
         final long uploadMillis = stopWatch.getDuration(TimeUnit.MILLISECONDS);
         final String dataSize = FormatUtils.formatDataSize(bytesSent);
         logger.info("{} Successfully sent {} ({}) to {} in {} milliseconds at a rate of {}", new Object[]{
-        this, flowFileDescription, dataSize, peer, uploadMillis, uploadDataRate});
+                this, flowFileDescription, dataSize, peer, uploadMillis, uploadDataRate});
 
-        return 1;
+        return flowFilesSent.size();
     }
 
     @Override
@@ -200,17 +192,22 @@ public class HttpFlowFileServerProtocol implements ServerProtocol {
         }
 
         final StopWatch stopWatch = new StopWatch(true);
-
         long bytesReceived = 0L;
-
-        // TODO : Pass DataPacket somehow.
-        final DataPacket dataPacket = codec.decode(commsSession.getInput().getInputStream());
-        FlowFile flowFile = handleIncomingDataPacket(peer, session, remoteDn, dataPacket);
-        bytesReceived += flowFile.getSize();
+        final Set<FlowFile> flowFilesReceived = new HashSet<>();
+        while(true){
+            final DataPacket dataPacket = codec.decode(commsSession.getInput().getInputStream());
+            if(dataPacket == null) {
+                break;
+            }
+            FlowFile flowFile = handleIncomingDataPacket(peer, session, remoteDn, dataPacket);
+            flowFilesReceived.add(flowFile);
+            bytesReceived += flowFile.getSize();
+        }
 
         // Commit the session so that we have persisted the data
         session.commit();
 
+        // TODO: Do we need stuff like this?
         if (context.getAvailableRelationships().isEmpty()) {
             // Confirm that we received the data and the peer can now discard it but that the peer should not
             // send any more data for a bit
@@ -223,12 +220,14 @@ public class HttpFlowFileServerProtocol implements ServerProtocol {
         }
 
         stopWatch.stop();
-        final String flowFileDescription = flowFile.toString();
+
+        // TODO: This logic is the same as Socket's.
+        final String flowFileDescription = flowFilesReceived.size() < 20 ? flowFilesReceived.toString() : flowFilesReceived.size() + " FlowFiles";
         final String uploadDataRate = stopWatch.calculateDataRate(bytesReceived);
         final long uploadMillis = stopWatch.getDuration(TimeUnit.MILLISECONDS);
         final String dataSize = FormatUtils.formatDataSize(bytesReceived);
         logger.info("{} Successfully received {} ({}) from {} in {} milliseconds at a rate of {}", new Object[]{
-            this, flowFileDescription, dataSize, peer, uploadMillis, uploadDataRate});
+                this, flowFileDescription, dataSize, peer, uploadMillis, uploadDataRate});
 
         return 1;
     }

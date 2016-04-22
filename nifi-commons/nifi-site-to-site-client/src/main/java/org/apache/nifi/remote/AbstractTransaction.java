@@ -8,11 +8,13 @@ import java.util.Map;
 
 public abstract class AbstractTransaction implements Transaction {
     protected final Peer peer;
+    protected final TransferDirection direction;
     protected TransactionState state;
 
-    public AbstractTransaction(final Peer peer) {
+    public AbstractTransaction(final Peer peer, final TransferDirection direction) {
         this.peer = peer;
         this.state = TransactionState.TRANSACTION_STARTED;
+        this.direction = direction;
     }
 
     @Override

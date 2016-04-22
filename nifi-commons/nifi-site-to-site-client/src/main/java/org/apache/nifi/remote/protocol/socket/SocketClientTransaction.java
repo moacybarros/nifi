@@ -51,7 +51,6 @@ public class SocketClientTransaction extends AbstractTransaction {
     private final FlowFileCodec codec;
     private final DataInputStream dis;
     private final DataOutputStream dos;
-    private final TransferDirection direction;
     private final boolean compress;
     private final int penaltyMillis;
     private final String destinationId;
@@ -63,11 +62,10 @@ public class SocketClientTransaction extends AbstractTransaction {
 
     SocketClientTransaction(final int protocolVersion, final String destinationId, final Peer peer, final FlowFileCodec codec,
             final TransferDirection direction, final boolean useCompression, final int penaltyMillis, final EventReporter eventReporter) throws IOException {
-        super(peer);
+        super(peer, direction);
         this.protocolVersion = protocolVersion;
         this.destinationId = destinationId;
         this.codec = codec;
-        this.direction = direction;
         this.dis = new DataInputStream(peer.getCommunicationsSession().getInput().getInputStream());
         this.dos = new DataOutputStream(peer.getCommunicationsSession().getOutput().getOutputStream());
         this.compress = useCompression;

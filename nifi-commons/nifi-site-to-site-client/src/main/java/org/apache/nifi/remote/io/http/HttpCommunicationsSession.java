@@ -17,15 +17,12 @@
 package org.apache.nifi.remote.io.http;
 
 import org.apache.nifi.remote.AbstractCommunicationsSession;
-import org.apache.nifi.remote.io.socket.SocketChannelInput;
-import org.apache.nifi.remote.io.socket.SocketChannelOutput;
 import org.apache.nifi.remote.protocol.CommunicationsInput;
 import org.apache.nifi.remote.protocol.CommunicationsOutput;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.channels.SocketChannel;
 
 public class HttpCommunicationsSession extends AbstractCommunicationsSession {
 
@@ -35,9 +32,15 @@ public class HttpCommunicationsSession extends AbstractCommunicationsSession {
     private final HttpOutput output;
 
     public HttpCommunicationsSession(InputStream inputStream, OutputStream outputStream){
+        this();
+        input.setInputStream(inputStream);
+        output.setOutputStream(outputStream);
+    }
+
+    public HttpCommunicationsSession(){
         super(null);
-        this.input = new HttpInput(inputStream);
-        this.output = new HttpOutput(outputStream);
+        this.input = new HttpInput();
+        this.output = new HttpOutput();
     }
 
     @Override
@@ -88,4 +91,5 @@ public class HttpCommunicationsSession extends AbstractCommunicationsSession {
     public void close() throws IOException {
 
     }
+
 }

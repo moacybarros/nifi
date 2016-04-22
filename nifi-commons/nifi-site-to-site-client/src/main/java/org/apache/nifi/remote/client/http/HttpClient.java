@@ -61,12 +61,14 @@ public class HttpClient extends AbstractSiteToSiteClient {
         PeerDTO nodeApiPeerDto = peers.iterator().next();
 
         PeerDescription description = new PeerDescription(nodeApiPeerDto.getHostname(), nodeApiPeerDto.getPort(), nodeApiPeerDto.isSecure());
-        CommunicationsSession commSession = new HttpCommunicationsSession(null, null);
+        // TODO: Maybe I can open HTTP request at here and pass input and output stream here.
+
+        CommunicationsSession commSession = new HttpCommunicationsSession();
         String nodeApiUrl = resolveNodeApiUrl(description);
         commSession.setUri(nodeApiUrl);
         Peer peer = new Peer(description, commSession, nodeApiUrl, clusterUrl);
 
-        HttpClientTransaction transaction = new HttpClientTransaction(peer, config.getPortIdentifier(), config.getSslContext(), timeoutMillis);
+        HttpClientTransaction transaction = new HttpClientTransaction(peer, direction, config.getPortIdentifier(), config.getSslContext(), timeoutMillis);
         return transaction;
     }
 
