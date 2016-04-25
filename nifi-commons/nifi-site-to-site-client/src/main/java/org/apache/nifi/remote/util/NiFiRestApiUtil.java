@@ -22,6 +22,7 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.util.regex.Pattern;
 
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.HttpsURLConnection;
@@ -43,16 +44,22 @@ public class NiFiRestApiUtil {
 
     private int connectTimeoutMillis;
     private int readTimeoutMillis;
+    private static final Pattern HTTP_ABS_URL = Pattern.compile("^https?://.+$");
 
     public NiFiRestApiUtil(final SSLContext sslContext) {
         this.sslContext = sslContext;
     }
 
     protected HttpURLConnection getConnection(final String path) throws IOException {
-        if(StringUtils.isEmpty(getBaseUrl())){
-            throw new IllegalStateException("API baseUrl is not resolved yet, call setBaseUrl or resolveBaseUrl before sending requests.");
+        final URL url;
+        if(HTTP_ABS_URL.matcher(path).find()){
+            url = new URL(path);
+        } else {
+            if(StringUtils.isEmpty(getBaseUrl())){
+                throw new IllegalStateException("API baseUrl is not resolved yet, call setBaseUrl or resolveBaseUrl before sending requests with relative path.");
+            }
+            url = new URL(baseUrl + path);
         }
-        final URL url = new URL(baseUrl + path);
         final HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setConnectTimeout(connectTimeoutMillis);
         connection.setReadTimeout(readTimeoutMillis);

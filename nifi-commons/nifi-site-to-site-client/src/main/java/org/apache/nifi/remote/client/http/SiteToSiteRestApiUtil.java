@@ -16,6 +16,7 @@
  */
 package org.apache.nifi.remote.client.http;
 
+import org.apache.nifi.remote.exception.ProtocolException;
 import org.apache.nifi.remote.io.http.HttpInput;
 import org.apache.nifi.remote.io.http.HttpOutput;
 import org.apache.nifi.remote.protocol.CommunicationsSession;
@@ -38,6 +39,12 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
     private static final Logger logger = LoggerFactory.getLogger(SiteToSiteRestApiUtil.class);
     private HttpURLConnection urlConnection;
 
+
+    // TODO: Maybe we can share this with PostHTTP?
+    public static final String LOCATION_HEADER_NAME = "Location";
+    public static final String LOCATION_URI_INTENT_NAME = "x-location-uri-intent";
+    public static final String LOCATION_URI_INTENT_VALUE = "flowfile-hold";
+
     public SiteToSiteRestApiUtil(SSLContext sslContext) {
         super(sslContext);
     }
@@ -59,19 +66,34 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
 
     }
 
-    public void openConnectionForReceive(String portId, CommunicationsSession commSession) throws IOException {
+    public String openConnectionForReceive(String portId, CommunicationsSession commSession) throws IOException {
         logger.info("### openConnectionForSend to port: " + portId);
         urlConnection = getConnection("/site-to-site/ports/" + portId + "/flow-files");
         urlConnection.setRequestMethod("GET");
         urlConnection.setRequestProperty("Accept", "application/octet-stream");
+        urlConnection.setInstanceFollowRedirects(false);
 
         ((HttpInput)commSession.getInput()).setInputStream(urlConnection.getInputStream());
 
         // TODO: Capture responseCode and transaction confirmation URL.
         int responseCode = urlConnection.getResponseCode();
-        if(responseCode == 204){
-            return;
-        } else if(responseCode != 200){
+        logger.debug("### responseCode=" + responseCode);
+
+        if (responseCode == 303) {
+            // TODO: Get HTTP Header to send confirm request.
+            final String locationUriIntentHeader = urlConnection.getHeaderField(LOCATION_URI_INTENT_NAME);
+            logger.debug("### Received 303: locationUriIntentHeader=" + locationUriIntentHeader);
+            if (locationUriIntentHeader != null) {
+                if (LOCATION_URI_INTENT_VALUE.equals(locationUriIntentHeader)) {
+                    String holdUri = urlConnection.getHeaderField(LOCATION_HEADER_NAME);
+                    logger.debug("### Received 303: holdUri=" + holdUri);
+                    return holdUri;
+                }
+            }
+
+            throw new ProtocolException("Server returned 303 without Location header");
+
+        } else {
             // TODO: more sophisticated error handling.
             throw new RuntimeException("Unexpected response code: " + responseCode);
         }
@@ -89,6 +111,28 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
         StreamUtils.copy(commSession.getInput().getInputStream(), bos);
         String result = bos.toString("UTF-8");
         logger.info("### Sent request to port: " + portId + " result=" + result);
+    }
+
+    public void commitReceivingFlowFiles(String holdUri, String checksum) throws IOException {
+        logger.info("### Sending commitReceivingFlowFiles request to holdUri: " + holdUri + " checksum=" + checksum);
+
+        urlConnection = getConnection(holdUri + "?checksum=" + checksum);
+        urlConnection.setRequestMethod("DELETE");
+        urlConnection.setRequestProperty("Accept", "application/json");
+
+
+        int responseCode = urlConnection.getResponseCode();
+        logger.debug("### commitReceivingFlowFiles responseCode=" + responseCode);
+
+
+        if (responseCode == 200) {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            StreamUtils.copy(urlConnection.getInputStream(), bos);
+            logger.debug("### commitReceivingFlowFiles reader.readLine()=" + new String(bos.toByteArray(), "UTF-8"));
+        } else {
+            // TODO: more sophisticated error handling.
+            throw new RuntimeException("Unexpected response code: " + responseCode);
+        }
     }
 
 }

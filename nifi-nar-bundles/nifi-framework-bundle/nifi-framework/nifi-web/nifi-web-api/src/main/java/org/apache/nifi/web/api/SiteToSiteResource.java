@@ -37,9 +37,9 @@ import org.apache.nifi.remote.exception.NotAuthorizedException;
 import org.apache.nifi.remote.exception.RequestExpiredException;
 import org.apache.nifi.remote.io.http.HttpCommunicationsSession;
 import org.apache.nifi.remote.protocol.CommunicationsSession;
+import org.apache.nifi.remote.protocol.FlowFileTransaction;
+import org.apache.nifi.remote.protocol.http.HttpControlPacket;
 import org.apache.nifi.remote.protocol.http.HttpFlowFileServerProtocol;
-import org.apache.nifi.remote.util.StandardDataPacket;
-import org.apache.nifi.stream.io.ByteArrayInputStream;
 import org.apache.nifi.stream.io.ByteArrayOutputStream;
 import org.apache.nifi.util.NiFiProperties;
 import org.apache.nifi.web.NiFiServiceFacade;
@@ -53,9 +53,11 @@ import org.apache.nifi.web.controller.ControllerFacade;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.servlet.ServletContext;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.ws.rs.Consumes;
+import javax.ws.rs.DELETE;
 import javax.ws.rs.DefaultValue;
 import javax.ws.rs.GET;
 import javax.ws.rs.HttpMethod;
@@ -73,9 +75,15 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static org.apache.nifi.remote.client.http.SiteToSiteRestApiUtil.LOCATION_URI_INTENT_NAME;
+import static org.apache.nifi.remote.client.http.SiteToSiteRestApiUtil.LOCATION_URI_INTENT_VALUE;
 
 /**
  * RESTful endpoint for managing a SiteToSite connection.
@@ -88,6 +96,9 @@ import java.util.concurrent.atomic.AtomicReference;
 public class SiteToSiteResource extends ApplicationResource {
 
     private static final Logger logger = LoggerFactory.getLogger(SiteToSiteResource.class);
+
+    public static final String CHECK_SUM = "checksum";
+    public static final String CONTEXT_ATTRIBUTE_TX_ON_HOLD = "txOnHold";
 
     // TODO: Remove serviceFacade if we don't need it.
     private NiFiServiceFacade serviceFacade;
@@ -162,7 +173,7 @@ public class SiteToSiteResource extends ApplicationResource {
     @POST
     @Consumes(MediaType.APPLICATION_OCTET_STREAM)
     @Produces(MediaType.APPLICATION_JSON)
-    @Path("ports/{id}/flow-files")
+    @Path("ports/{portId}/flow-files")
     // TODO - @PreAuthorize("hasAnyRole('ROLE_MONITOR', 'ROLE_DFM', 'ROLE_ADMIN')")
     @ApiOperation(
             value = "Transfer flow files to input port",
@@ -192,19 +203,21 @@ public class SiteToSiteResource extends ApplicationResource {
                     value = "The input port id.",
                     required = true
             )
-            @PathParam("id") String id,
+            @PathParam("portId") String portId,
             @Context HttpServletRequest req,
+            @Context ServletContext context,
             InputStream inputStream) {
 
-        logger.info("### receiveFlowFiles request: id=" + id + " inputStream=" + inputStream, " req=" + req);
+        logger.info("### receiveFlowFiles request: portId=" + portId + " inputStream=" + inputStream, " req=" + req);
 
-        RootGroupPort port = getRootGroupPort(id, true);
+        RootGroupPort port = getRootGroupPort(portId, true);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        Peer peer = initiatePeer(req, inputStream, out);
+        String txId = UUID.randomUUID().toString();
+        Peer peer = initiatePeer(req, inputStream, out, txId);
 
         try {
-            HttpFlowFileServerProtocol serverProtocol = initiateServerProtocol(peer);
+            HttpFlowFileServerProtocol serverProtocol = initiateServerProtocol(peer, context);
 
             // TODO: this request Headers is never used, target for refactoring.
             port.receiveFlowFiles(peer, serverProtocol, null);
@@ -219,22 +232,23 @@ public class SiteToSiteResource extends ApplicationResource {
         return clusterContext(noCache(Response.ok(entity))).build();
     }
 
-    private HttpFlowFileServerProtocol initiateServerProtocol(Peer peer) throws IOException {
+    private HttpFlowFileServerProtocol initiateServerProtocol(Peer peer, ServletContext context) throws IOException {
         // TODO: get rootGroup
         // Socket version impl is SocketRemoteSiteListener
         // serverProtocol.setRootProcessGroup(rootGroup.get());
-        HttpFlowFileServerProtocol serverProtocol = new HttpFlowFileServerProtocol();
+        ConcurrentMap<String, FlowFileTransaction> txOnHold = (ConcurrentMap<String, FlowFileTransaction>)context.getAttribute(CONTEXT_ATTRIBUTE_TX_ON_HOLD);
+        HttpFlowFileServerProtocol serverProtocol = new HttpFlowFileServerProtocol(txOnHold);
         serverProtocol.setNodeInformant(clusterManager);
         serverProtocol.handshake(peer);
         return serverProtocol;
     }
 
-    private Peer initiatePeer(@Context HttpServletRequest req, InputStream inputStream, OutputStream outputStream) {
+    private Peer initiatePeer(@Context HttpServletRequest req, InputStream inputStream, OutputStream outputStream, String txId) {
         String clientHostName = req.getRemoteHost();
         int clientPort = req.getRemotePort();
         PeerDescription peerDescription = new PeerDescription(clientHostName, clientPort, req.isSecure());
 
-        CommunicationsSession commSession = new HttpCommunicationsSession(inputStream, outputStream);
+        CommunicationsSession commSession = new HttpCommunicationsSession(inputStream, outputStream, txId);
 
         // TODO: Are those values used? Yes, for logging.
         String clusterUrl = "Unkown";
@@ -258,10 +272,81 @@ public class SiteToSiteResource extends ApplicationResource {
         return port;
     }
 
+    @DELETE
+    @Consumes(MediaType.APPLICATION_OCTET_STREAM)
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("ports/{portId}/tx/{transactionId}")
+    // TODO - @PreAuthorize("hasAnyRole('ROLE_MONITOR', 'ROLE_DFM', 'ROLE_ADMIN')")
+    @ApiOperation(
+            value = "Transfer flow files to input port",
+            response = TransactionResultEntity.class,
+            authorizations = {
+                    @Authorization(value = "Read Only", type = "ROLE_MONITOR"),
+                    @Authorization(value = "Data Flow Manager", type = "ROLE_DFM"),
+                    @Authorization(value = "Administrator", type = "ROLE_ADMIN")
+            }
+    )
+    @ApiResponses(
+            value = {
+                    @ApiResponse(code = 400, message = "NiFi was unable to complete the request because it was invalid. The request should not be retried without modification."),
+                    @ApiResponse(code = 401, message = "Client could not be authenticated."),
+                    @ApiResponse(code = 403, message = "Client is not authorized to make this request."),
+                    @ApiResponse(code = 404, message = "The specified resource could not be found."),
+                    @ApiResponse(code = 409, message = "The request was valid but NiFi was not in the appropriate state to process it. Retrying the same request later may be successful.")
+            }
+    )
+    public Response commitTransaction(
+            @ApiParam(
+                    value = "If the client id is not specified, new one will be generated. This value (whether specified or generated) is included in the response.",
+                    required = false
+            )
+            @QueryParam(CLIENT_ID) @DefaultValue(StringUtils.EMPTY) ClientIdParameter clientId,
+            @ApiParam(
+                    value = "A checksum calculated at client side using CRC32 to check flow file content integrity. It must be matched with the value calculated at server side.",
+                    required = true
+            )
+            @QueryParam(CHECK_SUM) @DefaultValue(StringUtils.EMPTY) String checksum,
+            @ApiParam(
+                    value = "The input port id.",
+                    required = true
+            )
+            @PathParam("portId") String portId,
+            @ApiParam(
+                    value = "The transaction id.",
+                    required = true
+            )
+            @PathParam("transactionId") String transactionId,
+            @Context HttpServletRequest req,
+            @Context ServletContext context,
+            InputStream inputStream) {
+
+        logger.info("### commitTransaction request: portId=" + portId + " transactionId=" + transactionId);
+
+        RootGroupPort port = getRootGroupPort(portId, false);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Peer peer = initiatePeer(req, inputStream, out, transactionId);
+
+        try {
+            // TODO: Grab holding transaction and commit it.
+            HttpFlowFileServerProtocol serverProtocol = initiateServerProtocol(peer, context);
+            serverProtocol.commitTransferTransaction(peer, checksum);
+        } catch (IOException e) {
+            // TODO: error handling.
+            logger.error("Failed to process the request.", e);
+            return Response.serverError().build();
+        }
+
+        // TODO: Construct meaningful result.
+        TransactionResultEntity entity = new TransactionResultEntity();
+        return clusterContext(noCache(Response.ok(entity))).build();
+    }
+
+
     @GET
     @Consumes(MediaType.WILDCARD)
     @Produces(MediaType.APPLICATION_OCTET_STREAM)
-    @Path("ports/{id}/flow-files")
+    @Path("ports/{portId}/flow-files")
     // TODO - @PreAuthorize("hasAnyRole('ROLE_MONITOR', 'ROLE_DFM', 'ROLE_ADMIN')")
     @ApiOperation(
             value = "Receive flow files from output port",
@@ -292,29 +377,33 @@ public class SiteToSiteResource extends ApplicationResource {
                     value = "The input port id.",
                     required = true
             )
-            @PathParam("id") String id,
+            @PathParam("portId") String portId,
             @Context HttpServletRequest req,
             @Context HttpServletResponse res,
+            @Context ServletContext context,
             InputStream inputStream) {
 
-        logger.info("### transferFlowFiles request: id=" + id + " inputStream=" + inputStream, " req=" + req);
+        logger.info("### transferFlowFiles request: portId=" + portId + " inputStream=" + inputStream, " req=" + req);
 
-        RootGroupPort port = getRootGroupPort(id, false);
+        RootGroupPort port = getRootGroupPort(portId, false);
 
+        String txId = UUID.randomUUID().toString();
 
         StreamingOutput flowFileContent = new StreamingOutput() {
             @Override
             public void write(OutputStream outputStream) throws IOException, WebApplicationException {
 
-                Peer peer = initiatePeer(req, inputStream, outputStream);
+                Peer peer = initiatePeer(req, inputStream, outputStream, txId);
 
-                HttpFlowFileServerProtocol serverProtocol = initiateServerProtocol(peer);
+                HttpFlowFileServerProtocol serverProtocol = initiateServerProtocol(peer, context);
 
                 try {
                     // TODO: this request Headers is never used, target for refactoring.
                     int numOfFlowFiles = port.transferFlowFiles(peer, serverProtocol, null);
-                    if(numOfFlowFiles < 1) {
-                        throw new WebApplicationException(HttpServletResponse.SC_NO_CONTENT);
+                    logger.info("### finished transferring flow files, now waiting for a confirmation request... numOfFlowFiles=" + numOfFlowFiles);
+                    if(numOfFlowFiles < 1){
+                        // TODO: don't know how can WebApplicationException be used here. It creates 200, instead of 204.
+                        throw new WebApplicationException(Response.Status.NO_CONTENT);
                     }
                 } catch (NotAuthorizedException | BadRequestException | RequestExpiredException e) {
                     throw new IOException("Failed to process the request.", e);
@@ -326,15 +415,25 @@ public class SiteToSiteResource extends ApplicationResource {
                     logger.error("### Something happened", e);
                     FlowFileCodec codec = new StandardFlowFileCodec();
                     OutputStream errStream = peer.getCommunicationsSession().getOutput().getOutputStream();
-                    byte[] errMsgBytes = e.getMessage().getBytes("UTF-8");
-                    ByteArrayInputStream bis = new ByteArrayInputStream(errMsgBytes);
-                    StandardDataPacket errPacket = new StandardDataPacket(new HashMap<>(0), bis, errMsgBytes.length);
+                    HttpControlPacket errPacket = HttpControlPacket.createErrorPacket(e);
                     codec.encode(errPacket, errStream);
                 }
             }
         };
 
-        return clusterContext(noCache(Response.ok(flowFileContent))).build();
+        // We can't modify response code because we've already written it here.
+        // TODO: write confirmation URL header.
+        String requestedUrl = req.getRequestURL().toString();
+        String locationUrl = "site-to-site/ports/" + portId + "/tx/" + txId;
+        URI location;
+        try {
+            location = new URI(locationUrl);
+        } catch (URISyntaxException e){
+            throw new RuntimeException("Failed to create a transaction uri", e);
+        }
+        return clusterContext(noCache(Response.seeOther(location)
+                .header(LOCATION_URI_INTENT_NAME, LOCATION_URI_INTENT_VALUE))
+                .entity(flowFileContent)).build();
     }
 
     // setters

@@ -13,11 +13,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.net.ssl.SSLContext;
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.util.Iterator;
 import java.util.Set;
+import java.util.zip.CRC32;
+import java.util.zip.CheckedInputStream;
 
 public class HttpClientTransaction extends AbstractTransaction {
     private static final Logger logger = LoggerFactory.getLogger(HttpClientTransaction.class);
@@ -27,6 +31,8 @@ public class HttpClientTransaction extends AbstractTransaction {
     private Set<DataPacket> buffer;
     private Iterator<DataPacket> bufferIterator;
     private FlowFileCodec codec;
+    private String holdUri;
+    private final CRC32 crc = new CRC32();
 
     public HttpClientTransaction(final Peer peer, TransferDirection direction, final String portId, final SSLContext sslContext, final int timeoutMillis) throws IOException {
         super(peer, direction);
@@ -40,7 +46,7 @@ public class HttpClientTransaction extends AbstractTransaction {
         if(TransferDirection.SEND.equals(direction)){
             apiUtil.openConnectionForSend(portId, peer.getCommunicationsSession());
         } else {
-            apiUtil.openConnectionForReceive(portId, peer.getCommunicationsSession());
+            holdUri = apiUtil.openConnectionForReceive(portId, peer.getCommunicationsSession());
         }
     }
 
@@ -54,7 +60,12 @@ public class HttpClientTransaction extends AbstractTransaction {
     @Override
     public DataPacket receive() throws IOException {
         InputStream is = peer.getCommunicationsSession().getInput().getInputStream();
-        return codec.decode(is);
+        DataPacket packet = codec.decode(new CheckedInputStream(is, crc));
+        if(packet instanceof HttpControlPacket){
+            BufferedReader br = new BufferedReader(new InputStreamReader(packet.getData()));
+            throw new IOException(br.readLine());
+        }
+        return packet;
     }
 
     @Override
@@ -65,6 +76,8 @@ public class HttpClientTransaction extends AbstractTransaction {
             // TODO: Get Response
 
             // TODO: Send confirmation to TX
+        } else {
+            apiUtil.commitReceivingFlowFiles(holdUri, String.valueOf(crc.getValue()));
         }
     }
 
@@ -73,8 +86,6 @@ public class HttpClientTransaction extends AbstractTransaction {
         // TODO: Create TransactionCompletion to return.
         if(TransferDirection.SEND.equals(direction)){
             return new ClientTransactionCompletion(false, 0, 0L, 0L);
-        } else {
-
         }
         return new ClientTransactionCompletion(false, 0, 0L, 0L);
     }

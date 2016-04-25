@@ -61,7 +61,6 @@ public class HttpClient extends AbstractSiteToSiteClient {
         PeerDTO nodeApiPeerDto = peers.iterator().next();
 
         PeerDescription description = new PeerDescription(nodeApiPeerDto.getHostname(), nodeApiPeerDto.getPort(), nodeApiPeerDto.isSecure());
-        // TODO: Maybe I can open HTTP request at here and pass input and output stream here.
 
         CommunicationsSession commSession = new HttpCommunicationsSession();
         String nodeApiUrl = resolveNodeApiUrl(description);

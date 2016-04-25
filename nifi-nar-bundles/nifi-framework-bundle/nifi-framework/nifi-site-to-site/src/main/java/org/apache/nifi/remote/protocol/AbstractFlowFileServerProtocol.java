@@ -223,7 +223,17 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
             }
         }
 
+        FlowFileTransaction tx = new FlowFileTransaction(session, stopWatch, bytesSent, flowFilesSent, calculatedCRC);
+        return commitTransferTransaction(peer, tx);
+
+    }
+
+    protected int commitTransferTransaction(Peer peer, FlowFileTransaction tx) throws IOException {
+        ProcessSession session = tx.getSession();
+        Set<FlowFile> flowFilesSent = tx.getFlowFilesSent();
+
         // we've sent a FINISH_TRANSACTION. Now we'll wait for the peer to send a 'Confirm Transaction' response
+        CommunicationsSession commsSession = peer.getCommunicationsSession();
         final Response transactionConfirmationResponse = readTransactionResponse(commsSession);
         if (transactionConfirmationResponse.getCode() == ResponseCode.CONFIRM_TRANSACTION) {
             // Confirm Checksum and echo back the confirmation.
@@ -231,6 +241,7 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
             final String receivedCRC = transactionConfirmationResponse.getMessage();
 
             if (versionNegotiator.getVersion() > 3) {
+                String calculatedCRC = tx.getCalculatedCRC();
                 if (!receivedCRC.equals(calculatedCRC)) {
                     writeTransactionResponse(ResponseCode.BAD_CHECKSUM, commsSession);
                     session.rollback();
@@ -241,6 +252,7 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
             }
 
             writeTransactionResponse(ResponseCode.CONFIRM_TRANSACTION, commsSession);
+
         } else {
             throw new ProtocolException("Expected to receive 'Confirm Transaction' response from peer " + peer + " but received " + transactionConfirmationResponse);
         }
@@ -268,6 +280,8 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
 
         session.commit();
 
+        StopWatch stopWatch = tx.getStopWatch();
+        long bytesSent = tx.getBytesSent();
         stopWatch.stop();
         final String uploadDataRate = stopWatch.calculateDataRate(bytesSent);
         final long uploadMillis = stopWatch.getDuration(TimeUnit.MILLISECONDS);

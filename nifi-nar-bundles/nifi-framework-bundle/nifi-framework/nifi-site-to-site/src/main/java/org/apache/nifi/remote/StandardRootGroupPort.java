@@ -236,7 +236,8 @@ public class StandardRootGroupPort extends AbstractPort implements RootGroupPort
             return;
         }
 
-        session.commit();
+        // TODO: Comfirm this. Session.commit here is not required since it has been committed inside receiveFlowFiles/transferFlowFiles.
+        // session.commit();
         responseQueue.add(new ProcessingResult(transferCount));
     }
 

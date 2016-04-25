@@ -17,6 +17,7 @@
 package org.apache.nifi.remote.io.http;
 
 import org.apache.nifi.remote.AbstractCommunicationsSession;
+import org.apache.nifi.remote.Transaction;
 import org.apache.nifi.remote.protocol.CommunicationsInput;
 import org.apache.nifi.remote.protocol.CommunicationsOutput;
 
@@ -30,11 +31,15 @@ public class HttpCommunicationsSession extends AbstractCommunicationsSession {
 
     private final HttpInput input;
     private final HttpOutput output;
+    private String txId;
+    private String checksum;
+    private Transaction.TransactionState status = Transaction.TransactionState.TRANSACTION_STARTED;
 
-    public HttpCommunicationsSession(InputStream inputStream, OutputStream outputStream){
+    public HttpCommunicationsSession(InputStream inputStream, OutputStream outputStream, String txId){
         this();
         input.setInputStream(inputStream);
         output.setOutputStream(outputStream);
+        this.txId = txId;
     }
 
     public HttpCommunicationsSession(){
@@ -92,4 +97,29 @@ public class HttpCommunicationsSession extends AbstractCommunicationsSession {
 
     }
 
+    public String getTxId() {
+        return txId;
+    }
+
+    public void setTxId(String txId) {
+        this.txId = txId;
+    }
+
+
+    public String getChecksum() {
+        return checksum;
+    }
+
+    public void setChecksum(String checksum) {
+        this.checksum = checksum;
+    }
+
+
+    public Transaction.TransactionState getStatus() {
+        return status;
+    }
+
+    public void setStatus(Transaction.TransactionState status) {
+        this.status = status;
+    }
 }

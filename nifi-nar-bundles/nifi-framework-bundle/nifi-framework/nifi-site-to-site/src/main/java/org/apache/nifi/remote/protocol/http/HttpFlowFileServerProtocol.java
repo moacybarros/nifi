@@ -23,14 +23,17 @@ import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.remote.Peer;
 import org.apache.nifi.remote.StandardVersionNegotiator;
+import org.apache.nifi.remote.Transaction;
 import org.apache.nifi.remote.VersionNegotiator;
 import org.apache.nifi.remote.codec.FlowFileCodec;
 import org.apache.nifi.remote.codec.StandardFlowFileCodec;
 import org.apache.nifi.remote.exception.HandshakeException;
 import org.apache.nifi.remote.exception.ProtocolException;
+import org.apache.nifi.remote.io.http.HttpCommunicationsSession;
 import org.apache.nifi.remote.protocol.AbstractFlowFileServerProtocol;
 import org.apache.nifi.remote.protocol.CommunicationsSession;
 import org.apache.nifi.remote.protocol.DataPacket;
+import org.apache.nifi.remote.protocol.FlowFileTransaction;
 import org.apache.nifi.remote.protocol.HandshakenProperties;
 import org.apache.nifi.remote.protocol.RequestType;
 import org.apache.nifi.remote.protocol.socket.Response;
@@ -46,6 +49,7 @@ import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 
 public class HttpFlowFileServerProtocol extends AbstractFlowFileServerProtocol {
@@ -53,9 +57,14 @@ public class HttpFlowFileServerProtocol extends AbstractFlowFileServerProtocol {
     public static final String RESOURCE_NAME = "HttpFlowFileProtocol";
 
     private final FlowFileCodec codec = new StandardFlowFileCodec();
-
-
     private final VersionNegotiator versionNegotiator = new StandardVersionNegotiator(5, 4, 3, 2, 1);
+
+    private ConcurrentMap<String, FlowFileTransaction> txOnHold;
+
+    public HttpFlowFileServerProtocol(ConcurrentMap<String, FlowFileTransaction> txOnHold){
+        super();
+        this.txOnHold = txOnHold;
+    }
 
     @Override
     public FlowFileCodec negotiateCodec(final Peer peer) throws IOException {
@@ -77,115 +86,78 @@ public class HttpFlowFileServerProtocol extends AbstractFlowFileServerProtocol {
 
     @Override
     protected void writeTransactionResponse(ResponseCode response, CommunicationsSession commsSession) throws IOException {
+        HttpCommunicationsSession commSession = (HttpCommunicationsSession) commsSession;
         switch (response) {
+            case NO_MORE_DATA:
+                // TODO: How can I return 204 here?
+                logger.debug("### There's no data to send.");
+                break;
             case CONTINUE_TRANSACTION:
                 logger.debug("### continue transaction... expecting more flow files.");
+                commSession.setStatus(Transaction.TransactionState.DATA_EXCHANGED);
                 break;
             case BAD_CHECKSUM:
-                logger.debug("### received BAD_CHECKSUM.");
+                logger.debug("received BAD_CHECKSUM.");
+                commSession.setStatus(Transaction.TransactionState.ERROR);
+                throw new IOException("Checksum didn't match. BAD_CHECKSUM.");
+            case CONFIRM_TRANSACTION:
+                logger.debug("### transaction is confirmed.");
+                commSession.setStatus(Transaction.TransactionState.TRANSACTION_CONFIRMED);
                 break;
             case FINISH_TRANSACTION:
-                logger.debug("### transaction finished... proceeding to Checksum.");
+                logger.debug("### transaction is ccompleted.");
+                commSession.setStatus(Transaction.TransactionState.TRANSACTION_COMPLETED);
                 break;
         }
     }
 
     @Override
     protected Response readTransactionResponse(CommunicationsSession commsSession) throws IOException {
-        // TODO: return ResponseCode.CONFIRM_TRANSACTION
+        // Returns Response based on current status.
+        HttpCommunicationsSession commSession = (HttpCommunicationsSession) commsSession;
+
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
-        ResponseCode.CONFIRM_TRANSACTION.writeResponse(new DataOutputStream(bos), "SKIP");
+        switch (commSession.getStatus()){
+            case DATA_EXCHANGED:
+                String clientChecksum = ((HttpCommunicationsSession)commsSession).getChecksum();
+                logger.info("### readTransactionResponse. clientChecksum=" + clientChecksum);
+                ResponseCode.CONFIRM_TRANSACTION.writeResponse(new DataOutputStream(bos), clientChecksum);
+                break;
+            case TRANSACTION_CONFIRMED:
+                logger.info("### readTransactionResponse. finishing.");
+                ResponseCode.TRANSACTION_FINISHED.writeResponse(new DataOutputStream(bos));
+                break;
+        }
+
         ByteArrayInputStream bis = new ByteArrayInputStream(bos.toByteArray());
         return Response.read(new DataInputStream(bis));
     }
 
-    /*
     @Override
-    public int transferFlowFiles(final Peer peer, final ProcessContext context, final ProcessSession session, final FlowFileCodec codec) throws IOException, ProtocolException {
-        logger.debug("{} Sending FlowFiles to {}", this, peer);
-        final CommunicationsSession commsSession = peer.getCommunicationsSession();
-        final InputStream is = commsSession.getInput().getInputStream();
-        final OutputStream os = commsSession.getOutput().getOutputStream();
-        String remoteDn = commsSession.getUserDn();
-        if (remoteDn == null) {
-            remoteDn = "none";
-        }
+    protected int commitTransferTransaction(Peer peer, FlowFileTransaction tx) throws IOException {
+        // We don't commit the session here yet,
+        // to avoid losing sent flow files in case some issue happens at client side while it is processing,
+        // hold the transaction until we confirm additional request from client.
+        HttpCommunicationsSession commSession = (HttpCommunicationsSession) peer.getCommunicationsSession();
+        String txId = commSession.getTxId();
+        logger.info("### Holding transaction. txId=" + txId);
+        txOnHold.put(txId, tx);
 
-        final StopWatch stopWatch = new StopWatch(true);
-        long bytesSent = 0L;
-        final Set<FlowFile> flowFilesSent = new HashSet<>();
-
-
-        while(true){
-            FlowFile flowFile = session.get();
-            if (flowFile == null) {
-                // we have no data to send. Notify the peer.
-                logger.debug("{} No more data to send to {}", this, peer);
-                break;
-            }
-
-            logger.debug("{} Sending {} to {}", new Object[]{this, flowFile, peer});
-
-            final StopWatch transferWatch = new StopWatch(true);
-
-            final FlowFile toSend = flowFile;
-            session.read(flowFile, new InputStreamCallback() {
-                @Override
-                public void process(final InputStream in) throws IOException {
-                    final DataPacket dataPacket = new StandardDataPacket(toSend.getAttributes(), in, toSend.getSize());
-                    codec.encode(dataPacket, os);
-                    os.flush();
-                }
-            });
-
-            final long transmissionMillis = transferWatch.getElapsed(TimeUnit.MILLISECONDS);
-
-            flowFilesSent.add(flowFile);
-            bytesSent += flowFile.getSize();
-
-            final String transitUri = (transitUriPrefix == null) ? peer.getUrl() : transitUriPrefix + flowFile.getAttribute(CoreAttributes.UUID.key());
-            session.getProvenanceReporter().send(flowFile, transitUri, "Remote Host=" + peer.getHost() + ", Remote DN=" + remoteDn, transmissionMillis, false);
-            session.remove(flowFile);
-        }
-
-
-
-        // TODO: Should we wait for receiving tx completed request from client? Otherwise we can't determine if the client successfully stored the flow file.
-//        final Response transactionResponse;
-//        try {
-//            transactionResponse = Response.read(dis);
-//        } catch (final IOException e) {
-//            logger.error("{} Failed to receive a response from {} when expecting a TransactionFinished Indicator."
-//                    + " It is unknown whether or not the peer successfully received/processed the data."
-//                    + " Therefore, {} will be rolled back, possibly resulting in data duplication of {}",
-//                    this, peer, session, flowFileDescription);
-//            session.rollback();
-//            throw e;
-//        }
-
-        // TODO: How to penalize?
-//        logger.debug("{} received {} from {}", new Object[]{this, transactionResponse, peer});
-//        if (transactionResponse.getCode() == ResponseCode.TRANSACTION_FINISHED_BUT_DESTINATION_FULL) {
-//            peer.penalize(port.getIdentifier(), port.getYieldPeriod(TimeUnit.MILLISECONDS));
-//        } else if (transactionResponse.getCode() != ResponseCode.TRANSACTION_FINISHED) {
-//            throw new ProtocolException("After sending data, expected TRANSACTION_FINISHED response but got " + transactionResponse);
-//        }
-
-        final String flowFileDescription = flowFilesSent.size() < 20 ? flowFilesSent.toString() : flowFilesSent.size() + " FlowFiles";
-
-        session.commit();
-
-        stopWatch.stop();
-        final String uploadDataRate = stopWatch.calculateDataRate(bytesSent);
-        final long uploadMillis = stopWatch.getDuration(TimeUnit.MILLISECONDS);
-        final String dataSize = FormatUtils.formatDataSize(bytesSent);
-        logger.info("{} Successfully sent {} ({}) to {} in {} milliseconds at a rate of {}", new Object[]{
-                this, flowFileDescription, dataSize, peer, uploadMillis, uploadDataRate});
-
-        return flowFilesSent.size();
+        return tx.getFlowFilesSent().size();
     }
 
-    */
+    public int commitTransferTransaction(Peer peer, String clientChecksum) throws IOException {
+        logger.info("### Now, finally committing the transaction. clientChecksum=" + clientChecksum);
+        HttpCommunicationsSession commSession = (HttpCommunicationsSession) peer.getCommunicationsSession();
+        String txId = commSession.getTxId();
+        FlowFileTransaction tx = txOnHold.get(txId);
+        if(tx == null){
+            throw new IOException("Transaction was not found. txId=" + txId);
+        }
+        commSession.setChecksum(clientChecksum);
+        commSession.setStatus(Transaction.TransactionState.DATA_EXCHANGED);
+        return super.commitTransferTransaction(peer, tx);
+    }
 
     @Override
     public int receiveFlowFiles(final Peer peer, final ProcessContext context, final ProcessSession session, final FlowFileCodec codec) throws IOException, ProtocolException {
