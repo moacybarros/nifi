@@ -31,15 +31,15 @@ public class HttpCommunicationsSession extends AbstractCommunicationsSession {
 
     private final HttpInput input;
     private final HttpOutput output;
-    private String txId;
+    private String transactionId;
     private String checksum;
     private Transaction.TransactionState status = Transaction.TransactionState.TRANSACTION_STARTED;
 
-    public HttpCommunicationsSession(InputStream inputStream, OutputStream outputStream, String txId){
+    public HttpCommunicationsSession(InputStream inputStream, OutputStream outputStream, String transactionId){
         this();
         input.setInputStream(inputStream);
         output.setOutputStream(outputStream);
-        this.txId = txId;
+        this.transactionId = transactionId;
     }
 
     public HttpCommunicationsSession(){
@@ -97,12 +97,12 @@ public class HttpCommunicationsSession extends AbstractCommunicationsSession {
 
     }
 
-    public String getTxId() {
-        return txId;
+    public String getTransactionId() {
+        return transactionId;
     }
 
-    public void setTxId(String txId) {
-        this.txId = txId;
+    public void setTransactionId(String transactionId) {
+        this.transactionId = transactionId;
     }
 
 

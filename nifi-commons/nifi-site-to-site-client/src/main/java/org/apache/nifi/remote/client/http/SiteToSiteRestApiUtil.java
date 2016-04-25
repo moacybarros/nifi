@@ -17,6 +17,7 @@
 package org.apache.nifi.remote.client.http;
 
 import org.apache.nifi.remote.exception.ProtocolException;
+import org.apache.nifi.remote.io.http.HttpCommunicationsSession;
 import org.apache.nifi.remote.io.http.HttpInput;
 import org.apache.nifi.remote.io.http.HttpOutput;
 import org.apache.nifi.remote.protocol.CommunicationsSession;
@@ -60,7 +61,8 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
         urlConnection.setDoOutput(true);
         urlConnection.setRequestMethod("POST");
         urlConnection.setRequestProperty("Content-Type", "application/octet-stream");
-        urlConnection.setRequestProperty("Accept", "application/json");
+        urlConnection.setRequestProperty("Accept", "text/plain");
+        urlConnection.setInstanceFollowRedirects(false);
 
         ((HttpOutput)commSession.getOutput()).setOutputStream(urlConnection.getOutputStream());
 
@@ -85,15 +87,47 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
             return null;
 
         } else if (responseCode == 303) {
-            // TODO: Get HTTP Header to send confirm request.
-            final String locationUriIntentHeader = urlConnection.getHeaderField(LOCATION_URI_INTENT_NAME);
-            logger.debug("### Received 303: locationUriIntentHeader=" + locationUriIntentHeader);
-            if (locationUriIntentHeader != null) {
-                if (LOCATION_URI_INTENT_VALUE.equals(locationUriIntentHeader)) {
-                    String holdUri = urlConnection.getHeaderField(LOCATION_HEADER_NAME);
-                    logger.debug("### Received 303: holdUri=" + holdUri);
-                    return holdUri;
-                }
+            String holdUri = getHoldUri();
+            if (holdUri != null) return holdUri;
+
+            throw new ProtocolException("Server returned 303 without Location header");
+
+        } else {
+            // TODO: more sophisticated error handling.
+            throw new RuntimeException("Unexpected response code: " + responseCode);
+        }
+
+    }
+
+    private String getHoldUri() {
+        final String locationUriIntentHeader = urlConnection.getHeaderField(LOCATION_URI_INTENT_NAME);
+        logger.debug("Received 303: locationUriIntentHeader={}", locationUriIntentHeader);
+        if (locationUriIntentHeader != null) {
+            if (LOCATION_URI_INTENT_VALUE.equals(locationUriIntentHeader)) {
+                String holdUri = urlConnection.getHeaderField(LOCATION_HEADER_NAME);
+                logger.debug("### Received 303: holdUri={}", holdUri);
+                return holdUri;
+            }
+        }
+        return null;
+    }
+
+    public String transferFlowFile(String portId, CommunicationsSession commSession) throws IOException {
+        logger.info("### Sending transferFlowFile request to port: " + portId);
+
+        commSession.getOutput().getOutputStream().flush();
+
+        int responseCode = urlConnection.getResponseCode();
+        if (responseCode == 303) {
+            String holdUri = getHoldUri();
+            if (holdUri != null) {
+                ((HttpInput)commSession.getInput()).setInputStream(urlConnection.getInputStream());
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                StreamUtils.copy(commSession.getInput().getInputStream(), bos);
+                String receivedChecksum = bos.toString("UTF-8");
+                ((HttpCommunicationsSession)commSession).setChecksum(receivedChecksum);
+                logger.debug("Sent request to port: {} receivedChecksum={}", portId, receivedChecksum);
+                return holdUri;
             }
 
             throw new ProtocolException("Server returned 303 without Location header");
@@ -105,21 +139,8 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
 
     }
 
-    public void transferFlowFile(String portId, CommunicationsSession commSession) throws IOException {
-        logger.info("### Sending transferFlowFile request to port: " + portId);
-
-        commSession.getOutput().getOutputStream().flush();
-
-        // TODO: Check response.
-        ((HttpInput)commSession.getInput()).setInputStream(urlConnection.getInputStream());
-        ByteArrayOutputStream bos = new ByteArrayOutputStream();
-        StreamUtils.copy(commSession.getInput().getInputStream(), bos);
-        String result = bos.toString("UTF-8");
-        logger.info("### Sent request to port: " + portId + " result=" + result);
-    }
-
     public void commitReceivingFlowFiles(String holdUri, String checksum) throws IOException {
-        logger.info("### Sending commitReceivingFlowFiles request to holdUri: " + holdUri + " checksum=" + checksum);
+        logger.debug("Sending commitReceivingFlowFiles request to holdUri: " + holdUri + " checksum=" + checksum);
 
         urlConnection = getConnection(holdUri + "?checksum=" + checksum);
         urlConnection.setRequestMethod("DELETE");
@@ -127,13 +148,35 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
 
 
         int responseCode = urlConnection.getResponseCode();
-        logger.debug("### commitReceivingFlowFiles responseCode=" + responseCode);
+        logger.debug("commitReceivingFlowFiles responseCode={}", responseCode);
 
 
         if (responseCode == 200) {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             StreamUtils.copy(urlConnection.getInputStream(), bos);
             logger.debug("### commitReceivingFlowFiles reader.readLine()=" + new String(bos.toByteArray(), "UTF-8"));
+        } else {
+            // TODO: more sophisticated error handling.
+            throw new RuntimeException("Unexpected response code: " + responseCode);
+        }
+    }
+
+    public void commitTransferFlowFiles(String holdUri) throws IOException {
+        logger.info("### Sending commitTransferFlowFiles request to holdUri: " + holdUri);
+
+        urlConnection = getConnection(holdUri);
+        urlConnection.setRequestMethod("DELETE");
+        urlConnection.setRequestProperty("Accept", "application/json");
+
+
+        int responseCode = urlConnection.getResponseCode();
+        logger.debug("### commitTransferFlowFiles responseCode=" + responseCode);
+
+
+        if (responseCode == 200) {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            StreamUtils.copy(urlConnection.getInputStream(), bos);
+            logger.debug("### commitTransferFlowFiles reader.readLine()=" + new String(bos.toByteArray(), "UTF-8"));
         } else {
             // TODO: more sophisticated error handling.
             throw new RuntimeException("Unexpected response code: " + responseCode);

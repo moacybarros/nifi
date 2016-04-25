@@ -18,18 +18,15 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.util.Iterator;
-import java.util.Set;
 import java.util.zip.CRC32;
 import java.util.zip.CheckedInputStream;
+import java.util.zip.CheckedOutputStream;
 
 public class HttpClientTransaction extends AbstractTransaction {
     private static final Logger logger = LoggerFactory.getLogger(HttpClientTransaction.class);
 
     private final SiteToSiteRestApiUtil apiUtil;
     private final String portId;
-    private Set<DataPacket> buffer;
-    private Iterator<DataPacket> bufferIterator;
     private FlowFileCodec codec;
     private String holdUri;
     private final CRC32 crc = new CRC32();
@@ -52,9 +49,8 @@ public class HttpClientTransaction extends AbstractTransaction {
 
     @Override
     public void send(DataPacket dataPacket) throws IOException {
-        logger.info("### Buffering dataPacket to send to port: " + portId);
         OutputStream os = peer.getCommunicationsSession().getOutput().getOutputStream();
-        codec.encode(dataPacket, os);
+        codec.encode(dataPacket, new CheckedOutputStream(os, crc));
     }
 
     @Override
@@ -71,11 +67,9 @@ public class HttpClientTransaction extends AbstractTransaction {
     @Override
     public void confirm() throws IOException {
         if(TransferDirection.SEND.equals(direction)){
-            // TODO: Flush the output stream
-            apiUtil.transferFlowFile(portId, peer.getCommunicationsSession());
-            // TODO: Get Response
-
-            // TODO: Send confirmation to TX
+            // A holdUri always be returned, otherwise an exception should be thrown.
+            holdUri = apiUtil.transferFlowFile(portId, peer.getCommunicationsSession());
+            apiUtil.commitTransferFlowFiles(holdUri);
         } else {
             if(holdUri == null){
                 logger.debug("There's no transaction to confirm.");

@@ -132,13 +132,13 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
         if (flowFile == null) {
             // we have no data to send. Notify the peer.
             logger.debug("{} No data to send to {}", this, peer);
-            writeTransactionResponse(ResponseCode.NO_MORE_DATA, commsSession);
+            writeTransactionResponse(true, ResponseCode.NO_MORE_DATA, commsSession);
             return 0;
         }
 
         // we have data to send.
         logger.debug("{} Data is available to send to {}", this, peer);
-        writeTransactionResponse(ResponseCode.MORE_DATA, commsSession);
+        writeTransactionResponse(true, ResponseCode.MORE_DATA, commsSession);
 
         final StopWatch stopWatch = new StopWatch(true);
         long bytesSent = 0L;
@@ -149,7 +149,7 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
         boolean continueTransaction = true;
         final long startNanos = System.nanoTime();
         String calculatedCRC = "";
-        OutputStream os = getFlowFileOutputStream(commsSession);
+        OutputStream os = new DataOutputStream(commsSession.getOutput().getOutputStream());
         while (continueTransaction) {
             final boolean useGzip = handshakenProperties.isUseGzip();
             final OutputStream flowFileOutputStream = useGzip ? new CompressionOutputStream(os) : os;
@@ -215,35 +215,35 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
             continueTransaction = (flowFile != null);
             if (continueTransaction) {
                 logger.debug("{} Sending ContinueTransaction indicator to {}", this, peer);
-                writeTransactionResponse(ResponseCode.CONTINUE_TRANSACTION, commsSession);
+                writeTransactionResponse(true, ResponseCode.CONTINUE_TRANSACTION, commsSession);
             } else {
                 logger.debug("{} Sending FinishTransaction indicator to {}", this, peer);
-                writeTransactionResponse(ResponseCode.FINISH_TRANSACTION, commsSession);
+                writeTransactionResponse(true, ResponseCode.FINISH_TRANSACTION, commsSession);
                 calculatedCRC = String.valueOf(checkedOutputStream.getChecksum().getValue());
             }
         }
 
-        FlowFileTransaction tx = new FlowFileTransaction(session, stopWatch, bytesSent, flowFilesSent, calculatedCRC);
-        return commitTransferTransaction(peer, tx);
+        FlowFileTransaction transaction = new FlowFileTransaction(session, context, stopWatch, bytesSent, flowFilesSent, calculatedCRC);
+        return commitTransferTransaction(peer, transaction);
 
     }
 
-    protected int commitTransferTransaction(Peer peer, FlowFileTransaction tx) throws IOException {
-        ProcessSession session = tx.getSession();
-        Set<FlowFile> flowFilesSent = tx.getFlowFilesSent();
+    protected int commitTransferTransaction(Peer peer, FlowFileTransaction transaction) throws IOException {
+        ProcessSession session = transaction.getSession();
+        Set<FlowFile> flowFilesSent = transaction.getFlowFilesSent();
 
         // we've sent a FINISH_TRANSACTION. Now we'll wait for the peer to send a 'Confirm Transaction' response
         CommunicationsSession commsSession = peer.getCommunicationsSession();
-        final Response transactionConfirmationResponse = readTransactionResponse(commsSession);
+        final Response transactionConfirmationResponse = readTransactionResponse(true, commsSession);
         if (transactionConfirmationResponse.getCode() == ResponseCode.CONFIRM_TRANSACTION) {
             // Confirm Checksum and echo back the confirmation.
             logger.debug("{} Received {}  from {}", this, transactionConfirmationResponse, peer);
             final String receivedCRC = transactionConfirmationResponse.getMessage();
 
             if (versionNegotiator.getVersion() > 3) {
-                String calculatedCRC = tx.getCalculatedCRC();
+                String calculatedCRC = transaction.getCalculatedCRC();
                 if (!receivedCRC.equals(calculatedCRC)) {
-                    writeTransactionResponse(ResponseCode.BAD_CHECKSUM, commsSession);
+                    writeTransactionResponse(true, ResponseCode.BAD_CHECKSUM, commsSession);
                     session.rollback();
                     throw new IOException(this + " Sent data to peer " + peer + " but calculated CRC32 Checksum as "
                             + calculatedCRC + " while peer calculated CRC32 Checksum as " + receivedCRC
@@ -251,7 +251,7 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
                 }
             }
 
-            writeTransactionResponse(ResponseCode.CONFIRM_TRANSACTION, commsSession);
+            writeTransactionResponse(true, ResponseCode.CONFIRM_TRANSACTION, commsSession, "");
 
         } else {
             throw new ProtocolException("Expected to receive 'Confirm Transaction' response from peer " + peer + " but received " + transactionConfirmationResponse);
@@ -261,7 +261,7 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
 
         final Response transactionResponse;
         try {
-            transactionResponse = readTransactionResponse(commsSession);
+            transactionResponse = readTransactionResponse(true, commsSession);
         } catch (final IOException e) {
             logger.error("{} Failed to receive a response from {} when expecting a TransactionFinished Indicator."
                     + " It is unknown whether or not the peer successfully received/processed the data."
@@ -280,8 +280,8 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
 
         session.commit();
 
-        StopWatch stopWatch = tx.getStopWatch();
-        long bytesSent = tx.getBytesSent();
+        StopWatch stopWatch = transaction.getStopWatch();
+        long bytesSent = transaction.getBytesSent();
         stopWatch.stop();
         final String uploadDataRate = stopWatch.calculateDataRate(bytesSent);
         final long uploadMillis = stopWatch.getDuration(TimeUnit.MILLISECONDS);
@@ -292,20 +292,21 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
         return flowFilesSent.size();
     }
 
-    protected OutputStream getFlowFileOutputStream(CommunicationsSession commsSession) throws IOException {
-        return new DataOutputStream(commsSession.getOutput().getOutputStream());
-    }
-
-    // TODO: The argument can be Inputstream
-    protected Response readTransactionResponse(CommunicationsSession commsSession) throws IOException {
+    protected Response readTransactionResponse(boolean isTransfer, CommunicationsSession commsSession) throws IOException {
         final DataInputStream dis = new DataInputStream(commsSession.getInput().getInputStream());
         return Response.read(dis);
     }
 
-    // TODO: The argument can be OutputStream
-    protected void writeTransactionResponse(ResponseCode response, CommunicationsSession commsSession) throws IOException {
+    protected final void writeTransactionResponse(boolean isTransfer, ResponseCode response, CommunicationsSession commsSession) throws IOException {
+        writeTransactionResponse(isTransfer, response, commsSession, null);
+    }
+    protected void writeTransactionResponse(boolean isTransfer, ResponseCode response, CommunicationsSession commsSession, String explanation) throws IOException {
         final DataOutputStream dos = new DataOutputStream(commsSession.getOutput().getOutputStream());
-        response.writeResponse(dos);
+        if(explanation == null){
+            response.writeResponse(dos);
+        } else {
+            response.writeResponse(dos, explanation);
+        }
     }
 
     @Override
@@ -321,7 +322,6 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
 
         final CommunicationsSession commsSession = peer.getCommunicationsSession();
         final DataInputStream dis = new DataInputStream(commsSession.getInput().getInputStream());
-        final DataOutputStream dos = new DataOutputStream(commsSession.getOutput().getOutputStream());
         String remoteDn = commsSession.getUserDn();
         if (remoteDn == null) {
             remoteDn = "none";
@@ -336,13 +336,16 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
         final Set<FlowFile> flowFilesReceived = new HashSet<>();
         long bytesReceived = 0L;
         boolean continueTransaction = true;
-        String calculatedCRC = "";
         while (continueTransaction) {
             final long startNanos = System.nanoTime();
             final InputStream flowFileInputStream = handshakenProperties.isUseGzip() ? new CompressionInputStream(dis) : dis;
             final CheckedInputStream checkedInputStream = new CheckedInputStream(flowFileInputStream, crc);
 
             final DataPacket dataPacket = codec.decode(checkedInputStream);
+            if(dataPacket == null){
+                logger.debug("{} Received null dataPacket indicating the end of transaction from {}", this, peer);
+                break;
+            }
             FlowFile flowFile = session.create();
             flowFile = session.importFrom(dataPacket.getData(), flowFile);
             flowFile = session.putAllAttributes(flowFile, dataPacket.getAttributes());
@@ -360,7 +363,7 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
             flowFilesReceived.add(flowFile);
             bytesReceived += flowFile.getSize();
 
-            final Response transactionResponse = Response.read(dis);
+            final Response transactionResponse = readTransactionResponse(false, commsSession);
             switch (transactionResponse.getCode()) {
                 case CONTINUE_TRANSACTION:
                     logger.debug("{} Received ContinueTransaction indicator from {}", this, peer);
@@ -368,7 +371,6 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
                 case FINISH_TRANSACTION:
                     logger.debug("{} Received FinishTransaction indicator from {}", this, peer);
                     continueTransaction = false;
-                    calculatedCRC = String.valueOf(checkedInputStream.getChecksum().getValue());
                     break;
                 case CANCEL_TRANSACTION:
                     logger.info("{} Received CancelTransaction indicator from {} with explanation {}", this, peer, transactionResponse.getMessage());
@@ -387,9 +389,17 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
         // Critical Section involved in this transaction so that rather than the Critical Section being the
         // time window involved in the entire transaction, it is reduced to a simple round-trip conversation.
         logger.debug("{} Sending CONFIRM_TRANSACTION Response Code to {}", this, peer);
-        ResponseCode.CONFIRM_TRANSACTION.writeResponse(dos, calculatedCRC);
+        String calculatedCRC = String.valueOf(crc.getValue());
+        writeTransactionResponse(false, ResponseCode.CONFIRM_TRANSACTION, commsSession, calculatedCRC);
 
-        final Response confirmTransactionResponse = Response.read(dis);
+        FlowFileTransaction transaction = new FlowFileTransaction(session, context, stopWatch, bytesReceived, flowFilesReceived, calculatedCRC);
+        return commitReceiveTransaction(peer, transaction);
+    }
+
+    protected int commitReceiveTransaction(Peer peer, FlowFileTransaction transaction) throws IOException {
+        CommunicationsSession commsSession = peer.getCommunicationsSession();
+        ProcessSession session = transaction.getSession();
+        final Response confirmTransactionResponse = readTransactionResponse(false, commsSession);
         logger.debug("{} Received {} from {}", this, confirmTransactionResponse, peer);
 
         switch (confirmTransactionResponse.getCode()) {
@@ -405,24 +415,27 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
         // Commit the session so that we have persisted the data
         session.commit();
 
-        if (context.getAvailableRelationships().isEmpty()) {
+        if (transaction.getContext().getAvailableRelationships().isEmpty()) {
             // Confirm that we received the data and the peer can now discard it but that the peer should not
             // send any more data for a bit
             logger.debug("{} Sending TRANSACTION_FINISHED_BUT_DESTINATION_FULL to {}", this, peer);
-            ResponseCode.TRANSACTION_FINISHED_BUT_DESTINATION_FULL.writeResponse(dos);
+            writeTransactionResponse(false, ResponseCode.TRANSACTION_FINISHED_BUT_DESTINATION_FULL, commsSession);
         } else {
             // Confirm that we received the data and the peer can now discard it
             logger.debug("{} Sending TRANSACTION_FINISHED to {}", this, peer);
-            ResponseCode.TRANSACTION_FINISHED.writeResponse(dos);
+            writeTransactionResponse(false, ResponseCode.TRANSACTION_FINISHED, commsSession);
         }
 
+        Set<FlowFile> flowFilesReceived = transaction.getFlowFilesSent();
+        long bytesReceived = transaction.getBytesSent();
+        StopWatch stopWatch = transaction.getStopWatch();
         stopWatch.stop();
         final String flowFileDescription = flowFilesReceived.size() < 20 ? flowFilesReceived.toString() : flowFilesReceived.size() + " FlowFiles";
         final String uploadDataRate = stopWatch.calculateDataRate(bytesReceived);
         final long uploadMillis = stopWatch.getDuration(TimeUnit.MILLISECONDS);
         final String dataSize = FormatUtils.formatDataSize(bytesReceived);
         logger.info("{} Successfully received {} ({}) from {} in {} milliseconds at a rate of {}", new Object[]{
-            this, flowFileDescription, dataSize, peer, uploadMillis, uploadDataRate});
+                this, flowFileDescription, dataSize, peer, uploadMillis, uploadDataRate});
 
         return flowFilesReceived.size();
     }

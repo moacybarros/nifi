@@ -172,7 +172,7 @@ public class SiteToSiteResource extends ApplicationResource {
 
     @POST
     @Consumes(MediaType.APPLICATION_OCTET_STREAM)
-    @Produces(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.TEXT_PLAIN)
     @Path("ports/{portId}/flow-files")
     // TODO - @PreAuthorize("hasAnyRole('ROLE_MONITOR', 'ROLE_DFM', 'ROLE_ADMIN')")
     @ApiOperation(
@@ -228,8 +228,8 @@ public class SiteToSiteResource extends ApplicationResource {
         }
 
         // TODO: Construct meaningful result.
-        TransactionResultEntity entity = new TransactionResultEntity();
-        return clusterContext(noCache(Response.ok(entity))).build();
+        String serverChecksum = ((HttpCommunicationsSession)peer.getCommunicationsSession()).getChecksum();
+        return createLocationResult(false, portId, txId, serverChecksum);
     }
 
     private HttpFlowFileServerProtocol initiateServerProtocol(Peer peer, ServletContext context) throws IOException {
@@ -295,7 +295,7 @@ public class SiteToSiteResource extends ApplicationResource {
                     @ApiResponse(code = 409, message = "The request was valid but NiFi was not in the appropriate state to process it. Retrying the same request later may be successful.")
             }
     )
-    public Response commitTransaction(
+    public Response commitTxTransaction(
             @ApiParam(
                     value = "If the client id is not specified, new one will be generated. This value (whether specified or generated) is included in the response.",
                     required = false
@@ -320,9 +320,7 @@ public class SiteToSiteResource extends ApplicationResource {
             @Context ServletContext context,
             InputStream inputStream) {
 
-        logger.info("### commitTransaction request: portId=" + portId + " transactionId=" + transactionId);
-
-        RootGroupPort port = getRootGroupPort(portId, false);
+        logger.info("commitTxTransaction request: portId={} transactionId={}", portId, transactionId);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         Peer peer = initiatePeer(req, inputStream, out, transactionId);
@@ -341,6 +339,67 @@ public class SiteToSiteResource extends ApplicationResource {
         return clusterContext(noCache(Response.ok(entity))).build();
     }
 
+    @DELETE
+    @Consumes(MediaType.APPLICATION_OCTET_STREAM)
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("ports/{portId}/rx/{transactionId}")
+    // TODO - @PreAuthorize("hasAnyRole('ROLE_MONITOR', 'ROLE_DFM', 'ROLE_ADMIN')")
+    @ApiOperation(
+            value = "Transfer flow files to input port",
+            response = TransactionResultEntity.class,
+            authorizations = {
+                    @Authorization(value = "Read Only", type = "ROLE_MONITOR"),
+                    @Authorization(value = "Data Flow Manager", type = "ROLE_DFM"),
+                    @Authorization(value = "Administrator", type = "ROLE_ADMIN")
+            }
+    )
+    @ApiResponses(
+            value = {
+                    @ApiResponse(code = 400, message = "NiFi was unable to complete the request because it was invalid. The request should not be retried without modification."),
+                    @ApiResponse(code = 401, message = "Client could not be authenticated."),
+                    @ApiResponse(code = 403, message = "Client is not authorized to make this request."),
+                    @ApiResponse(code = 404, message = "The specified resource could not be found."),
+                    @ApiResponse(code = 409, message = "The request was valid but NiFi was not in the appropriate state to process it. Retrying the same request later may be successful.")
+            }
+    )
+    public Response commitRxTransaction(
+            @ApiParam(
+                    value = "If the client id is not specified, new one will be generated. This value (whether specified or generated) is included in the response.",
+                    required = false
+            )
+            @QueryParam(CLIENT_ID) @DefaultValue(StringUtils.EMPTY) ClientIdParameter clientId,
+            @ApiParam(
+                    value = "The input port id.",
+                    required = true
+            )
+            @PathParam("portId") String portId,
+            @ApiParam(
+                    value = "The transaction id.",
+                    required = true
+            )
+            @PathParam("transactionId") String transactionId,
+            @Context HttpServletRequest req,
+            @Context ServletContext context,
+            InputStream inputStream) {
+
+        logger.info("commitRxTransaction request: portId={} transactionId={}", portId, transactionId);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Peer peer = initiatePeer(req, inputStream, out, transactionId);
+
+        try {
+            HttpFlowFileServerProtocol serverProtocol = initiateServerProtocol(peer, context);
+            serverProtocol.commitReceiveTransaction(peer);
+        } catch (IOException e) {
+            // TODO: error handling.
+            logger.error("Failed to process the request.", e);
+            return Response.serverError().build();
+        }
+
+        // TODO: Construct meaningful result.
+        TransactionResultEntity entity = new TransactionResultEntity();
+        return clusterContext(noCache(Response.ok(entity))).build();
+    }
 
     @GET
     @Consumes(MediaType.WILDCARD)
@@ -421,9 +480,11 @@ public class SiteToSiteResource extends ApplicationResource {
         };
 
         // We can't modify response code because we've already written it here.
-        // TODO: write confirmation URL header.
-        String requestedUrl = req.getRequestURL().toString();
-        String locationUrl = "site-to-site/ports/" + portId + "/tx/" + txId;
+        return createLocationResult(true, portId, txId, flowFileContent);
+    }
+
+    private Response createLocationResult(boolean isTransfer, String portId, String txId, Object entity) {
+        String locationUrl = "site-to-site/ports/" + portId + (isTransfer ? "/tx/" : "/rx/") + txId;
         URI location;
         try {
             location = new URI(locationUrl);
@@ -432,7 +493,7 @@ public class SiteToSiteResource extends ApplicationResource {
         }
         return clusterContext(noCache(Response.seeOther(location)
                 .header(LOCATION_URI_INTENT_NAME, LOCATION_URI_INTENT_VALUE))
-                .entity(flowFileContent)).build();
+                .entity(entity)).build();
     }
 
     // setters

@@ -17,6 +17,7 @@
 package org.apache.nifi.remote.protocol;
 
 import org.apache.nifi.flowfile.FlowFile;
+import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.util.StopWatch;
 
@@ -25,13 +26,15 @@ import java.util.Set;
 public class FlowFileTransaction {
 
     private final ProcessSession session;
+    private final ProcessContext context;
     private final StopWatch stopWatch;
     private final long bytesSent;
     private final Set<FlowFile> flowFilesSent;
     private final String calculatedCRC;
 
-    public FlowFileTransaction(ProcessSession session, StopWatch stopWatch, long bytesSent, Set<FlowFile> flowFilesSent, String calculatedCRC) {
+    public FlowFileTransaction(ProcessSession session, ProcessContext context, StopWatch stopWatch, long bytesSent, Set<FlowFile> flowFilesSent, String calculatedCRC) {
         this.session = session;
+        this.context = context;
         this.stopWatch = stopWatch;
         this.bytesSent = bytesSent;
         this.flowFilesSent = flowFilesSent;
@@ -56,5 +59,9 @@ public class FlowFileTransaction {
 
     public String getCalculatedCRC() {
         return calculatedCRC;
+    }
+
+    public ProcessContext getContext() {
+        return context;
     }
 }
