@@ -150,7 +150,7 @@ public class HttpFlowFileServerProtocol extends AbstractFlowFileServerProtocol {
         logger.info("### Now, finally committing the transaction. clientChecksum=" + clientChecksum);
         HttpCommunicationsSession commSession = (HttpCommunicationsSession) peer.getCommunicationsSession();
         String txId = commSession.getTxId();
-        FlowFileTransaction tx = txOnHold.get(txId);
+        FlowFileTransaction tx = txOnHold.remove(txId);
         if(tx == null){
             throw new IOException("Transaction was not found. txId=" + txId);
         }

@@ -79,7 +79,12 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
         int responseCode = urlConnection.getResponseCode();
         logger.debug("### responseCode=" + responseCode);
 
-        if (responseCode == 303) {
+        if (responseCode == 200) {
+            // Although server tries to send 204 when it doesn't have data, since data is already exchanged, it returns 200 instead.
+            logger.debug("Server returned 200, indicating there was no data.");
+            return null;
+
+        } else if (responseCode == 303) {
             // TODO: Get HTTP Header to send confirm request.
             final String locationUriIntentHeader = urlConnection.getHeaderField(LOCATION_URI_INTENT_NAME);
             logger.debug("### Received 303: locationUriIntentHeader=" + locationUriIntentHeader);

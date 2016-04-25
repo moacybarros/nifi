@@ -77,6 +77,10 @@ public class HttpClientTransaction extends AbstractTransaction {
 
             // TODO: Send confirmation to TX
         } else {
+            if(holdUri == null){
+                logger.debug("There's no transaction to confirm.");
+                return;
+            }
             apiUtil.commitReceivingFlowFiles(holdUri, String.valueOf(crc.getValue()));
         }
     }

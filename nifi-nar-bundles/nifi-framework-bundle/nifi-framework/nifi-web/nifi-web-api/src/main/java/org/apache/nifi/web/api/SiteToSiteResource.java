@@ -328,7 +328,6 @@ public class SiteToSiteResource extends ApplicationResource {
         Peer peer = initiatePeer(req, inputStream, out, transactionId);
 
         try {
-            // TODO: Grab holding transaction and commit it.
             HttpFlowFileServerProtocol serverProtocol = initiateServerProtocol(peer, context);
             serverProtocol.commitTransferTransaction(peer, checksum);
         } catch (IOException e) {
