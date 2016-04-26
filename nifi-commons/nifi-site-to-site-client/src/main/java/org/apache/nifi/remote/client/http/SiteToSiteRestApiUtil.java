@@ -34,7 +34,6 @@ import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.util.Collection;
 
-// TODO: I'd like to encapsulate this in HttpClientTransaction
 public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
 
     private static final Logger logger = LoggerFactory.getLogger(SiteToSiteRestApiUtil.class);
@@ -77,7 +76,6 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
 
         ((HttpInput)commSession.getInput()).setInputStream(urlConnection.getInputStream());
 
-        // TODO: Capture responseCode and transaction confirmation URL.
         int responseCode = urlConnection.getResponseCode();
         logger.debug("### responseCode=" + responseCode);
 
@@ -112,8 +110,7 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
         return null;
     }
 
-    public String transferFlowFile(String portId, CommunicationsSession commSession) throws IOException {
-        logger.info("### Sending transferFlowFile request to port: " + portId);
+    public String finishTransferFlowFiles(CommunicationsSession commSession) throws IOException {
 
         commSession.getOutput().getOutputStream().flush();
 
@@ -126,7 +123,7 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
                 StreamUtils.copy(commSession.getInput().getInputStream(), bos);
                 String receivedChecksum = bos.toString("UTF-8");
                 ((HttpCommunicationsSession)commSession).setChecksum(receivedChecksum);
-                logger.debug("Sent request to port: {} receivedChecksum={}", portId, receivedChecksum);
+                logger.debug("receivedChecksum={}", receivedChecksum);
                 return holdUri;
             }
 
@@ -156,6 +153,7 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
             StreamUtils.copy(urlConnection.getInputStream(), bos);
             logger.debug("### commitReceivingFlowFiles reader.readLine()=" + new String(bos.toByteArray(), "UTF-8"));
         } else {
+            // TODO: HTTP Status code to indicate BAD_CHECKSUM.
             // TODO: more sophisticated error handling.
             throw new RuntimeException("Unexpected response code: " + responseCode);
         }

@@ -16,6 +16,7 @@
  */
 package org.apache.nifi.remote.client.http;
 
+import org.apache.nifi.events.EventReporter;
 import org.apache.nifi.remote.Peer;
 import org.apache.nifi.remote.PeerDescription;
 import org.apache.nifi.remote.Transaction;
@@ -67,7 +68,12 @@ public class HttpClient extends AbstractSiteToSiteClient {
         commSession.setUri(nodeApiUrl);
         Peer peer = new Peer(description, commSession, nodeApiUrl, clusterUrl);
 
-        HttpClientTransaction transaction = new HttpClientTransaction(peer, direction, config.getPortIdentifier(), config.getSslContext(), timeoutMillis);
+        // TODO: add version negotiation
+        // TODO: set EventReporter.
+        // TODO: set penaltyMillis.
+        int penaltyMillis = 10000;
+        EventReporter eventReporter = null;
+        HttpClientTransaction transaction = new HttpClientTransaction(5, peer, direction, config.isUseCompression(), config.getPortIdentifier(), config.getSslContext(), timeoutMillis, penaltyMillis, eventReporter);
         return transaction;
     }
 

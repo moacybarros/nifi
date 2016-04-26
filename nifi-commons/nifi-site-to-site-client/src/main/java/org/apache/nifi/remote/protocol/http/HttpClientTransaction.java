@@ -1,101 +1,115 @@
 package org.apache.nifi.remote.protocol.http;
 
+import org.apache.commons.lang3.StringUtils;
+import org.apache.nifi.events.EventReporter;
 import org.apache.nifi.remote.AbstractTransaction;
-import org.apache.nifi.remote.ClientTransactionCompletion;
 import org.apache.nifi.remote.Peer;
-import org.apache.nifi.remote.TransactionCompletion;
 import org.apache.nifi.remote.TransferDirection;
 import org.apache.nifi.remote.client.http.SiteToSiteRestApiUtil;
-import org.apache.nifi.remote.codec.FlowFileCodec;
 import org.apache.nifi.remote.codec.StandardFlowFileCodec;
+import org.apache.nifi.remote.io.http.HttpCommunicationsSession;
 import org.apache.nifi.remote.protocol.DataPacket;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.nifi.remote.protocol.socket.Response;
+import org.apache.nifi.remote.protocol.socket.ResponseCode;
+import org.apache.nifi.stream.io.ByteArrayInputStream;
+import org.apache.nifi.stream.io.ByteArrayOutputStream;
 
 import javax.net.ssl.SSLContext;
 import java.io.BufferedReader;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.util.zip.CRC32;
-import java.util.zip.CheckedInputStream;
-import java.util.zip.CheckedOutputStream;
 
 public class HttpClientTransaction extends AbstractTransaction {
-    private static final Logger logger = LoggerFactory.getLogger(HttpClientTransaction.class);
 
     private final SiteToSiteRestApiUtil apiUtil;
-    private final String portId;
-    private FlowFileCodec codec;
     private String holdUri;
-    private final CRC32 crc = new CRC32();
 
-    public HttpClientTransaction(final Peer peer, TransferDirection direction, final String portId, final SSLContext sslContext, final int timeoutMillis) throws IOException {
-        super(peer, direction);
+    public HttpClientTransaction(final int protocolVersion, final Peer peer, TransferDirection direction, final boolean useCompression, final String portId, final SSLContext sslContext, final int timeoutMillis, int penaltyMillis, EventReporter eventReporter) throws IOException {
+        super(peer, direction, useCompression, new StandardFlowFileCodec(), eventReporter, protocolVersion, penaltyMillis, portId);
         apiUtil = new SiteToSiteRestApiUtil(sslContext);
         apiUtil.setBaseUrl(peer.getUrl());
         apiUtil.setConnectTimeoutMillis(timeoutMillis);
         apiUtil.setReadTimeoutMillis(timeoutMillis);
-        this.portId = portId;
-        codec = new StandardFlowFileCodec();
 
         if(TransferDirection.SEND.equals(direction)){
             apiUtil.openConnectionForSend(portId, peer.getCommunicationsSession());
         } else {
             holdUri = apiUtil.openConnectionForReceive(portId, peer.getCommunicationsSession());
+            dataAvailable = (holdUri != null);
         }
     }
 
     @Override
-    public void send(DataPacket dataPacket) throws IOException {
-        OutputStream os = peer.getCommunicationsSession().getOutput().getOutputStream();
-        codec.encode(dataPacket, new CheckedOutputStream(os, crc));
-    }
-
-    @Override
-    public DataPacket receive() throws IOException {
-        InputStream is = peer.getCommunicationsSession().getInput().getInputStream();
-        DataPacket packet = codec.decode(new CheckedInputStream(is, crc));
+    protected void checkReceivedPacket(DataPacket packet) throws IOException {
         if(packet instanceof HttpControlPacket){
             BufferedReader br = new BufferedReader(new InputStreamReader(packet.getData()));
             throw new IOException(br.readLine());
         }
-        return packet;
     }
 
     @Override
-    public void confirm() throws IOException {
+    protected Response readTransactionResponse() throws IOException {
+        HttpCommunicationsSession commSession = (HttpCommunicationsSession) peer.getCommunicationsSession();
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
         if(TransferDirection.SEND.equals(direction)){
-            // A holdUri always be returned, otherwise an exception should be thrown.
-            holdUri = apiUtil.transferFlowFile(portId, peer.getCommunicationsSession());
-            apiUtil.commitTransferFlowFiles(holdUri);
-        } else {
-            if(holdUri == null){
-                logger.debug("There's no transaction to confirm.");
-                return;
+            switch (state){
+                case DATA_EXCHANGED:
+                    // A holdUri always be returned, otherwise an exception should be thrown.
+                    holdUri = apiUtil.finishTransferFlowFiles(commSession);
+                    apiUtil.commitTransferFlowFiles(holdUri);
+                    ResponseCode.CONFIRM_TRANSACTION.writeResponse(new DataOutputStream(bos), commSession.getChecksum());
+                    break;
+                case TRANSACTION_CONFIRMED:
+                    ResponseCode.TRANSACTION_FINISHED.writeResponse(new DataOutputStream(bos));
+                    break;
             }
-            apiUtil.commitReceivingFlowFiles(holdUri, String.valueOf(crc.getValue()));
+        } else {
+            switch (state){
+                case TRANSACTION_STARTED:
+                case DATA_EXCHANGED:
+                    if(StringUtils.isEmpty(commSession.getChecksum())){
+                        logger.debug("readTransactionResponse. returning CONTINUE_TRANSACTION.");
+                        // We don't know if there's more data to receive, so just continue it.
+                        ResponseCode.CONTINUE_TRANSACTION.writeResponse(new DataOutputStream(bos));
+                    } else {
+                        // We got a checksum to send to server.
+                        if(holdUri == null){
+                            logger.debug("There's no transaction to confirm.");
+                        } else {
+                            // TODO: Write Confirmed or BadChecksum accordingly.
+                            apiUtil.commitReceivingFlowFiles(holdUri, commSession.getChecksum());
+                        }
+                        ResponseCode.CONFIRM_TRANSACTION.writeResponse(new DataOutputStream(bos), "");
+                    }
+                    break;
+            }
         }
+        ByteArrayInputStream bis = new ByteArrayInputStream(bos.toByteArray());
+        return Response.read(new DataInputStream(bis));
     }
 
     @Override
-    public TransactionCompletion complete() throws IOException {
-        // TODO: Create TransactionCompletion to return.
+    protected void writeTransactionResponse(ResponseCode response, String explanation) throws IOException {
+        HttpCommunicationsSession commSession = (HttpCommunicationsSession) peer.getCommunicationsSession();
         if(TransferDirection.SEND.equals(direction)){
-            return new ClientTransactionCompletion(false, 0, 0L, 0L);
+            switch (response) {
+                case FINISH_TRANSACTION:
+                    logger.debug("{} Finishing transaction.", this);
+                    break;
+            }
+        } else {
+            switch (response) {
+                 case CONFIRM_TRANSACTION:
+                    logger.debug("{} Confirming transaction. checksum={}", this, explanation);
+                    commSession.setChecksum(explanation);
+                    break;
+                case TRANSACTION_FINISHED:
+                    logger.debug("{} Finishing transaction.", this);
+                    break;
+            }
         }
-        return new ClientTransactionCompletion(false, 0, 0L, 0L);
-    }
-
-    @Override
-    public void cancel(String explanation) throws IOException {
-
-    }
-
-    @Override
-    public void error() {
-
     }
 
 }

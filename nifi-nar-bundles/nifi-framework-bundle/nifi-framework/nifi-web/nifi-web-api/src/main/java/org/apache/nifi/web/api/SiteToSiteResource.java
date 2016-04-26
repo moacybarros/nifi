@@ -243,7 +243,7 @@ public class SiteToSiteResource extends ApplicationResource {
         return serverProtocol;
     }
 
-    private Peer initiatePeer(@Context HttpServletRequest req, InputStream inputStream, OutputStream outputStream, String txId) {
+    private Peer initiatePeer(HttpServletRequest req, InputStream inputStream, OutputStream outputStream, String txId) {
         String clientHostName = req.getRemoteHost();
         int clientPort = req.getRemotePort();
         PeerDescription peerDescription = new PeerDescription(clientHostName, clientPort, req.isSecure());
