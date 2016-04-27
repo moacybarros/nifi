@@ -23,20 +23,19 @@ import java.io.InputStreamReader;
 
 public class HttpClientTransaction extends AbstractTransaction {
 
-    private final SiteToSiteRestApiUtil apiUtil;
+    private SiteToSiteRestApiUtil apiUtil;
     private String holdUri;
 
-    public HttpClientTransaction(final int protocolVersion, final Peer peer, TransferDirection direction, final boolean useCompression, final String portId, final SSLContext sslContext, final int timeoutMillis, int penaltyMillis, EventReporter eventReporter) throws IOException {
+    public HttpClientTransaction(final int protocolVersion, final Peer peer, TransferDirection direction, final boolean useCompression, final String portId, int penaltyMillis, EventReporter eventReporter) throws IOException {
         super(peer, direction, useCompression, new StandardFlowFileCodec(), eventReporter, protocolVersion, penaltyMillis, portId);
-        apiUtil = new SiteToSiteRestApiUtil(sslContext);
-        apiUtil.setBaseUrl(peer.getUrl());
-        apiUtil.setConnectTimeoutMillis(timeoutMillis);
-        apiUtil.setReadTimeoutMillis(timeoutMillis);
+    }
 
+    public void initialize(SiteToSiteRestApiUtil apiUtil) throws IOException {
+        this.apiUtil = apiUtil;
         if(TransferDirection.SEND.equals(direction)){
-            apiUtil.openConnectionForSend(portId, peer.getCommunicationsSession());
+            apiUtil.openConnectionForSend(destinationId, peer.getCommunicationsSession());
         } else {
-            holdUri = apiUtil.openConnectionForReceive(portId, peer.getCommunicationsSession());
+            holdUri = apiUtil.openConnectionForReceive(destinationId, peer.getCommunicationsSession());
             dataAvailable = (holdUri != null);
         }
     }
@@ -56,9 +55,8 @@ public class HttpClientTransaction extends AbstractTransaction {
         if(TransferDirection.SEND.equals(direction)){
             switch (state){
                 case DATA_EXCHANGED:
-                    // A holdUri always be returned, otherwise an exception should be thrown.
+                    // Some flow files have been sent via stream, finish transferring.
                     holdUri = apiUtil.finishTransferFlowFiles(commSession);
-                    apiUtil.commitTransferFlowFiles(holdUri);
                     ResponseCode.CONFIRM_TRANSACTION.writeResponse(new DataOutputStream(bos), commSession.getChecksum());
                     break;
                 case TRANSACTION_CONFIRMED:
@@ -97,6 +95,13 @@ public class HttpClientTransaction extends AbstractTransaction {
             switch (response) {
                 case FINISH_TRANSACTION:
                     logger.debug("{} Finishing transaction.", this);
+                    break;
+                case BAD_CHECKSUM:
+                    // TODO: send cancel request to server.
+                    apiUtil.cancelTransferFlowFiles(holdUri);
+                    break;
+                case CONFIRM_TRANSACTION:
+                    apiUtil.commitTransferFlowFiles(holdUri);
                     break;
             }
         } else {

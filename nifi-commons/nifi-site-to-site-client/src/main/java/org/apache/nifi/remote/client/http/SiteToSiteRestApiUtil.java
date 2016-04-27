@@ -16,6 +16,7 @@
  */
 package org.apache.nifi.remote.client.http;
 
+import org.apache.commons.lang3.NotImplementedException;
 import org.apache.nifi.remote.exception.ProtocolException;
 import org.apache.nifi.remote.io.http.HttpCommunicationsSession;
 import org.apache.nifi.remote.io.http.HttpInput;
@@ -176,9 +177,15 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
             StreamUtils.copy(urlConnection.getInputStream(), bos);
             logger.debug("### commitTransferFlowFiles reader.readLine()=" + new String(bos.toByteArray(), "UTF-8"));
         } else {
+            // TODO: The case of Destination full.
             // TODO: more sophisticated error handling.
             throw new RuntimeException("Unexpected response code: " + responseCode);
         }
+    }
+
+    public void cancelTransferFlowFiles(String holdUri) throws IOException {
+        // TODO: cancel.
+        throw new NotImplementedException("Cancel should be implemented soon.");
     }
 
 }

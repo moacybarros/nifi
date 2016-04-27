@@ -73,7 +73,13 @@ public class HttpClient extends AbstractSiteToSiteClient {
         // TODO: set penaltyMillis.
         int penaltyMillis = 10000;
         EventReporter eventReporter = null;
-        HttpClientTransaction transaction = new HttpClientTransaction(5, peer, direction, config.isUseCompression(), config.getPortIdentifier(), config.getSslContext(), timeoutMillis, penaltyMillis, eventReporter);
+        HttpClientTransaction transaction = new HttpClientTransaction(5, peer, direction, config.isUseCompression(), config.getPortIdentifier(), penaltyMillis, eventReporter);
+        apiUtil = new SiteToSiteRestApiUtil(config.getSslContext());
+        apiUtil.setBaseUrl(peer.getUrl());
+        apiUtil.setConnectTimeoutMillis(timeoutMillis);
+        apiUtil.setReadTimeoutMillis(timeoutMillis);
+        transaction.initialize(apiUtil);
+
         return transaction;
     }
 

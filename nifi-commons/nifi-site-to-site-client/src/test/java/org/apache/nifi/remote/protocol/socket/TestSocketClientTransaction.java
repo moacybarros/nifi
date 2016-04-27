@@ -29,10 +29,8 @@ import org.apache.nifi.remote.io.socket.SocketChannelInput;
 import org.apache.nifi.remote.io.socket.SocketChannelOutput;
 import org.apache.nifi.remote.protocol.DataPacket;
 import org.apache.nifi.remote.protocol.RequestType;
-import org.apache.nifi.remote.util.StandardDataPacket;
 import org.apache.nifi.stream.io.ByteArrayInputStream;
 import org.apache.nifi.stream.io.ByteArrayOutputStream;
-import org.apache.nifi.stream.io.StreamUtils;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,13 +38,20 @@ import org.slf4j.LoggerFactory;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
-import java.util.HashMap;
 
+import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.createDataPacket;
+import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execReceiveOneFlowFile;
+import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execReceiveTwoFlowFiles;
+import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execReceiveWithInvalidChecksum;
+import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execReceiveZeroFlowFile;
+import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execSendButDestinationFull;
+import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execSendOneFlowFile;
+import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execSendTwoFlowFiles;
+import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execSendWithInvalidChecksum;
+import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execSendZeroFlowFile;
+import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.readContents;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.Mockito.mock;
@@ -56,22 +61,6 @@ public class TestSocketClientTransaction {
 
     private Logger logger = LoggerFactory.getLogger(TestSocketClientTransaction.class);
     private FlowFileCodec codec = new StandardFlowFileCodec();
-
-    private DataPacket createDataPacket(String contents) {
-        try {
-            byte[] bytes = contents.getBytes("UTF-8");
-            ByteArrayInputStream is = new ByteArrayInputStream(bytes);
-            return new StandardDataPacket(new HashMap<>(), is, bytes.length);
-        } catch (UnsupportedEncodingException e){
-            throw new RuntimeException(e);
-        }
-    }
-
-    private String readContents(DataPacket packet) throws IOException {
-        ByteArrayOutputStream os = new ByteArrayOutputStream((int) packet.getSize());
-        StreamUtils.copy(packet.getData(), os);
-        return new String(os.toByteArray(), "UTF-8");
-    }
 
     private SocketClientTransaction getClientTransaction(ByteArrayInputStream bis, ByteArrayOutputStream bos, TransferDirection direction) throws IOException {
         PeerDescription description = null;
@@ -107,18 +96,7 @@ public class TestSocketClientTransaction {
 
         SocketClientTransaction transaction = getClientTransaction(bis, bos, TransferDirection.RECEIVE);
 
-        assertEquals(Transaction.TransactionState.TRANSACTION_STARTED, transaction.getState());
-
-        DataPacket packet = transaction.receive();
-        assertNull(packet);
-
-        transaction.confirm();
-        assertEquals(Transaction.TransactionState.TRANSACTION_CONFIRMED, transaction.getState());
-
-        TransactionCompletion completion = transaction.complete();
-        assertEquals(Transaction.TransactionState.TRANSACTION_COMPLETED, transaction.getState());
-        assertFalse("Should NOT be backoff", completion.isBackoff());
-        assertEquals(0, completion.getDataPacketsTransferred());
+        execReceiveZeroFlowFile(transaction);
 
         // Verify what client has sent.
         DataInputStream sentByClient = new DataInputStream(new ByteArrayInputStream(bos.toByteArray()));
@@ -141,23 +119,7 @@ public class TestSocketClientTransaction {
 
         SocketClientTransaction transaction = getClientTransaction(bis, bos, TransferDirection.RECEIVE);
 
-        assertEquals(Transaction.TransactionState.TRANSACTION_STARTED, transaction.getState());
-
-        DataPacket packet = transaction.receive();
-        assertNotNull(packet);
-        assertEquals("contents on server 1", readContents(packet));
-        assertEquals(Transaction.TransactionState.DATA_EXCHANGED, transaction.getState());
-
-        packet = transaction.receive();
-        assertNull(packet);
-
-        transaction.confirm();
-        assertEquals(Transaction.TransactionState.TRANSACTION_CONFIRMED, transaction.getState());
-
-        TransactionCompletion completion = transaction.complete();
-        assertEquals(Transaction.TransactionState.TRANSACTION_COMPLETED, transaction.getState());
-        assertFalse("Should NOT be backoff", completion.isBackoff());
-        assertEquals(1, completion.getDataPacketsTransferred());
+        execReceiveOneFlowFile(transaction);
 
         // Verify what client has sent.
         DataInputStream sentByClient = new DataInputStream(new ByteArrayInputStream(bos.toByteArray()));
@@ -190,26 +152,7 @@ public class TestSocketClientTransaction {
 
         assertEquals(Transaction.TransactionState.TRANSACTION_STARTED, transaction.getState());
 
-        DataPacket packet = transaction.receive();
-        assertNotNull(packet);
-        assertEquals("contents on server 1", readContents(packet));
-        assertEquals(Transaction.TransactionState.DATA_EXCHANGED, transaction.getState());
-
-        packet = transaction.receive();
-        assertNotNull(packet);
-        assertEquals("contents on server 2", readContents(packet));
-        assertEquals(Transaction.TransactionState.DATA_EXCHANGED, transaction.getState());
-
-        packet = transaction.receive();
-        assertNull(packet);
-
-        transaction.confirm();
-        assertEquals(Transaction.TransactionState.TRANSACTION_CONFIRMED, transaction.getState());
-
-        TransactionCompletion completion = transaction.complete();
-        assertEquals(Transaction.TransactionState.TRANSACTION_COMPLETED, transaction.getState());
-        assertFalse("Should NOT be backoff", completion.isBackoff());
-        assertEquals(2, completion.getDataPacketsTransferred());
+        execReceiveTwoFlowFiles(transaction);
 
         // Verify what client has sent.
         DataInputStream sentByClient = new DataInputStream(new ByteArrayInputStream(bos.toByteArray()));
@@ -240,35 +183,7 @@ public class TestSocketClientTransaction {
 
         SocketClientTransaction transaction = getClientTransaction(bis, bos, TransferDirection.RECEIVE);
 
-        assertEquals(Transaction.TransactionState.TRANSACTION_STARTED, transaction.getState());
-
-        DataPacket packet = transaction.receive();
-        assertNotNull(packet);
-        assertEquals("contents on server 1", readContents(packet));
-        assertEquals(Transaction.TransactionState.DATA_EXCHANGED, transaction.getState());
-
-        packet = transaction.receive();
-        assertNotNull(packet);
-        assertEquals("contents on server 2", readContents(packet));
-        assertEquals(Transaction.TransactionState.DATA_EXCHANGED, transaction.getState());
-
-        packet = transaction.receive();
-        assertNull(packet);
-
-        try {
-            transaction.confirm();
-            fail();
-        } catch (IOException e){
-            assertTrue(e.getMessage().contains("Received a BadChecksum response"));
-            assertEquals(Transaction.TransactionState.ERROR, transaction.getState());
-        }
-
-        try {
-            transaction.complete();
-            fail("It's not confirmed.");
-        } catch (IllegalStateException e){
-            assertEquals(Transaction.TransactionState.ERROR, transaction.getState());
-        }
+        execReceiveWithInvalidChecksum(transaction);
 
         // Verify what client has sent.
         DataInputStream sentByClient = new DataInputStream(new ByteArrayInputStream(bos.toByteArray()));
@@ -278,6 +193,7 @@ public class TestSocketClientTransaction {
         assertEquals("Checksum should be calculated at client", "2969091230", confirmResponse.getMessage());
         assertEquals(-1, sentByClient.read());
     }
+
 
     @Test
     public void testSendZeroFlowFile() throws IOException {
@@ -289,19 +205,7 @@ public class TestSocketClientTransaction {
 
         SocketClientTransaction transaction = getClientTransaction(bis, bos, TransferDirection.SEND);
 
-        assertEquals(Transaction.TransactionState.TRANSACTION_STARTED, transaction.getState());
-
-        try {
-            transaction.confirm();
-            fail("Nothing has been sent.");
-        } catch (IllegalStateException e){
-        }
-
-        try {
-            transaction.complete();
-            fail("Nothing has been sent.");
-        } catch (IllegalStateException e){
-        }
+        execSendZeroFlowFile(transaction);
 
         // Verify what client has sent.
         DataInputStream sentByClient = new DataInputStream(new ByteArrayInputStream(bos.toByteArray()));
@@ -322,18 +226,7 @@ public class TestSocketClientTransaction {
 
         SocketClientTransaction transaction = getClientTransaction(bis, bos, TransferDirection.SEND);
 
-        assertEquals(Transaction.TransactionState.TRANSACTION_STARTED, transaction.getState());
-
-        DataPacket packet = createDataPacket("contents on client 1");
-        transaction.send(packet);
-
-        transaction.confirm();
-        assertEquals(Transaction.TransactionState.TRANSACTION_CONFIRMED, transaction.getState());
-
-        TransactionCompletion completion = transaction.complete();
-        assertEquals(Transaction.TransactionState.TRANSACTION_COMPLETED, transaction.getState());
-        assertFalse("Should NOT be backoff", completion.isBackoff());
-        assertEquals(1, completion.getDataPacketsTransferred());
+        execSendOneFlowFile(transaction);
 
         // Verify what client has sent.
         DataInputStream sentByClient = new DataInputStream(new ByteArrayInputStream(bos.toByteArray()));
@@ -360,21 +253,7 @@ public class TestSocketClientTransaction {
 
         SocketClientTransaction transaction = getClientTransaction(bis, bos, TransferDirection.SEND);
 
-        assertEquals(Transaction.TransactionState.TRANSACTION_STARTED, transaction.getState());
-
-        DataPacket packet = createDataPacket("contents on client 1");
-        transaction.send(packet);
-
-        packet = createDataPacket("contents on client 2");
-        transaction.send(packet);
-
-        transaction.confirm();
-        assertEquals(Transaction.TransactionState.TRANSACTION_CONFIRMED, transaction.getState());
-
-        TransactionCompletion completion = transaction.complete();
-        assertEquals(Transaction.TransactionState.TRANSACTION_COMPLETED, transaction.getState());
-        assertFalse("Should NOT be backoff", completion.isBackoff());
-        assertEquals(2, completion.getDataPacketsTransferred());
+        execSendTwoFlowFiles(transaction);
 
         // Verify what client has sent.
         DataInputStream sentByClient = new DataInputStream(new ByteArrayInputStream(bos.toByteArray()));
@@ -404,29 +283,7 @@ public class TestSocketClientTransaction {
 
         SocketClientTransaction transaction = getClientTransaction(bis, bos, TransferDirection.SEND);
 
-        assertEquals(Transaction.TransactionState.TRANSACTION_STARTED, transaction.getState());
-
-        DataPacket packet = createDataPacket("contents on client 1");
-        transaction.send(packet);
-
-        packet = createDataPacket("contents on client 2");
-        transaction.send(packet);
-
-
-        try {
-            transaction.confirm();
-            fail();
-        } catch (IOException e){
-            assertTrue(e.getMessage().contains("peer calculated CRC32 Checksum as Different checksum"));
-            assertEquals(Transaction.TransactionState.ERROR, transaction.getState());
-        }
-
-        try {
-            transaction.complete();
-            fail("It's not confirmed.");
-        } catch (IllegalStateException e){
-            assertEquals(Transaction.TransactionState.ERROR, transaction.getState());
-        }
+        execSendWithInvalidChecksum(transaction);
 
         // Verify what client has sent.
         DataInputStream sentByClient = new DataInputStream(new ByteArrayInputStream(bos.toByteArray()));
@@ -444,6 +301,7 @@ public class TestSocketClientTransaction {
         assertEquals(-1, sentByClient.read());
     }
 
+
     @Test
     public void testSendButDestinationFull() throws IOException {
 
@@ -457,21 +315,7 @@ public class TestSocketClientTransaction {
 
         SocketClientTransaction transaction = getClientTransaction(bis, bos, TransferDirection.SEND);
 
-        assertEquals(Transaction.TransactionState.TRANSACTION_STARTED, transaction.getState());
-
-        DataPacket packet = createDataPacket("contents on client 1");
-        transaction.send(packet);
-
-        packet = createDataPacket("contents on client 2");
-        transaction.send(packet);
-
-        transaction.confirm();
-        assertEquals(Transaction.TransactionState.TRANSACTION_CONFIRMED, transaction.getState());
-
-        TransactionCompletion completion = transaction.complete();
-        assertEquals(Transaction.TransactionState.TRANSACTION_COMPLETED, transaction.getState());
-        assertTrue("Should be backoff", completion.isBackoff());
-        assertEquals(2, completion.getDataPacketsTransferred());
+        execSendButDestinationFull(transaction);
 
         // Verify what client has sent.
         DataInputStream sentByClient = new DataInputStream(new ByteArrayInputStream(bos.toByteArray()));
