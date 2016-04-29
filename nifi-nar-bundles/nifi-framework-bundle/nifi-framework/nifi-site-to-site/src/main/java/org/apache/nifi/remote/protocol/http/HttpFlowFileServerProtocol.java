@@ -75,6 +75,7 @@ public class HttpFlowFileServerProtocol extends AbstractFlowFileServerProtocol {
     protected void writeTransactionResponse(boolean isTransfer, ResponseCode response, CommunicationsSession commsSession, String explanation) throws IOException {
         HttpServerCommunicationsSession commSession = (HttpServerCommunicationsSession) commsSession;
 
+        commSession.setResponseCode(response);
         if(isTransfer){
             switch (response) {
                 case NO_MORE_DATA:
@@ -88,7 +89,7 @@ public class HttpFlowFileServerProtocol extends AbstractFlowFileServerProtocol {
                 case BAD_CHECKSUM:
                     logger.debug("{} Received BAD_CHECKSUM.", this);
                     commSession.setStatus(Transaction.TransactionState.ERROR);
-                    throw new IOException("Checksum didn't match. BAD_CHECKSUM.");
+                    break;
                 case CONFIRM_TRANSACTION:
                     logger.debug("{} Transaction is confirmed.", this);
                     commSession.setStatus(Transaction.TransactionState.TRANSACTION_CONFIRMED);

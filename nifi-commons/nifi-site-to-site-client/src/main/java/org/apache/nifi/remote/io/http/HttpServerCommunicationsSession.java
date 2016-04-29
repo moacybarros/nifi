@@ -17,6 +17,7 @@
 package org.apache.nifi.remote.io.http;
 
 import org.apache.nifi.remote.Transaction;
+import org.apache.nifi.remote.protocol.socket.ResponseCode;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -25,6 +26,7 @@ public class HttpServerCommunicationsSession extends HttpCommunicationsSession {
 
     private String transactionId;
     private Transaction.TransactionState status = Transaction.TransactionState.TRANSACTION_STARTED;
+    private ResponseCode responseCode;
 
     public HttpServerCommunicationsSession(InputStream inputStream, OutputStream outputStream, String transactionId){
         super();
@@ -51,5 +53,11 @@ public class HttpServerCommunicationsSession extends HttpCommunicationsSession {
         this.transactionId = transactionId;
     }
 
+    public ResponseCode getResponseCode() {
+        return responseCode;
+    }
 
+    public void setResponseCode(ResponseCode responseCode) {
+        this.responseCode = responseCode;
+    }
 }

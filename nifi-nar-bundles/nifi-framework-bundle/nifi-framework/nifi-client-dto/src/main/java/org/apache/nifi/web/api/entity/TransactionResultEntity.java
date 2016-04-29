@@ -21,6 +21,10 @@ import javax.xml.bind.annotation.XmlRootElement;
 @XmlRootElement(name = "transactionResultEntity")
 public class TransactionResultEntity extends Entity {
 
+    private int flowFileSent;
+
+    private int responseCode;
+
     private String message;
 
     public String getMessage() {
@@ -29,5 +33,21 @@ public class TransactionResultEntity extends Entity {
 
     public void setMessage(String message) {
         this.message = message;
+    }
+
+    public int getResponseCode() {
+        return responseCode;
+    }
+
+    public void setResponseCode(int responseCode) {
+        this.responseCode = responseCode;
+    }
+
+   public int getFlowFileSent() {
+        return flowFileSent;
+    }
+
+    public void setFlowFileSent(int flowFileSent) {
+        this.flowFileSent = flowFileSent;
     }
 }

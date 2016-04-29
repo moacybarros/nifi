@@ -30,6 +30,7 @@ import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.remote.Peer;
 import org.apache.nifi.remote.PeerDescription;
 import org.apache.nifi.remote.RootGroupPort;
+import org.apache.nifi.remote.Transaction;
 import org.apache.nifi.remote.cluster.ClusterNodeInformation;
 import org.apache.nifi.remote.cluster.NodeInformation;
 import org.apache.nifi.remote.codec.FlowFileCodec;
@@ -42,6 +43,7 @@ import org.apache.nifi.remote.protocol.CommunicationsSession;
 import org.apache.nifi.remote.protocol.FlowFileTransaction;
 import org.apache.nifi.remote.protocol.http.HttpControlPacket;
 import org.apache.nifi.remote.protocol.http.HttpFlowFileServerProtocol;
+import org.apache.nifi.remote.protocol.socket.ResponseCode;
 import org.apache.nifi.stream.io.ByteArrayOutputStream;
 import org.apache.nifi.util.NiFiProperties;
 import org.apache.nifi.web.NiFiServiceFacade;
@@ -341,17 +343,26 @@ public class SiteToSiteResource extends ApplicationResource {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         Peer peer = initiatePeer(req, inputStream, out, transactionId);
 
+        TransactionResultEntity entity = new TransactionResultEntity();
         try {
             HttpFlowFileServerProtocol serverProtocol = initiateServerProtocol(peer, context);
-            serverProtocol.commitTransferTransaction(peer, checksum);
+            int flowFileSent = serverProtocol.commitTransferTransaction(peer, checksum);
+            // TODO: It'd be more natural to return TRANSACTION_FINISHED here.
+            entity.setResponseCode(ResponseCode.CONFIRM_TRANSACTION.getCode());
+            entity.setFlowFileSent(flowFileSent);
         } catch (IOException e) {
-            // TODO: error handling.
-            logger.error("Failed to process the request.", e);
+            HttpServerCommunicationsSession commsSession = (HttpServerCommunicationsSession) peer.getCommunicationsSession();
+            logger.error("Failed to process the request", e);
+            if(ResponseCode.BAD_CHECKSUM.equals(commsSession.getResponseCode())){
+                entity.setResponseCode(commsSession.getResponseCode().getCode());
+                entity.setMessage(e.getMessage());
+
+                Response.ResponseBuilder builder = Response.status(Response.Status.BAD_REQUEST).entity(entity);
+                return clusterContext(noCache(builder)).build();
+            }
             return Response.serverError().build();
         }
 
-        // TODO: Construct meaningful result.
-        TransactionResultEntity entity = new TransactionResultEntity();
         return clusterContext(noCache(Response.ok(entity))).build();
     }
 

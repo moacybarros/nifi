@@ -13,6 +13,7 @@ import org.apache.nifi.remote.protocol.socket.Response;
 import org.apache.nifi.remote.protocol.socket.ResponseCode;
 import org.apache.nifi.stream.io.ByteArrayInputStream;
 import org.apache.nifi.stream.io.ByteArrayOutputStream;
+import org.apache.nifi.web.api.entity.TransactionResultEntity;
 
 import java.io.BufferedReader;
 import java.io.DataInputStream;
@@ -51,15 +52,16 @@ public class HttpClientTransaction extends AbstractTransaction {
     protected Response readTransactionResponse() throws IOException {
         HttpCommunicationsSession commSession = (HttpCommunicationsSession) peer.getCommunicationsSession();
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        DataOutputStream dos = new DataOutputStream(bos);
         if(TransferDirection.SEND.equals(direction)){
             switch (state){
                 case DATA_EXCHANGED:
                     // Some flow files have been sent via stream, finish transferring.
                     holdUri = apiUtil.finishTransferFlowFiles(commSession);
-                    ResponseCode.CONFIRM_TRANSACTION.writeResponse(new DataOutputStream(bos), commSession.getChecksum());
+                    ResponseCode.CONFIRM_TRANSACTION.writeResponse(dos, commSession.getChecksum());
                     break;
                 case TRANSACTION_CONFIRMED:
-                    ResponseCode.TRANSACTION_FINISHED.writeResponse(new DataOutputStream(bos));
+                    ResponseCode.TRANSACTION_FINISHED.writeResponse(dos);
                     break;
             }
         } else {
@@ -69,16 +71,21 @@ public class HttpClientTransaction extends AbstractTransaction {
                     if(StringUtils.isEmpty(commSession.getChecksum())){
                         logger.debug("readTransactionResponse. returning CONTINUE_TRANSACTION.");
                         // We don't know if there's more data to receive, so just continue it.
-                        ResponseCode.CONTINUE_TRANSACTION.writeResponse(new DataOutputStream(bos));
+                        ResponseCode.CONTINUE_TRANSACTION.writeResponse(dos);
                     } else {
                         // We got a checksum to send to server.
+                        ResponseCode responseCode = ResponseCode.CONFIRM_TRANSACTION;
                         if(holdUri == null){
                             logger.debug("There's no transaction to confirm.");
                         } else {
-                            // TODO: Write Confirmed or BadChecksum accordingly.
-                            apiUtil.commitReceivingFlowFiles(holdUri, commSession.getChecksum());
+                            TransactionResultEntity transactionResult = apiUtil.commitReceivingFlowFiles(holdUri, commSession.getChecksum());
+                            responseCode = ResponseCode.fromCode(transactionResult.getResponseCode());
                         }
-                        ResponseCode.CONFIRM_TRANSACTION.writeResponse(new DataOutputStream(bos), "");
+                        if(responseCode.containsMessage()){
+                            responseCode.writeResponse(dos, "");
+                        } else {
+                            responseCode.writeResponse(dos);
+                        }
                     }
                     break;
             }

@@ -19,8 +19,6 @@ package org.apache.nifi.remote.protocol.http;
 import org.apache.nifi.events.EventReporter;
 import org.apache.nifi.remote.Peer;
 import org.apache.nifi.remote.PeerDescription;
-import org.apache.nifi.remote.Transaction;
-import org.apache.nifi.remote.TransactionCompletion;
 import org.apache.nifi.remote.TransferDirection;
 import org.apache.nifi.remote.client.http.SiteToSiteRestApiUtil;
 import org.apache.nifi.remote.codec.FlowFileCodec;
@@ -30,8 +28,10 @@ import org.apache.nifi.remote.io.http.HttpInput;
 import org.apache.nifi.remote.io.http.HttpOutput;
 import org.apache.nifi.remote.protocol.CommunicationsSession;
 import org.apache.nifi.remote.protocol.DataPacket;
+import org.apache.nifi.remote.protocol.socket.ResponseCode;
 import org.apache.nifi.stream.io.ByteArrayInputStream;
 import org.apache.nifi.stream.io.ByteArrayOutputStream;
+import org.apache.nifi.web.api.entity.TransactionResultEntity;
 import org.junit.Test;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
@@ -42,11 +42,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
+import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.createDataPacket;
 import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execReceiveOneFlowFile;
 import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execReceiveTwoFlowFiles;
 import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execReceiveWithInvalidChecksum;
 import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execReceiveZeroFlowFile;
-import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.createDataPacket;
 import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execSendButDestinationFull;
 import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execSendOneFlowFile;
 import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execSendTwoFlowFiles;
@@ -54,21 +54,13 @@ import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execSendWithIn
 import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execSendZeroFlowFile;
 import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.readContents;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 public class TestHttpClientTransaction {
 
@@ -118,6 +110,9 @@ public class TestHttpClientTransaction {
         SiteToSiteRestApiUtil apiUtil = mock(SiteToSiteRestApiUtil.class);
         final String holdUri = "http://www.example.com/site-to-site/ports/portId/tr/transactionId";
         doReturn(holdUri).when(apiUtil).openConnectionForReceive(eq("portId"), any(CommunicationsSession.class));
+        TransactionResultEntity resultEntity = new TransactionResultEntity();
+        resultEntity.setResponseCode(ResponseCode.CONFIRM_TRANSACTION.getCode());
+        doReturn(resultEntity).when(apiUtil).commitReceivingFlowFiles(eq(holdUri), eq("3680976076"));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         codec.encode(createDataPacket("contents on server 1"), serverResponseBos);
@@ -137,6 +132,9 @@ public class TestHttpClientTransaction {
         SiteToSiteRestApiUtil apiUtil = mock(SiteToSiteRestApiUtil.class);
         final String holdUri = "http://www.example.com/site-to-site/ports/portId/tr/transactionId";
         doReturn(holdUri).when(apiUtil).openConnectionForReceive(eq("portId"), any(CommunicationsSession.class));
+        TransactionResultEntity resultEntity = new TransactionResultEntity();
+        resultEntity.setResponseCode(ResponseCode.CONFIRM_TRANSACTION.getCode());
+        doReturn(resultEntity).when(apiUtil).commitReceivingFlowFiles(eq(holdUri), eq("2969091230"));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         codec.encode(createDataPacket("contents on server 1"), serverResponseBos);
@@ -157,7 +155,10 @@ public class TestHttpClientTransaction {
         SiteToSiteRestApiUtil apiUtil = mock(SiteToSiteRestApiUtil.class);
         final String holdUri = "http://www.example.com/site-to-site/ports/portId/tr/transactionId";
         doReturn(holdUri).when(apiUtil).openConnectionForReceive(eq("portId"), any(CommunicationsSession.class));
-        doNothing().when(apiUtil).commitReceivingFlowFiles(holdUri, "2969091230");
+        // The checksum is correct, but here we simulate as if it's wrong, BAD_CHECKSUM.
+        TransactionResultEntity resultEntity = new TransactionResultEntity();
+        resultEntity.setResponseCode(ResponseCode.BAD_CHECKSUM.getCode());
+        doReturn(resultEntity).when(apiUtil).commitReceivingFlowFiles(eq(holdUri), eq("2969091230"));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         codec.encode(createDataPacket("contents on server 1"), serverResponseBos);
@@ -257,7 +258,7 @@ public class TestHttpClientTransaction {
         SiteToSiteRestApiUtil apiUtil = mock(SiteToSiteRestApiUtil.class);
         final String holdUri = "http://www.example.com/site-to-site/ports/portId/tx/transactionId";
         doNothing().when(apiUtil).openConnectionForSend(eq("portId"), any(CommunicationsSession.class));
-        // Emulate that server returns correct checksum.
+        // Emulate that server returns incorrect checksum.
         doAnswer(new Answer() {
             @Override
             public Object answer(InvocationOnMock invocation) throws Throwable {

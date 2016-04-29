@@ -142,6 +142,10 @@ public enum ResponseCode {
 
     public static ResponseCode fromSequence(final byte[] value) {
         final int code = value[3] & 0xFF;
+        return fromCode(code);
+    }
+
+    public static ResponseCode fromCode(final int code) {
         final ResponseCode responseCode = codeArray[code];
         return (responseCode == null) ? UNRECOGNIZED_RESPONSE_CODE : responseCode;
     }

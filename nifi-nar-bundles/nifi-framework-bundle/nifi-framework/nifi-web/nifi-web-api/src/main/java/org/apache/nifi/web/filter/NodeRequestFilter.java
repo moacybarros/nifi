@@ -79,8 +79,6 @@ public class NodeRequestFilter implements Filter {
          * Site to Site requests are included because clients need to communicate
          * with a specific node directly in a cluster.
          */
-        logger.info("((HttpServletRequest) req).getServletPath()=" + ((HttpServletRequest) req).getServletPath());
-        logger.info("((HttpServletRequest) req).getPathInfo()=" + ((HttpServletRequest) req).getPathInfo());
         if (properties.isClusterManager() || "HEAD".equalsIgnoreCase(httpReq.getMethod())
                 || ((HttpServletRequest) req).getPathInfo().startsWith("/site-to-site/")) {
             filterChain.doFilter(req, resp);

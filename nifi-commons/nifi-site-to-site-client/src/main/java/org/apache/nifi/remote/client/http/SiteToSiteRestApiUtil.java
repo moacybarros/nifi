@@ -27,11 +27,14 @@ import org.apache.nifi.stream.io.ByteArrayOutputStream;
 import org.apache.nifi.stream.io.StreamUtils;
 import org.apache.nifi.web.api.dto.remote.PeerDTO;
 import org.apache.nifi.web.api.entity.PeersEntity;
+import org.apache.nifi.web.api.entity.TransactionResultEntity;
+import org.codehaus.jackson.map.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.net.ssl.SSLContext;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.util.Collection;
 
@@ -134,7 +137,7 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
 
     }
 
-    public void commitReceivingFlowFiles(String holdUri, String checksum) throws IOException {
+    public TransactionResultEntity commitReceivingFlowFiles(String holdUri, String checksum) throws IOException {
         logger.debug("Sending commitReceivingFlowFiles request to holdUri: " + holdUri + " checksum=" + checksum);
 
         urlConnection = getConnection(holdUri + "?checksum=" + checksum);
@@ -147,13 +150,24 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
 
 
         if (responseCode == 200) {
-            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            StreamUtils.copy(urlConnection.getInputStream(), bos);
-            logger.debug("### commitReceivingFlowFiles reader.readLine()=" + new String(bos.toByteArray(), "UTF-8"));
+            return readResponse(urlConnection.getInputStream());
+
+        } else if (responseCode == 400) {
+            return readResponse(urlConnection.getErrorStream());
+
         } else {
-            // TODO: HTTP Status code to indicate BAD_CHECKSUM.
             throw new IOException("Unexpected response code: " + responseCode);
         }
+    }
+
+    private TransactionResultEntity readResponse(InputStream inputStream) throws IOException {
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        StreamUtils.copy(inputStream, bos);
+        String responseMessage = new String(bos.toByteArray(), "UTF-8");
+        logger.debug("commitReceivingFlowFiles responseMessage={}", responseMessage);
+
+        final ObjectMapper mapper = new ObjectMapper();
+        return mapper.readValue(responseMessage, TransactionResultEntity.class);
     }
 
     public void commitTransferFlowFiles(String holdUri) throws IOException {
