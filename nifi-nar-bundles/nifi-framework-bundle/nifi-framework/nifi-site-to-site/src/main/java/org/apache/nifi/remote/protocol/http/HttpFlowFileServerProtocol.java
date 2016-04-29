@@ -23,7 +23,7 @@ import org.apache.nifi.remote.VersionNegotiator;
 import org.apache.nifi.remote.codec.FlowFileCodec;
 import org.apache.nifi.remote.codec.StandardFlowFileCodec;
 import org.apache.nifi.remote.exception.HandshakeException;
-import org.apache.nifi.remote.io.http.HttpCommunicationsSession;
+import org.apache.nifi.remote.io.http.HttpServerCommunicationsSession;
 import org.apache.nifi.remote.protocol.AbstractFlowFileServerProtocol;
 import org.apache.nifi.remote.protocol.CommunicationsSession;
 import org.apache.nifi.remote.protocol.FlowFileTransaction;
@@ -73,7 +73,7 @@ public class HttpFlowFileServerProtocol extends AbstractFlowFileServerProtocol {
 
     @Override
     protected void writeTransactionResponse(boolean isTransfer, ResponseCode response, CommunicationsSession commsSession, String explanation) throws IOException {
-        HttpCommunicationsSession commSession = (HttpCommunicationsSession) commsSession;
+        HttpServerCommunicationsSession commSession = (HttpServerCommunicationsSession) commsSession;
 
         if(isTransfer){
             switch (response) {
@@ -112,13 +112,13 @@ public class HttpFlowFileServerProtocol extends AbstractFlowFileServerProtocol {
     @Override
     protected Response readTransactionResponse(boolean isTransfer, CommunicationsSession commsSession) throws IOException {
         // Returns Response based on current status.
-        HttpCommunicationsSession commSession = (HttpCommunicationsSession) commsSession;
+        HttpServerCommunicationsSession commSession = (HttpServerCommunicationsSession) commsSession;
 
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         if(isTransfer){
             switch (commSession.getStatus()){
                 case DATA_EXCHANGED:
-                    String clientChecksum = ((HttpCommunicationsSession)commsSession).getChecksum();
+                    String clientChecksum = commSession.getChecksum();
                     logger.debug("readTransactionResponse. clientChecksum={}", clientChecksum);
                     ResponseCode.CONFIRM_TRANSACTION.writeResponse(new DataOutputStream(bos), clientChecksum);
                     break;
@@ -155,7 +155,7 @@ public class HttpFlowFileServerProtocol extends AbstractFlowFileServerProtocol {
         // We don't commit the session here yet,
         // to avoid losing sent flow files in case some issue happens at client side while it is processing,
         // hold the transaction until we confirm additional request from client.
-        HttpCommunicationsSession commSession = (HttpCommunicationsSession) peer.getCommunicationsSession();
+        HttpServerCommunicationsSession commSession = (HttpServerCommunicationsSession) peer.getCommunicationsSession();
         String transactionId = commSession.getTransactionId();
         logger.debug("{} Holding transaction. transactionId={}", this, transactionId);
         transactionOnHold.put(transactionId, transaction);
@@ -165,7 +165,7 @@ public class HttpFlowFileServerProtocol extends AbstractFlowFileServerProtocol {
 
     public int commitTransferTransaction(Peer peer, String clientChecksum) throws IOException {
         logger.info("{} Committing the transfer transaction. peer={} clientChecksum={}", this, peer, clientChecksum);
-        HttpCommunicationsSession commSession = (HttpCommunicationsSession) peer.getCommunicationsSession();
+        HttpServerCommunicationsSession commSession = (HttpServerCommunicationsSession) peer.getCommunicationsSession();
         String transactionId = commSession.getTransactionId();
         FlowFileTransaction transaction = transactionOnHold.remove(transactionId);
         if(transaction == null){
@@ -183,7 +183,7 @@ public class HttpFlowFileServerProtocol extends AbstractFlowFileServerProtocol {
 
     public int commitReceiveTransaction(Peer peer) throws IOException {
         logger.info("{} Committing the receive transaction. peer={}", this, peer);
-        HttpCommunicationsSession commSession = (HttpCommunicationsSession) peer.getCommunicationsSession();
+        HttpServerCommunicationsSession commSession = (HttpServerCommunicationsSession) peer.getCommunicationsSession();
         String transactionId = commSession.getTransactionId();
         FlowFileTransaction transaction = transactionOnHold.remove(transactionId);
         if(transaction == null){

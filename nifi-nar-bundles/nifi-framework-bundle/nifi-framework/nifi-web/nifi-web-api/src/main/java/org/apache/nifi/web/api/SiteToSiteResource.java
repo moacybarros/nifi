@@ -30,12 +30,14 @@ import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.remote.Peer;
 import org.apache.nifi.remote.PeerDescription;
 import org.apache.nifi.remote.RootGroupPort;
+import org.apache.nifi.remote.cluster.ClusterNodeInformation;
+import org.apache.nifi.remote.cluster.NodeInformation;
 import org.apache.nifi.remote.codec.FlowFileCodec;
 import org.apache.nifi.remote.codec.StandardFlowFileCodec;
 import org.apache.nifi.remote.exception.BadRequestException;
 import org.apache.nifi.remote.exception.NotAuthorizedException;
 import org.apache.nifi.remote.exception.RequestExpiredException;
-import org.apache.nifi.remote.io.http.HttpCommunicationsSession;
+import org.apache.nifi.remote.io.http.HttpServerCommunicationsSession;
 import org.apache.nifi.remote.protocol.CommunicationsSession;
 import org.apache.nifi.remote.protocol.FlowFileTransaction;
 import org.apache.nifi.remote.protocol.http.HttpControlPacket;
@@ -60,7 +62,6 @@ import javax.ws.rs.Consumes;
 import javax.ws.rs.DELETE;
 import javax.ws.rs.DefaultValue;
 import javax.ws.rs.GET;
-import javax.ws.rs.HttpMethod;
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
@@ -78,6 +79,7 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicReference;
@@ -142,26 +144,40 @@ public class SiteToSiteResource extends ApplicationResource {
             )
             @QueryParam(CLIENT_ID) @DefaultValue(StringUtils.EMPTY) ClientIdParameter clientId) {
 
+        ArrayList<PeerDTO> peers;
+
         if (properties.isClusterManager()) {
             // TODO: Get peers within this cluster.
-            return clusterManager.applyRequest(HttpMethod.GET, getAbsolutePath(), getRequestParameters(true), getHeaders()).getResponse();
+            ClusterNodeInformation clusterNodeInfo = clusterManager.getNodeInformation();
+            final Collection<NodeInformation> nodeInfos = clusterNodeInfo.getNodeInformation();
+            peers = new ArrayList<>(nodeInfos.size());
+            for(NodeInformation nodeInfo : nodeInfos){
+                PeerDTO peer = new PeerDTO();
+                // TODO: Need to set API host name instead.
+                peer.setHostname(nodeInfo.getSiteToSiteHostname());
+                peer.setPort(nodeInfo.getAPIPort());
+                // TODO: Need to set if API is secured instead.
+                peer.setSecure(nodeInfo.isSiteToSiteSecure());
+                peer.setFlowFileCount(nodeInfo.getTotalFlowFiles());
+                peers.add(peer);
+            }
+        } else {
+            InetSocketAddress apiAddress = properties.getNodeApiAddress();
+
+            // TODO: Determine if the connection is secured.
+            PeerDTO peer = new PeerDTO();
+            peer.setHostname(apiAddress.getHostName());
+            peer.setPort(apiAddress.getPort());
+            peer.setSecure(false);
+            peer.setFlowFileCount(0);  // doesn't matter how many FlowFiles we have, because we're the only host.
+
+            peers = new ArrayList<>(1);
+            peers.add(peer);
+
         }
-
-        InetSocketAddress apiAddress = properties.getNodeApiAddress();
-
 
         RevisionDTO revision = new RevisionDTO();
         revision.setClientId(clientId.getClientId());
-
-        // TODO: Determine if the connection is secured.
-        PeerDTO peer = new PeerDTO();
-        peer.setHostname(apiAddress.getHostName());
-        peer.setPort(apiAddress.getPort());
-        peer.setSecure(false);
-        peer.setFlowFileCount(0);  // doesn't matter how many FlowFiles we have, because we're the only host.
-
-        ArrayList<PeerDTO> peers = new ArrayList<>(1);
-        peers.add(peer);
 
         PeersEntity entity = new PeersEntity();
         entity.setRevision(revision);
@@ -228,7 +244,7 @@ public class SiteToSiteResource extends ApplicationResource {
         }
 
         // TODO: Construct meaningful result.
-        String serverChecksum = ((HttpCommunicationsSession)peer.getCommunicationsSession()).getChecksum();
+        String serverChecksum = ((HttpServerCommunicationsSession)peer.getCommunicationsSession()).getChecksum();
         return createLocationResult(false, portId, txId, serverChecksum);
     }
 
@@ -248,7 +264,7 @@ public class SiteToSiteResource extends ApplicationResource {
         int clientPort = req.getRemotePort();
         PeerDescription peerDescription = new PeerDescription(clientHostName, clientPort, req.isSecure());
 
-        CommunicationsSession commSession = new HttpCommunicationsSession(inputStream, outputStream, txId);
+        CommunicationsSession commSession = new HttpServerCommunicationsSession(inputStream, outputStream, txId);
 
         // TODO: Are those values used? Yes, for logging.
         String clusterUrl = "Unkown";

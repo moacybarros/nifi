@@ -40,7 +40,6 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
     private static final Logger logger = LoggerFactory.getLogger(SiteToSiteRestApiUtil.class);
     private HttpURLConnection urlConnection;
 
-
     // TODO: Maybe we can share this with PostHTTP?
     public static final String LOCATION_HEADER_NAME = "Location";
     public static final String LOCATION_URI_INTENT_NAME = "x-location-uri-intent";
@@ -92,8 +91,7 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
             throw new ProtocolException("Server returned 303 without Location header");
 
         } else {
-            // TODO: more sophisticated error handling.
-            throw new RuntimeException("Unexpected response code: " + responseCode);
+            throw new IOException("Unexpected response code: " + responseCode);
         }
 
     }
@@ -104,7 +102,7 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
         if (locationUriIntentHeader != null) {
             if (LOCATION_URI_INTENT_VALUE.equals(locationUriIntentHeader)) {
                 String holdUri = urlConnection.getHeaderField(LOCATION_HEADER_NAME);
-                logger.debug("### Received 303: holdUri={}", holdUri);
+                logger.debug("Received 303: holdUri={}", holdUri);
                 return holdUri;
             }
         }
@@ -131,8 +129,7 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
             throw new ProtocolException("Server returned 303 without Location header");
 
         } else {
-            // TODO: more sophisticated error handling.
-            throw new RuntimeException("Unexpected response code: " + responseCode);
+            throw new IOException("Unexpected response code: " + responseCode);
         }
 
     }
@@ -155,8 +152,7 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
             logger.debug("### commitReceivingFlowFiles reader.readLine()=" + new String(bos.toByteArray(), "UTF-8"));
         } else {
             // TODO: HTTP Status code to indicate BAD_CHECKSUM.
-            // TODO: more sophisticated error handling.
-            throw new RuntimeException("Unexpected response code: " + responseCode);
+            throw new IOException("Unexpected response code: " + responseCode);
         }
     }
 
@@ -178,8 +174,7 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
             logger.debug("### commitTransferFlowFiles reader.readLine()=" + new String(bos.toByteArray(), "UTF-8"));
         } else {
             // TODO: The case of Destination full.
-            // TODO: more sophisticated error handling.
-            throw new RuntimeException("Unexpected response code: " + responseCode);
+            throw new IOException("Unexpected response code: " + responseCode);
         }
     }
 

@@ -16,8 +16,19 @@
  */
 package org.apache.nifi.web.filter;
 
-import java.io.IOException;
-import java.io.Serializable;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.nifi.cluster.context.ClusterContext;
+import org.apache.nifi.cluster.context.ClusterContextThreadLocal;
+import org.apache.nifi.cluster.manager.impl.WebClusterManager;
+import org.apache.nifi.logging.NiFiLog;
+import org.apache.nifi.util.NiFiProperties;
+import org.apache.nifi.web.NiFiServiceFacade;
+import org.apache.nifi.web.util.WebUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationContext;
+import org.springframework.web.context.support.WebApplicationContextUtils;
+
 import javax.servlet.Filter;
 import javax.servlet.FilterChain;
 import javax.servlet.FilterConfig;
@@ -26,18 +37,8 @@ import javax.servlet.ServletRequest;
 import javax.servlet.ServletResponse;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
-import org.apache.nifi.cluster.context.ClusterContext;
-import org.apache.nifi.cluster.context.ClusterContextThreadLocal;
-import org.apache.nifi.cluster.manager.impl.WebClusterManager;
-import org.apache.nifi.logging.NiFiLog;
-import org.apache.nifi.util.NiFiProperties;
-import org.apache.nifi.web.NiFiServiceFacade;
-import org.apache.nifi.web.util.WebUtils;
-import org.apache.commons.lang3.StringUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.context.ApplicationContext;
-import org.springframework.web.context.support.WebApplicationContextUtils;
+import java.io.IOException;
+import java.io.Serializable;
 
 /**
  * A filter that prevents direct access to nodes (i.e., flow controllers connected to a cluster). Direct access to nodes by clients external to the cluster is prevented because the dataflow must be
@@ -66,7 +67,8 @@ public class NodeRequestFilter implements Filter {
         HttpServletResponse httpResp = (HttpServletResponse) resp;
 
         /*
-         * If we're the cluster manager or we're sent head requests, continue.
+         * If we're the cluster manager, we're sent head requests,
+         * or Site to Site direct requests to a node, continue.
          * Head requests are included because there exists a AJAX/XHR race
          * condition between the following requests:
          *      HEAD /nifi-api/cluster
@@ -74,8 +76,13 @@ public class NodeRequestFilter implements Filter {
          * If the head request finishes first, then the UI JavaScript will display
          * a default error message and not display the error message given in this
          * filter for directly accessing connected nodes.
+         * Site to Site requests are included because clients need to communicate
+         * with a specific node directly in a cluster.
          */
-        if (properties.isClusterManager() || "HEAD".equalsIgnoreCase(httpReq.getMethod())) {
+        logger.info("((HttpServletRequest) req).getServletPath()=" + ((HttpServletRequest) req).getServletPath());
+        logger.info("((HttpServletRequest) req).getPathInfo()=" + ((HttpServletRequest) req).getPathInfo());
+        if (properties.isClusterManager() || "HEAD".equalsIgnoreCase(httpReq.getMethod())
+                || ((HttpServletRequest) req).getPathInfo().startsWith("/site-to-site/")) {
             filterChain.doFilter(req, resp);
         } else {
 

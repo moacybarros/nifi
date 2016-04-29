@@ -36,6 +36,8 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.Collection;
+import java.util.Iterator;
+import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
 public class HttpClient extends AbstractSiteToSiteClient {
@@ -45,6 +47,8 @@ public class HttpClient extends AbstractSiteToSiteClient {
     public HttpClient(final SiteToSiteClientConfig config) {
         super(config);
     }
+
+    private final Random random = new Random();
 
     @Override
     public Transaction createTransaction(TransferDirection direction) throws HandshakeException, PortNotRunningException, ProtocolException, UnknownPortException, IOException {
@@ -58,8 +62,17 @@ public class HttpClient extends AbstractSiteToSiteClient {
         apiUtil.setConnectTimeoutMillis(timeoutMillis);
         apiUtil.setReadTimeoutMillis(timeoutMillis);
         Collection<PeerDTO> peers = apiUtil.getPeers();
-        logger.info("### Got peers: " + peers);
-        PeerDTO nodeApiPeerDto = peers.iterator().next();
+        if(peers == null || peers.size() == 0){
+            throw new PortNotRunningException("Couldn't get any peer to communicate with. " + clusterApiUri + " returned zero peers.");
+        }
+        // TODO: Weighted Load balancing based on the number of flow files each port has.
+        int nextIndex = random.nextInt(peers.size());
+        logger.debug("Got peers: {}, nextIndex={}", peers, nextIndex);
+        Iterator<PeerDTO> peersItr = peers.iterator();
+        for(int i = 0; i < nextIndex; i++){
+            peersItr.next();
+        }
+        PeerDTO nodeApiPeerDto = peersItr.next();
 
         PeerDescription description = new PeerDescription(nodeApiPeerDto.getHostname(), nodeApiPeerDto.getPort(), nodeApiPeerDto.isSecure());
 
