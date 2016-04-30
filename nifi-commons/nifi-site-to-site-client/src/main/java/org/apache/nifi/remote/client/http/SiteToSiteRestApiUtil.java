@@ -22,6 +22,7 @@ import org.apache.nifi.remote.io.http.HttpCommunicationsSession;
 import org.apache.nifi.remote.io.http.HttpInput;
 import org.apache.nifi.remote.io.http.HttpOutput;
 import org.apache.nifi.remote.protocol.CommunicationsSession;
+import org.apache.nifi.remote.protocol.socket.ResponseCode;
 import org.apache.nifi.remote.util.NiFiRestApiUtil;
 import org.apache.nifi.stream.io.ByteArrayOutputStream;
 import org.apache.nifi.stream.io.StreamUtils;
@@ -94,7 +95,7 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
             throw new ProtocolException("Server returned 303 without Location header");
 
         } else {
-            throw new IOException("Unexpected response code: " + responseCode);
+            throw new IOException("Unexpected response code: " + responseCode + " response body:" + readErrResponse());
         }
 
     }
@@ -132,7 +133,7 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
             throw new ProtocolException("Server returned 303 without Location header");
 
         } else {
-            throw new IOException("Unexpected response code: " + responseCode);
+            throw new IOException("Unexpected response code: " + responseCode + " response body:" + readErrResponse());
         }
 
     }
@@ -151,12 +152,10 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
 
         if (responseCode == 200) {
             return readResponse(urlConnection.getInputStream());
-
         } else if (responseCode == 400) {
             return readResponse(urlConnection.getErrorStream());
-
         } else {
-            throw new IOException("Unexpected response code: " + responseCode);
+            throw new IOException("Unexpected response code: " + responseCode + " response body:" + readErrResponse());
         }
     }
 
@@ -170,31 +169,36 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
         return mapper.readValue(responseMessage, TransactionResultEntity.class);
     }
 
-    public void commitTransferFlowFiles(String holdUri) throws IOException {
-        logger.info("### Sending commitTransferFlowFiles request to holdUri: " + holdUri);
+    private String readErrResponse() {
+        try {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            StreamUtils.copy(urlConnection.getErrorStream(), bos);
+            String responseMessage = new String(bos.toByteArray(), "UTF-8");
+            return responseMessage;
+        } catch (Throwable t){
+            logger.warn("Failed to read error response.", t.getMessage());
+            return null;
+        }
+    }
 
-        urlConnection = getConnection(holdUri);
+    public TransactionResultEntity commitTransferFlowFiles(String holdUri, ResponseCode clientResponse) throws IOException {
+        String requestUrl = holdUri + "?responseCode=" + clientResponse.getCode();
+        logger.info("### Sending commitTransferFlowFiles request to holdUri: " + requestUrl);
+
+        urlConnection = getConnection(requestUrl);
         urlConnection.setRequestMethod("DELETE");
         urlConnection.setRequestProperty("Accept", "application/json");
-
 
         int responseCode = urlConnection.getResponseCode();
         logger.debug("### commitTransferFlowFiles responseCode=" + responseCode);
 
-
         if (responseCode == 200) {
-            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            StreamUtils.copy(urlConnection.getInputStream(), bos);
-            logger.debug("### commitTransferFlowFiles reader.readLine()=" + new String(bos.toByteArray(), "UTF-8"));
+            return readResponse(urlConnection.getInputStream());
+        } else if (responseCode == 400) {
+            return readResponse(urlConnection.getErrorStream());
         } else {
-            // TODO: The case of Destination full.
-            throw new IOException("Unexpected response code: " + responseCode);
+            throw new IOException("Unexpected response code: " + responseCode + " response body:" + readErrResponse());
         }
-    }
-
-    public void cancelTransferFlowFiles(String holdUri) throws IOException {
-        // TODO: cancel.
-        throw new NotImplementedException("Cancel should be implemented soon.");
     }
 
 }

@@ -32,11 +32,11 @@ public class HttpClientTransaction extends AbstractTransaction {
 
     public void initialize(SiteToSiteRestApiUtil apiUtil) throws IOException {
         this.apiUtil = apiUtil;
-        if(TransferDirection.SEND.equals(direction)){
-            apiUtil.openConnectionForSend(destinationId, peer.getCommunicationsSession());
-        } else {
+        if(TransferDirection.RECEIVE.equals(direction)){
             holdUri = apiUtil.openConnectionForReceive(destinationId, peer.getCommunicationsSession());
             dataAvailable = (holdUri != null);
+        } else {
+            apiUtil.openConnectionForSend(destinationId, peer.getCommunicationsSession());
         }
     }
 
@@ -53,18 +53,7 @@ public class HttpClientTransaction extends AbstractTransaction {
         HttpCommunicationsSession commSession = (HttpCommunicationsSession) peer.getCommunicationsSession();
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         DataOutputStream dos = new DataOutputStream(bos);
-        if(TransferDirection.SEND.equals(direction)){
-            switch (state){
-                case DATA_EXCHANGED:
-                    // Some flow files have been sent via stream, finish transferring.
-                    holdUri = apiUtil.finishTransferFlowFiles(commSession);
-                    ResponseCode.CONFIRM_TRANSACTION.writeResponse(dos, commSession.getChecksum());
-                    break;
-                case TRANSACTION_CONFIRMED:
-                    ResponseCode.TRANSACTION_FINISHED.writeResponse(dos);
-                    break;
-            }
-        } else {
+        if(TransferDirection.RECEIVE.equals(direction)){
             switch (state){
                 case TRANSACTION_STARTED:
                 case DATA_EXCHANGED:
@@ -74,18 +63,36 @@ public class HttpClientTransaction extends AbstractTransaction {
                         ResponseCode.CONTINUE_TRANSACTION.writeResponse(dos);
                     } else {
                         // We got a checksum to send to server.
-                        ResponseCode responseCode = ResponseCode.CONFIRM_TRANSACTION;
                         if(holdUri == null){
                             logger.debug("There's no transaction to confirm.");
+                            ResponseCode.CONFIRM_TRANSACTION.writeResponse(dos, "");
                         } else {
                             TransactionResultEntity transactionResult = apiUtil.commitReceivingFlowFiles(holdUri, commSession.getChecksum());
-                            responseCode = ResponseCode.fromCode(transactionResult.getResponseCode());
+                            ResponseCode responseCode = ResponseCode.fromCode(transactionResult.getResponseCode());
+                            if(responseCode.containsMessage()){
+                                String message = transactionResult.getMessage();
+                                responseCode.writeResponse(dos, message == null ? "" : message);
+                            } else {
+                                responseCode.writeResponse(dos);
+                            }
                         }
-                        if(responseCode.containsMessage()){
-                            responseCode.writeResponse(dos, "");
-                        } else {
-                            responseCode.writeResponse(dos);
-                        }
+                    }
+                    break;
+            }
+        } else {
+            switch (state){
+                case DATA_EXCHANGED:
+                    // Some flow files have been sent via stream, finish transferring.
+                    holdUri = apiUtil.finishTransferFlowFiles(commSession);
+                    ResponseCode.CONFIRM_TRANSACTION.writeResponse(dos, commSession.getChecksum());
+                    break;
+                case TRANSACTION_CONFIRMED:
+                    TransactionResultEntity resultEntity = apiUtil.commitTransferFlowFiles(holdUri, ResponseCode.CONFIRM_TRANSACTION);
+                    ResponseCode responseCode = ResponseCode.fromCode(resultEntity.getResponseCode());
+                    if(responseCode.containsMessage()){
+                        responseCode.writeResponse(dos, resultEntity.getMessage());
+                    } else {
+                        responseCode.writeResponse(dos);
                     }
                     break;
             }
@@ -97,27 +104,28 @@ public class HttpClientTransaction extends AbstractTransaction {
     @Override
     protected void writeTransactionResponse(ResponseCode response, String explanation) throws IOException {
         HttpCommunicationsSession commSession = (HttpCommunicationsSession) peer.getCommunicationsSession();
-        if(TransferDirection.SEND.equals(direction)){
+        if(TransferDirection.RECEIVE.equals(direction)){
             switch (response) {
-                case FINISH_TRANSACTION:
-                    logger.debug("{} Finishing transaction.", this);
-                    break;
-                case BAD_CHECKSUM:
-                    // TODO: send cancel request to server.
-                    apiUtil.cancelTransferFlowFiles(holdUri);
-                    break;
                 case CONFIRM_TRANSACTION:
-                    apiUtil.commitTransferFlowFiles(holdUri);
-                    break;
-            }
-        } else {
-            switch (response) {
-                 case CONFIRM_TRANSACTION:
                     logger.debug("{} Confirming transaction. checksum={}", this, explanation);
                     commSession.setChecksum(explanation);
                     break;
                 case TRANSACTION_FINISHED:
                     logger.debug("{} Finishing transaction.", this);
+                    break;
+            }
+        } else {
+            switch (response) {
+                case FINISH_TRANSACTION:
+                    // The actual HTTP request will be sent in readTransactionResponse.
+                    logger.debug("{} Finished sending flow files.", this);
+                    break;
+                case BAD_CHECKSUM:
+                    apiUtil.commitTransferFlowFiles(holdUri, ResponseCode.BAD_CHECKSUM);
+                    break;
+                case CONFIRM_TRANSACTION:
+                    // The actual HTTP request will be sent in readTransactionResponse.
+                    logger.debug("{} Transaction is confirmed.", this);
                     break;
             }
         }

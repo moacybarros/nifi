@@ -102,6 +102,7 @@ public class SiteToSiteResource extends ApplicationResource {
     private static final Logger logger = LoggerFactory.getLogger(SiteToSiteResource.class);
 
     public static final String CHECK_SUM = "checksum";
+    public static final String RESPONSE_CODE = "responseCode";
     public static final String CONTEXT_ATTRIBUTE_TX_ON_HOLD = "txOnHold";
 
     // TODO: Remove serviceFacade if we don't need it.
@@ -396,6 +397,11 @@ public class SiteToSiteResource extends ApplicationResource {
             )
             @QueryParam(CLIENT_ID) @DefaultValue(StringUtils.EMPTY) ClientIdParameter clientId,
             @ApiParam(
+                    value = "The response code. Available values are BAD_CHECKSUM(19) or CONFIRM_TRANSACTION(12).",
+                    required = true
+            )
+            @QueryParam(RESPONSE_CODE) Integer responseCode,
+            @ApiParam(
                     value = "The input port id.",
                     required = true
             )
@@ -409,22 +415,51 @@ public class SiteToSiteResource extends ApplicationResource {
             @Context ServletContext context,
             InputStream inputStream) {
 
-        logger.info("commitRxTransaction request: portId={} transactionId={}", portId, transactionId);
+        logger.info("commitRxTransaction request: portId={} transactionId={} responseCode={}", portId, transactionId, responseCode);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         Peer peer = initiatePeer(req, inputStream, out, transactionId);
 
+        TransactionResultEntity entity = new TransactionResultEntity();
         try {
             HttpFlowFileServerProtocol serverProtocol = initiateServerProtocol(peer, context);
-            serverProtocol.commitReceiveTransaction(peer);
+            HttpServerCommunicationsSession commsSession = (HttpServerCommunicationsSession) peer.getCommunicationsSession();
+            // Pass the response code sent from the client.
+            String inputErrMessage = null;
+            if(responseCode == null) {
+                inputErrMessage = "responseCode is required.";
+            } else if(ResponseCode.BAD_CHECKSUM.getCode() != responseCode
+                    && ResponseCode.CONFIRM_TRANSACTION.getCode() != responseCode) {
+                inputErrMessage = "responseCode " + responseCode + " is invalid. ";
+            }
+            if(inputErrMessage != null){
+                entity.setMessage(inputErrMessage);
+                entity.setResponseCode(ResponseCode.ABORT.getCode());
+                return Response.status(Response.Status.BAD_REQUEST).entity(entity).build();
+            }
+            commsSession.setResponseCode(ResponseCode.fromCode(responseCode));
+
+            try {
+                int flowFileSent = serverProtocol.commitReceiveTransaction(peer);
+                entity.setResponseCode(commsSession.getResponseCode().getCode());
+                entity.setFlowFileSent(flowFileSent);
+            } catch (IOException e){
+                if(ResponseCode.BAD_CHECKSUM.getCode() == responseCode && e.getMessage().contains("Received a BadChecksum response")){
+                    // AbstractFlowFileServerProtocol throws IOException after it canceled transaction.
+                    // This is a known behavior and if we return 500 with this exception,
+                    // it's not clear if there is an issue at server side, or cancel operation has been accomplished.
+                    // Above conditions can guarantee this is the latter case, we return 200 OK here.
+                    entity.setResponseCode(ResponseCode.CANCEL_TRANSACTION.getCode());
+                    return clusterContext(noCache(Response.ok(entity))).build();
+                } else {
+                    throw e;
+                }
+            }
         } catch (IOException e) {
-            // TODO: error handling.
             logger.error("Failed to process the request.", e);
             return Response.serverError().build();
         }
 
-        // TODO: Construct meaningful result.
-        TransactionResultEntity entity = new TransactionResultEntity();
         return clusterContext(noCache(Response.ok(entity))).build();
     }
 

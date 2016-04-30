@@ -204,6 +204,9 @@ public class TestHttpClientTransaction {
                 return holdUri;
             }
         }).when(apiUtil).finishTransferFlowFiles(any(CommunicationsSession.class));
+        TransactionResultEntity resultEntity = new TransactionResultEntity();
+        resultEntity.setResponseCode(ResponseCode.TRANSACTION_FINISHED.getCode());
+        doReturn(resultEntity).when(apiUtil).commitTransferFlowFiles(eq(holdUri), eq(ResponseCode.CONFIRM_TRANSACTION));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         ByteArrayInputStream serverResponse = new ByteArrayInputStream(serverResponseBos.toByteArray());
@@ -217,7 +220,7 @@ public class TestHttpClientTransaction {
         assertEquals("contents on client 1", readContents(packetByClient));
         assertEquals(-1, sentByClient.read());
 
-        verify(apiUtil).commitTransferFlowFiles(holdUri);
+        verify(apiUtil).commitTransferFlowFiles(holdUri, ResponseCode.CONFIRM_TRANSACTION);
     }
 
     @Test
@@ -235,6 +238,9 @@ public class TestHttpClientTransaction {
                 return holdUri;
             }
         }).when(apiUtil).finishTransferFlowFiles(any(CommunicationsSession.class));
+        TransactionResultEntity resultEntity = new TransactionResultEntity();
+        resultEntity.setResponseCode(ResponseCode.TRANSACTION_FINISHED.getCode());
+        doReturn(resultEntity).when(apiUtil).commitTransferFlowFiles(eq(holdUri), eq(ResponseCode.CONFIRM_TRANSACTION));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         ByteArrayInputStream serverResponse = new ByteArrayInputStream(serverResponseBos.toByteArray());
@@ -250,7 +256,7 @@ public class TestHttpClientTransaction {
         assertEquals("contents on client 2", readContents(packetByClient));
         assertEquals(-1, sentByClient.read());
 
-        verify(apiUtil).commitTransferFlowFiles(holdUri);
+        verify(apiUtil).commitTransferFlowFiles(holdUri, ResponseCode.CONFIRM_TRANSACTION);
     }
 
     @Test
@@ -282,7 +288,7 @@ public class TestHttpClientTransaction {
         assertEquals("contents on client 2", readContents(packetByClient));
         assertEquals(-1, sentByClient.read());
 
-        verify(apiUtil).cancelTransferFlowFiles(holdUri);
+        verify(apiUtil).commitTransferFlowFiles(holdUri, ResponseCode.BAD_CHECKSUM);
     }
 
     @Test
@@ -315,6 +321,6 @@ public class TestHttpClientTransaction {
         assertEquals("contents on client 2", readContents(packetByClient));
         assertEquals(-1, sentByClient.read());
 
-        verify(apiUtil).commitTransferFlowFiles(holdUri);
+        verify(apiUtil).commitTransferFlowFiles(holdUri, ResponseCode.CONFIRM_TRANSACTION);
     }
 }

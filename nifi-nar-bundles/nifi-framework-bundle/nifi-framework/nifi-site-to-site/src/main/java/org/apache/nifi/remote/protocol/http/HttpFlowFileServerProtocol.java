@@ -116,8 +116,9 @@ public class HttpFlowFileServerProtocol extends AbstractFlowFileServerProtocol {
         HttpServerCommunicationsSession commSession = (HttpServerCommunicationsSession) commsSession;
 
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        Transaction.TransactionState currentStatus = commSession.getStatus();
         if(isTransfer){
-            switch (commSession.getStatus()){
+            switch (currentStatus){
                 case DATA_EXCHANGED:
                     String clientChecksum = commSession.getChecksum();
                     logger.debug("readTransactionResponse. clientChecksum={}", clientChecksum);
@@ -129,16 +130,21 @@ public class HttpFlowFileServerProtocol extends AbstractFlowFileServerProtocol {
                     break;
             }
         } else {
-            switch (commSession.getStatus()){
+            switch (currentStatus){
                 case TRANSACTION_STARTED:
                     logger.debug("readTransactionResponse. returning CONTINUE_TRANSACTION.");
                     // We don't know if there's more data to receive, so just continue it.
                     ResponseCode.CONTINUE_TRANSACTION.writeResponse(new DataOutputStream(bos));
                     break;
                 case TRANSACTION_CONFIRMED:
-                    logger.debug("readTransactionResponse. returning CONFIRM_TRANSACTION.");
-                    // Checksum was successfully validated at client side.
-                    ResponseCode.CONFIRM_TRANSACTION.writeResponse(new DataOutputStream(bos), "");
+                    // Checksum was successfully validated at client side, or BAD_CHECKSUM is returned.
+                    ResponseCode responseCode = commSession.getResponseCode();
+                    logger.debug("readTransactionResponse. responseCode={}", responseCode);
+                    if(responseCode.containsMessage()){
+                        responseCode.writeResponse(new DataOutputStream(bos), "");
+                    } else {
+                        responseCode.writeResponse(new DataOutputStream(bos));
+                    }
                     break;
             }
         }
@@ -190,7 +196,6 @@ public class HttpFlowFileServerProtocol extends AbstractFlowFileServerProtocol {
         if(transaction == null){
             throw new IOException("Transaction was not found. transactionId=" + transactionId);
         }
-        // TODO: Need to reflect the result sent from client, confirmed, cancel or error.
         commSession.setStatus(Transaction.TransactionState.TRANSACTION_CONFIRMED);
         return super.commitReceiveTransaction(peer, transaction);
     }
