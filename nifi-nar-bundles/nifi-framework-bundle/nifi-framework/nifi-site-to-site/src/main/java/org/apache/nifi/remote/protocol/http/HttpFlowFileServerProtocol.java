@@ -106,6 +106,11 @@ public class HttpFlowFileServerProtocol extends AbstractFlowFileServerProtocol {
                     commSession.setChecksum(explanation);
                     commSession.setStatus(Transaction.TransactionState.DATA_EXCHANGED);
                     break;
+                case TRANSACTION_FINISHED:
+                case TRANSACTION_FINISHED_BUT_DESTINATION_FULL:
+                    logger.debug("{} Transaction is completed. responseCode={}", this, response);
+                    commSession.setStatus(Transaction.TransactionState.TRANSACTION_COMPLETED);
+                    break;
             }
         }
     }
