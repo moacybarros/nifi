@@ -30,7 +30,6 @@ import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.remote.Peer;
 import org.apache.nifi.remote.PeerDescription;
 import org.apache.nifi.remote.RootGroupPort;
-import org.apache.nifi.remote.Transaction;
 import org.apache.nifi.remote.cluster.ClusterNodeInformation;
 import org.apache.nifi.remote.cluster.NodeInformation;
 import org.apache.nifi.remote.codec.FlowFileCodec;
@@ -45,6 +44,7 @@ import org.apache.nifi.remote.protocol.http.HttpControlPacket;
 import org.apache.nifi.remote.protocol.http.HttpFlowFileServerProtocol;
 import org.apache.nifi.remote.protocol.socket.ResponseCode;
 import org.apache.nifi.stream.io.ByteArrayOutputStream;
+import org.apache.nifi.user.NiFiUser;
 import org.apache.nifi.util.NiFiProperties;
 import org.apache.nifi.web.NiFiServiceFacade;
 import org.apache.nifi.web.api.dto.RevisionDTO;
@@ -54,6 +54,7 @@ import org.apache.nifi.web.api.entity.PeersEntity;
 import org.apache.nifi.web.api.entity.TransactionResultEntity;
 import org.apache.nifi.web.api.request.ClientIdParameter;
 import org.apache.nifi.web.controller.ControllerFacade;
+import org.apache.nifi.web.security.user.NiFiUserUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -103,7 +104,7 @@ public class SiteToSiteResource extends ApplicationResource {
 
     public static final String CHECK_SUM = "checksum";
     public static final String RESPONSE_CODE = "responseCode";
-    public static final String CONTEXT_ATTRIBUTE_TX_ON_HOLD = "txOnHold";
+    public static final String CONTEXT_ATTRIBUTE_TRANSACTION_ON_HOLD = "siteToSiteTransactionOnHold";
 
     // TODO: Remove serviceFacade if we don't need it.
     private NiFiServiceFacade serviceFacade;
@@ -255,7 +256,7 @@ public class SiteToSiteResource extends ApplicationResource {
         // TODO: get rootGroup
         // Socket version impl is SocketRemoteSiteListener
         // serverProtocol.setRootProcessGroup(rootGroup.get());
-        ConcurrentMap<String, FlowFileTransaction> txOnHold = (ConcurrentMap<String, FlowFileTransaction>)context.getAttribute(CONTEXT_ATTRIBUTE_TX_ON_HOLD);
+        ConcurrentMap<String, FlowFileTransaction> txOnHold = (ConcurrentMap<String, FlowFileTransaction>)context.getAttribute(CONTEXT_ATTRIBUTE_TRANSACTION_ON_HOLD);
         HttpFlowFileServerProtocol serverProtocol = new HttpFlowFileServerProtocol(txOnHold);
         serverProtocol.setNodeInformant(clusterManager);
         serverProtocol.handshake(peer);
@@ -265,13 +266,20 @@ public class SiteToSiteResource extends ApplicationResource {
     private Peer initiatePeer(HttpServletRequest req, InputStream inputStream, OutputStream outputStream, String txId) {
         String clientHostName = req.getRemoteHost();
         int clientPort = req.getRemotePort();
+
         PeerDescription peerDescription = new PeerDescription(clientHostName, clientPort, req.isSecure());
 
         CommunicationsSession commSession = new HttpServerCommunicationsSession(inputStream, outputStream, txId);
 
-        // TODO: Are those values used? Yes, for logging.
-        String clusterUrl = "Unkown";
-        String peerUrl = "Unkown";
+        if(peerDescription.isSecure()){
+            NiFiUser nifiUser = NiFiUserUtils.getNiFiUser();
+            logger.info("initiating peer, nifiUser={}", nifiUser);
+            commSession.setUserDn(nifiUser.getIdentity());
+        }
+
+        // TODO: Followed how SocketRemoteSiteListener define peerUrl and clusterUrl, but it can be more meaningful values, especially for clusterUrl.
+        String peerUrl = "nifi://" + clientHostName + ":" + clientPort;
+        String clusterUrl = "nifi://localhost:" + req.getLocalPort();
         return new Peer(peerDescription, commSession, peerUrl, clusterUrl);
     }
 

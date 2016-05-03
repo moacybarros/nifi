@@ -16,7 +16,6 @@
  */
 package org.apache.nifi.remote.client.http;
 
-import org.apache.commons.lang3.NotImplementedException;
 import org.apache.nifi.remote.exception.ProtocolException;
 import org.apache.nifi.remote.io.http.HttpCommunicationsSession;
 import org.apache.nifi.remote.io.http.HttpInput;

@@ -102,7 +102,7 @@ public class ApplicationStartupContextListener implements ServletContextListener
             }
 
             // TODO: Should I create another ContextListener for this?
-            sce.getServletContext().setAttribute(SiteToSiteResource.CONTEXT_ATTRIBUTE_TX_ON_HOLD, new ConcurrentHashMap<>());
+            sce.getServletContext().setAttribute(SiteToSiteResource.CONTEXT_ATTRIBUTE_TRANSACTION_ON_HOLD, new ConcurrentHashMap<>());
 
         }
 
