@@ -24,6 +24,7 @@ import javax.net.ssl.SSLContext;
 
 import org.apache.nifi.events.EventReporter;
 import org.apache.nifi.remote.protocol.DataPacket;
+import org.apache.nifi.remote.protocol.SiteToSiteTransportProtocol;
 
 public interface SiteToSiteClientConfig extends Serializable {
 
@@ -99,7 +100,7 @@ public interface SiteToSiteClientConfig extends Serializable {
      */
     boolean isUseCompression();
 
-    boolean isUseHttp();
+    SiteToSiteTransportProtocol getTransportProtocol();
 
     /**
      * @return the name of the port that the client is to communicate with

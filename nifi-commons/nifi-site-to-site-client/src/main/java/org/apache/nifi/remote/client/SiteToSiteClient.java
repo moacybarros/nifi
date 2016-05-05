@@ -40,6 +40,7 @@ import org.apache.nifi.remote.exception.PortNotRunningException;
 import org.apache.nifi.remote.exception.ProtocolException;
 import org.apache.nifi.remote.exception.UnknownPortException;
 import org.apache.nifi.remote.protocol.DataPacket;
+import org.apache.nifi.remote.protocol.SiteToSiteTransportProtocol;
 
 /**
  * <p>
@@ -164,8 +165,7 @@ public interface SiteToSiteClient extends Closeable {
         private int batchCount;
         private long batchSize;
         private long batchNanos;
-        // TODO: I should create an Enum representing available protocol.
-        private boolean useHttp;
+        private SiteToSiteTransportProtocol transportProtocol = SiteToSiteTransportProtocol.RAW;
 
         /**
          * Populates the builder with values from the provided config
@@ -188,7 +188,7 @@ public interface SiteToSiteClient extends Closeable {
             this.eventReporter = config.getEventReporter();
             this.peerPersistenceFile = config.getPeerPersistenceFile();
             this.useCompression = config.isUseCompression();
-            this.useHttp = config.isUseHttp();
+            this.transportProtocol = config.getTransportProtocol();
             this.portName = config.getPortName();
             this.portIdentifier = config.getPortIdentifier();
             this.batchCount = config.getPreferredBatchCount();
@@ -444,8 +444,13 @@ public interface SiteToSiteClient extends Closeable {
             return this;
         }
 
-        public Builder useHttp(final boolean useHttp) {
-            this.useHttp = useHttp;
+        /**
+         * Specifies the protocol to use for site to site data transport.
+         * @param transportProtocol transport protocol
+         * @return the builder
+         */
+        public Builder transportProtocol(final SiteToSiteTransportProtocol transportProtocol) {
+            this.transportProtocol = transportProtocol;
             return this;
         }
 
@@ -530,7 +535,8 @@ public interface SiteToSiteClient extends Closeable {
          *         data with remote instances of NiFi
          *
          * @throws IllegalStateException if either the url is not set or neither
-         *             the port name nor port identifier is set.
+         *             the port name nor port identifier is set,
+         *             or if the transport protocol is not supported.
          */
         public SiteToSiteClient build() {
             if (url == null) {
@@ -541,10 +547,14 @@ public interface SiteToSiteClient extends Closeable {
                 throw new IllegalStateException("Must specify either Port Name or Port Identifier to build Site-to-Site client");
             }
 
-            if(isUseHttp()){
-                return new HttpClient(buildConfig());
+            switch (transportProtocol){
+                case RAW:
+                    return new SocketClient(buildConfig());
+                case HTTP:
+                    return new HttpClient(buildConfig());
+                default:
+                    throw new IllegalStateException("Transport protocol '" + transportProtocol + "' is not supported.");
             }
-            return new SocketClient(buildConfig());
         }
 
         /**
@@ -662,8 +672,11 @@ public interface SiteToSiteClient extends Closeable {
             return useCompression;
         }
 
-        public boolean isUseHttp() {
-            return useHttp;
+        /**
+         * @return the transport protocol to use, defaults to RAW
+         */
+        public SiteToSiteTransportProtocol getTransportProtocol(){
+            return transportProtocol;
         }
 
         /**
@@ -701,7 +714,7 @@ public interface SiteToSiteClient extends Closeable {
         private final EventReporter eventReporter;
         private final File peerPersistenceFile;
         private final boolean useCompression;
-        private final boolean useHttp;
+        private final SiteToSiteTransportProtocol transportProtocol;
         private final String portName;
         private final String portIdentifier;
         private final int batchCount;
@@ -729,7 +742,7 @@ public interface SiteToSiteClient extends Closeable {
             this.batchCount = 0;
             this.batchSize = 0;
             this.batchNanos = 0;
-            this.useHttp = false;
+            this.transportProtocol = null;
         }
 
         private StandardSiteToSiteClientConfig(final SiteToSiteClient.Builder builder) {
@@ -752,17 +765,12 @@ public interface SiteToSiteClient extends Closeable {
             this.batchCount = builder.batchCount;
             this.batchSize = builder.batchSize;
             this.batchNanos = builder.batchNanos;
-            this.useHttp = builder.isUseHttp();
+            this.transportProtocol = builder.getTransportProtocol();
         }
 
         @Override
         public boolean isUseCompression() {
             return useCompression;
-        }
-
-        @Override
-        public boolean isUseHttp() {
-            return useHttp;
         }
 
         @Override
@@ -853,6 +861,11 @@ public interface SiteToSiteClient extends Closeable {
         @Override
         public KeystoreType getTruststoreType() {
             return truststoreType;
+        }
+
+        @Override
+        public SiteToSiteTransportProtocol getTransportProtocol() {
+            return transportProtocol;
         }
     }
 }

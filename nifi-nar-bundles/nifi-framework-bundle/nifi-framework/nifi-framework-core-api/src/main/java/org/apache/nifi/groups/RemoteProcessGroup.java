@@ -25,6 +25,7 @@ import org.apache.nifi.connectable.Position;
 import org.apache.nifi.controller.exception.CommunicationsException;
 import org.apache.nifi.events.EventReporter;
 import org.apache.nifi.remote.RemoteGroupPort;
+import org.apache.nifi.remote.protocol.SiteToSiteTransportProtocol;
 
 public interface RemoteProcessGroup {
 
@@ -137,10 +138,6 @@ public interface RemoteProcessGroup {
      */
     boolean isSecure() throws CommunicationsException;
 
-    boolean isUseHttp();
-
-    void setUseHttp(boolean useHttp);
-
     /**
      * @return Indicates whether or not communications with this RemoteProcessGroup will
      * be secure (2-way authentication). Returns null if unknown.
@@ -164,6 +161,10 @@ public interface RemoteProcessGroup {
      * events
      */
     EventReporter getEventReporter();
+
+    SiteToSiteTransportProtocol getTransportProtocol();
+
+    void setTransportProtocol(SiteToSiteTransportProtocol transportProtocol);
 
     /**
      * Initiates a task in the remote process group to re-initialize, as a

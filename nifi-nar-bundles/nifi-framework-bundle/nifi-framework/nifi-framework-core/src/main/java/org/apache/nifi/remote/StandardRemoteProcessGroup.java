@@ -56,6 +56,7 @@ import org.apache.nifi.groups.ProcessGroup;
 import org.apache.nifi.groups.ProcessGroupCounts;
 import org.apache.nifi.groups.RemoteProcessGroup;
 import org.apache.nifi.groups.RemoteProcessGroupPortDescriptor;
+import org.apache.nifi.remote.protocol.SiteToSiteTransportProtocol;
 import org.apache.nifi.reporting.BulletinRepository;
 import org.apache.nifi.reporting.ComponentType;
 import org.apache.nifi.reporting.Severity;
@@ -110,7 +111,7 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
     private volatile String communicationsTimeout = "30 sec";
     private volatile String targetId;
     private volatile String yieldDuration = "10 sec";
-    private boolean useHttp;
+    private SiteToSiteTransportProtocol transportProtocol = SiteToSiteTransportProtocol.RAW;
 
     private final ReadWriteLock rwLock = new ReentrantReadWriteLock();
     private final Lock readLock = rwLock.readLock();
@@ -224,8 +225,13 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
         this.targetId = targetId;
     }
 
-    public void setUseHttp(final boolean useHttp){
-        this.useHttp = useHttp;
+    public void setTransportProtocol(final SiteToSiteTransportProtocol transportProtocol) {
+        this.transportProtocol = transportProtocol;
+    }
+
+    @Override
+    public SiteToSiteTransportProtocol getTransportProtocol() {
+        return transportProtocol;
     }
 
     /**
@@ -1072,11 +1078,6 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
         } finally {
             readLock.unlock();
         }
-    }
-
-    @Override
-    public boolean isUseHttp() {
-        return useHttp;
     }
 
     @Override
