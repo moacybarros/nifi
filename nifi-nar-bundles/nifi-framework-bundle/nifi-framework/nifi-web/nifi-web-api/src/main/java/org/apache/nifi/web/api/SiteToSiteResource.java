@@ -78,7 +78,6 @@ import javax.ws.rs.core.StreamingOutput;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
@@ -146,12 +145,14 @@ public class SiteToSiteResource extends ApplicationResource {
                     value = "If the client id is not specified, new one will be generated. This value (whether specified or generated) is included in the response.",
                     required = false
             )
-            @QueryParam(CLIENT_ID) @DefaultValue(StringUtils.EMPTY) ClientIdParameter clientId) {
+            @QueryParam(CLIENT_ID) @DefaultValue(StringUtils.EMPTY) ClientIdParameter clientId,
+            @Context HttpServletRequest req) {
 
         ArrayList<PeerDTO> peers;
 
-        if (properties.isClusterManager()) {
-            // TODO: Get peers within this cluster.
+        if (properties.isNode()) {
+            return createNodeTypeErrorResponse(req.getPathInfo() + " is only accessible on NCM or Standalone NiFi instance.");
+        } else if (properties.isClusterManager()) {
             ClusterNodeInformation clusterNodeInfo = clusterManager.getNodeInformation();
             final Collection<NodeInformation> nodeInfos = clusterNodeInfo.getNodeInformation();
             peers = new ArrayList<>(nodeInfos.size());
@@ -159,20 +160,22 @@ public class SiteToSiteResource extends ApplicationResource {
                 PeerDTO peer = new PeerDTO();
                 // TODO: Need to set API host name instead.
                 peer.setHostname(nodeInfo.getSiteToSiteHostname());
+                // TODO: Determine which hostname:port to use based on isSiteToSiteSecure.
+                // This port is configured in a context of NiFi Cluster Manager's use,
+                // nodeInfo.getAPIPort() returns nifi.web.http.port or nifi.web.https.port
+                // based on nifi.cluster.protocol.is.secure.
                 peer.setPort(nodeInfo.getAPIPort());
-                // TODO: Need to set if API is secured instead.
                 peer.setSecure(nodeInfo.isSiteToSiteSecure());
                 peer.setFlowFileCount(nodeInfo.getTotalFlowFiles());
                 peers.add(peer);
             }
         } else {
-            InetSocketAddress apiAddress = properties.getNodeApiAddress();
-
-            // TODO: Determine if the connection is secured.
+            // Standalone mode.
+            // If this request is sent via HTTPS, subsequent requests should be sent via HTTPS.
             PeerDTO peer = new PeerDTO();
-            peer.setHostname(apiAddress.getHostName());
-            peer.setPort(apiAddress.getPort());
-            peer.setSecure(false);
+            peer.setHostname(req.getLocalName());
+            peer.setPort(req.getLocalPort());
+            peer.setSecure(req.isSecure());
             peer.setFlowFileCount(0);  // doesn't matter how many FlowFiles we have, because we're the only host.
 
             peers = new ArrayList<>(1);
@@ -229,6 +232,10 @@ public class SiteToSiteResource extends ApplicationResource {
             InputStream inputStream) {
 
         logger.info("### receiveFlowFiles request: portId=" + portId + " inputStream=" + inputStream, " req=" + req);
+
+        if (properties.isClusterManager()) {
+            return createNodeTypeErrorResponse(req.getPathInfo() + " is not available on a node in a NiFi cluster.");
+        }
 
         RootGroupPort port = getRootGroupPort(portId, true);
 
@@ -349,6 +356,10 @@ public class SiteToSiteResource extends ApplicationResource {
 
         logger.info("commitTxTransaction request: portId={} transactionId={}", portId, transactionId);
 
+        if (properties.isClusterManager()) {
+            return createNodeTypeErrorResponse(req.getPathInfo() + " is not available on a node in a NiFi cluster.");
+        }
+
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         Peer peer = initiatePeer(req, inputStream, out, transactionId);
 
@@ -373,6 +384,10 @@ public class SiteToSiteResource extends ApplicationResource {
         }
 
         return clusterContext(noCache(Response.ok(entity))).build();
+    }
+
+    private Response createNodeTypeErrorResponse(String errMsg) {
+        return noCache(Response.status(Response.Status.FORBIDDEN)).type(MediaType.TEXT_PLAIN).entity(errMsg).build();
     }
 
     @DELETE
@@ -424,6 +439,10 @@ public class SiteToSiteResource extends ApplicationResource {
             InputStream inputStream) {
 
         logger.info("commitRxTransaction request: portId={} transactionId={} responseCode={}", portId, transactionId, responseCode);
+
+        if (properties.isClusterManager()) {
+            return createNodeTypeErrorResponse(req.getPathInfo() + " is not available on a node in a NiFi cluster.");
+        }
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         Peer peer = initiatePeer(req, inputStream, out, transactionId);
@@ -512,6 +531,10 @@ public class SiteToSiteResource extends ApplicationResource {
             InputStream inputStream) {
 
         logger.info("### transferFlowFiles request: portId=" + portId + " inputStream=" + inputStream, " req=" + req);
+
+        if (properties.isClusterManager()) {
+            return createNodeTypeErrorResponse(req.getPathInfo() + " is not available on a node in a NiFi cluster.");
+        }
 
         RootGroupPort port = getRootGroupPort(portId, false);
 
