@@ -122,7 +122,6 @@ public abstract class AbstractTransaction implements Transaction {
                 if (packet == null) {
                     this.dataAvailable = false;
                 } else {
-                    checkReceivedPacket(packet);
                     transfers++;
                     contentBytes += packet.getSize();
                 }
@@ -137,8 +136,6 @@ public abstract class AbstractTransaction implements Transaction {
             throw e;
         }
     }
-
-    protected void checkReceivedPacket(DataPacket packet) throws IOException {}
 
     abstract protected Response readTransactionResponse() throws IOException;
 

@@ -306,6 +306,9 @@ public class TestHttpClientTransaction {
                 return holdUri;
             }
         }).when(apiUtil).finishTransferFlowFiles(any(CommunicationsSession.class));
+        TransactionResultEntity resultEntity = new TransactionResultEntity();
+        resultEntity.setResponseCode(ResponseCode.TRANSACTION_FINISHED_BUT_DESTINATION_FULL.getCode());
+        doReturn(resultEntity).when(apiUtil).commitTransferFlowFiles(eq(holdUri), eq(ResponseCode.CONFIRM_TRANSACTION));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         ByteArrayInputStream serverResponse = new ByteArrayInputStream(serverResponseBos.toByteArray());

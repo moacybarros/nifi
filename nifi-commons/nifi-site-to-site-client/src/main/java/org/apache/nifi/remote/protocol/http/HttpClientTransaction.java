@@ -41,14 +41,6 @@ public class HttpClientTransaction extends AbstractTransaction {
     }
 
     @Override
-    protected void checkReceivedPacket(DataPacket packet) throws IOException {
-        if(packet instanceof HttpControlPacket){
-            BufferedReader br = new BufferedReader(new InputStreamReader(packet.getData()));
-            throw new IOException(br.readLine());
-        }
-    }
-
-    @Override
     protected Response readTransactionResponse() throws IOException {
         HttpCommunicationsSession commSession = (HttpCommunicationsSession) peer.getCommunicationsSession();
         ByteArrayOutputStream bos = new ByteArrayOutputStream();

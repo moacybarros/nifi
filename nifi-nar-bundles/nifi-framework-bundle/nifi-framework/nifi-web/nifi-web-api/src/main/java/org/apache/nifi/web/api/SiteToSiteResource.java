@@ -26,21 +26,17 @@ import com.wordnik.swagger.annotations.Authorization;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.nifi.cluster.manager.impl.WebClusterManager;
 import org.apache.nifi.groups.ProcessGroup;
-import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.remote.Peer;
 import org.apache.nifi.remote.PeerDescription;
 import org.apache.nifi.remote.RootGroupPort;
 import org.apache.nifi.remote.cluster.ClusterNodeInformation;
 import org.apache.nifi.remote.cluster.NodeInformation;
-import org.apache.nifi.remote.codec.FlowFileCodec;
-import org.apache.nifi.remote.codec.StandardFlowFileCodec;
 import org.apache.nifi.remote.exception.BadRequestException;
 import org.apache.nifi.remote.exception.NotAuthorizedException;
 import org.apache.nifi.remote.exception.RequestExpiredException;
 import org.apache.nifi.remote.io.http.HttpServerCommunicationsSession;
 import org.apache.nifi.remote.protocol.CommunicationsSession;
 import org.apache.nifi.remote.protocol.FlowFileTransaction;
-import org.apache.nifi.remote.protocol.http.HttpControlPacket;
 import org.apache.nifi.remote.protocol.http.HttpFlowFileServerProtocol;
 import org.apache.nifi.remote.protocol.socket.ResponseCode;
 import org.apache.nifi.stream.io.ByteArrayOutputStream;
@@ -558,16 +554,6 @@ public class SiteToSiteResource extends ApplicationResource {
                     }
                 } catch (NotAuthorizedException | BadRequestException | RequestExpiredException e) {
                     throw new IOException("Failed to process the request.", e);
-                } catch (ProcessException e){
-                    // Indicating other type of exception happened during network communication at FlowFile transfer protocol level.
-                    // And already some data were sent to the client.
-                    // So, we can't overwrite StatusCode.
-                    // Instead, telling the client by sending a special type of FlowFile.
-                    logger.error("### Something happened", e);
-                    FlowFileCodec codec = new StandardFlowFileCodec();
-                    OutputStream errStream = peer.getCommunicationsSession().getOutput().getOutputStream();
-                    HttpControlPacket errPacket = HttpControlPacket.createErrorPacket(e);
-                    codec.encode(errPacket, errStream);
                 }
             }
         };
