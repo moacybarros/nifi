@@ -17,7 +17,6 @@
 package org.apache.nifi.remote;
 
 import com.sun.jersey.api.client.ClientHandlerException;
-import com.sun.jersey.api.client.ClientResponse;
 import com.sun.jersey.api.client.ClientResponse.Status;
 import com.sun.jersey.api.client.UniformInterfaceException;
 import org.apache.nifi.authorization.Resource;
@@ -39,7 +38,9 @@ import org.apache.nifi.groups.ProcessGroup;
 import org.apache.nifi.groups.ProcessGroupCounts;
 import org.apache.nifi.groups.RemoteProcessGroup;
 import org.apache.nifi.groups.RemoteProcessGroupPortDescriptor;
+import org.apache.nifi.remote.client.SiteToSiteClient;
 import org.apache.nifi.remote.protocol.SiteToSiteTransportProtocol;
+import org.apache.nifi.remote.util.NiFiRestApiUtil;
 import org.apache.nifi.reporting.BulletinRepository;
 import org.apache.nifi.reporting.ComponentType;
 import org.apache.nifi.reporting.Severity;
@@ -47,13 +48,13 @@ import org.apache.nifi.util.FormatUtils;
 import org.apache.nifi.util.NiFiProperties;
 import org.apache.nifi.web.api.dto.ControllerDTO;
 import org.apache.nifi.web.api.dto.PortDTO;
-import org.apache.nifi.web.api.entity.ControllerEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.net.ssl.SSLContext;
-import javax.ws.rs.core.Response;
 import java.io.File;
+import java.io.IOException;
+import java.net.Proxy;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
@@ -83,13 +84,9 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
 
     private static final Logger logger = LoggerFactory.getLogger(StandardRemoteProcessGroup.class);
 
-    public static final String SITE_TO_SITE_URI_PATH = "/site-to-site";
-    public static final String ROOT_GROUP_STATUS_URI_PATH = "/flow/process-groups/root/status";
-
     // status codes
-    public static final int OK_STATUS_CODE = Status.OK.getStatusCode();
-    public static final int UNAUTHORIZED_STATUS_CODE = Status.UNAUTHORIZED.getStatusCode();
-    public static final int FORBIDDEN_STATUS_CODE = Status.FORBIDDEN.getStatusCode();
+    private static final int UNAUTHORIZED_STATUS_CODE = Status.UNAUTHORIZED.getStatusCode();
+    private static final int FORBIDDEN_STATUS_CODE = Status.FORBIDDEN.getStatusCode();
 
     private final String id;
 
@@ -732,10 +729,6 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
         return parent == null ? context : getRootGroup(parent);
     }
 
-    private boolean isWebApiSecure() {
-        return targetUri.toString().toLowerCase().startsWith("https");
-    }
-
     private void refreshFlowContentsFromLocal() {
         final ProcessGroup rootGroup = getRootGroup();
         setName(rootGroup.getName());
@@ -797,20 +790,14 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
             return;
         }
 
-        final RemoteNiFiUtils utils = new RemoteNiFiUtils(isWebApiSecure() ? sslContext : null);
-        final String uriVal = apiUri.toString() + SITE_TO_SITE_URI_PATH;
-        URI uri;
-        try {
-            uri = new URI(uriVal);
-        } catch (final URISyntaxException e) {
-            throw new CommunicationsException("Invalid URI: " + uriVal);
-        }
+        final NiFiRestApiUtil apiUtil = getNiFiRestApiUtil();
 
         try {
             // perform the request
-            final ClientResponse response = utils.get(uri, getCommunicationsTimeout(TimeUnit.MILLISECONDS));
-
-            if (!Response.Status.Family.SUCCESSFUL.equals(response.getStatusInfo().getFamily())) {
+            final ControllerDTO dto;
+            try {
+                dto = apiUtil.getController();
+            } catch (IOException e) {
                 writeLock.lock();
                 try {
                     for (final Iterator<StandardRemoteGroupPort> iter = inputPorts.values().iterator(); iter.hasNext();) {
@@ -830,14 +817,8 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
                     writeLock.unlock();
                 }
 
-                // consume the entity entirely
-                response.getEntity(String.class);
-                throw new CommunicationsException("Unable to communicate with Remote NiFi at URI " + uriVal + ". Got HTTP Error Code "
-                        + response.getStatus() + ": " + response.getStatusInfo().getReasonPhrase());
+                throw new CommunicationsException("Unable to communicate with Remote NiFi at URI " + apiUri + " due to: " + e.getMessage());
             }
-
-            final ControllerEntity entity = response.getEntity(ControllerEntity.class);
-            final ControllerDTO dto = entity.getController();
 
             writeLock.lock();
             try {
@@ -903,6 +884,15 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
         } catch (final ClientHandlerException | UniformInterfaceException e) {
             throw new CommunicationsException(e);
         }
+    }
+
+    private NiFiRestApiUtil getNiFiRestApiUtil() {
+        final Proxy proxy = new SiteToSiteClient.Builder().proxyHost(proxyHost).proxyPort(proxyPort).buildConfig().getProxy();
+        final NiFiRestApiUtil apiUtil = new NiFiRestApiUtil(sslContext, proxy);
+        apiUtil.setBaseUrl(apiUri.toString());
+        apiUtil.setConnectTimeoutMillis(getCommunicationsTimeout(TimeUnit.MILLISECONDS));
+        apiUtil.setReadTimeoutMillis(getCommunicationsTimeout(TimeUnit.MILLISECONDS));
+        return apiUtil;
     }
 
     /**
@@ -1129,14 +1119,12 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
         @Override
         public void run() {
             try {
-                final RemoteNiFiUtils utils = new RemoteNiFiUtils(isWebApiSecure() ? sslContext : null);
-                final ClientResponse response = utils.get(new URI(apiUri + SITE_TO_SITE_URI_PATH), getCommunicationsTimeout(TimeUnit.MILLISECONDS));
 
-                final int statusCode = response.getStatus();
+                final NiFiRestApiUtil apiUtil = getNiFiRestApiUtil();
 
-                if (statusCode == OK_STATUS_CODE) {
-                    final ControllerEntity entity = response.getEntity(ControllerEntity.class);
-                    final ControllerDTO dto = entity.getController();
+
+                try {
+                    final ControllerDTO dto = apiUtil.getController();
 
                     if (dto.getRemoteSiteListeningPort() == null && SiteToSiteTransportProtocol.RAW.equals(transportProtocol)) {
                         authorizationIssue = "Remote instance is not configured to allow RAW Site-to-Site communications at this time.";
@@ -1158,31 +1146,39 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
                     final String remoteInstanceId = dto.getInstanceId();
                     final boolean isPointingToCluster = flowController.getInstanceId().equals(remoteInstanceId);
                     pointsToCluster.set(isPointingToCluster);
-                } else if (statusCode == UNAUTHORIZED_STATUS_CODE) {
-                    try {
-                        final ClientResponse requestAccountResponse = utils.issueRegistrationRequest(apiUri.toString());
-                        if (Response.Status.Family.SUCCESSFUL.equals(requestAccountResponse.getStatusInfo().getFamily())) {
-                            logger.info("{} Issued a Request to communicate with remote instance", this);
-                        } else {
-                            logger.error("{} Failed to request account: got unexpected response code of {}:{}", new Object[]{
-                                this, requestAccountResponse.getStatus(), requestAccountResponse.getStatusInfo().getReasonPhrase()});
-                        }
-                    } catch (final Exception e) {
-                        logger.error("{} Failed to request account due to {}", this, e.toString());
-                        if (logger.isDebugEnabled()) {
-                            logger.error("", e);
-                        }
-                    }
 
-                    authorizationIssue = response.getEntity(String.class);
-                } else if (statusCode == FORBIDDEN_STATUS_CODE) {
-                    authorizationIssue = response.getEntity(String.class);
-                } else {
-                    final String message = response.getEntity(String.class);
-                    logger.warn("{} When communicating with remote instance, got unexpected response code {}:{} with entity: {}",
-                            new Object[]{this, response.getStatus(), response.getStatusInfo().getReasonPhrase(), message});
-                    authorizationIssue = "Unable to determine Site-to-Site availability.";
+                } catch (NiFiRestApiUtil.HttpGetFailedException e) {
+
+                    if (e.getResponseCode() == UNAUTHORIZED_STATUS_CODE) {
+                        // TODO: implement registration request
+                        /*
+                        try {
+                            final ClientResponse requestAccountResponse = utils.issueRegistrationRequest(apiUri.toString());
+                            if (Response.Status.Family.SUCCESSFUL.equals(requestAccountResponse.getStatusInfo().getFamily())) {
+                                logger.info("{} Issued a Request to communicate with remote instance", this);
+                            } else {
+                                logger.error("{} Failed to request account: got unexpected response code of {}:{}", new Object[]{
+                                    this, requestAccountResponse.getStatus(), requestAccountResponse.getStatusInfo().getReasonPhrase()});
+                            }
+                        } catch (final Exception e) {
+                            logger.error("{} Failed to request account due to {}", this, e.toString());
+                            if (logger.isDebugEnabled()) {
+                                logger.error("", e);
+                            }
+                        }
+                        */
+                        authorizationIssue = e.getDescription();
+
+                    } else if (e.getResponseCode() == FORBIDDEN_STATUS_CODE) {
+                        authorizationIssue = e.getDescription();
+                    } else {
+                        final String message = e.getDescription();
+                        logger.warn("{} When communicating with remote instance, got unexpected result. {}",
+                                new Object[]{this, e.getMessage()});
+                        authorizationIssue = "Unable to determine Site-to-Site availability.";
+                  }
                 }
+
             } catch (final Exception e) {
                 logger.warn(String.format("Unable to connect to %s due to %s", StandardRemoteProcessGroup.this, e));
                 getEventReporter().reportEvent(Severity.WARNING, "Site to Site", String.format("Unable to connect to %s due to %s",

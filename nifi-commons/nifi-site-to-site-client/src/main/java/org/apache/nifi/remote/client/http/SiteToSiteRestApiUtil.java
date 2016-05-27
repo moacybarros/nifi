@@ -27,6 +27,7 @@ import org.apache.nifi.remote.protocol.CommunicationsSession;
 import org.apache.nifi.remote.protocol.http.HttpHeaders;
 import org.apache.nifi.remote.protocol.ResponseCode;
 import org.apache.nifi.remote.util.NiFiRestApiUtil;
+import org.apache.nifi.security.util.CertificateUtils;
 import org.apache.nifi.stream.io.ByteArrayOutputStream;
 import org.apache.nifi.stream.io.StreamUtils;
 import org.apache.nifi.web.api.dto.remote.PeerDTO;
@@ -38,11 +39,16 @@ import org.codehaus.jackson.map.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLPeerUnverifiedException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.Proxy;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 import java.util.Collection;
 
 import static org.apache.commons.lang3.StringUtils.isEmpty;
@@ -66,6 +72,7 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
     private long batchSize = 0;
     private long batchDurationMillis = 0;
     private TransportProtocolVersionNegotiator transportProtocolVersionNegotiator = new TransportProtocolVersionNegotiator(1);
+    private String trustedPeerDn;
 
     public SiteToSiteRestApiUtil(SSLContext sslContext, Proxy proxy) {
         super(sslContext, proxy);
@@ -92,12 +99,14 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
     private String initiateTransaction(String portType, String portId) throws IOException {
         logger.debug("initiateTransaction handshaking portType={}, portId={}", portType, portId);
         urlConnection = getConnection("/site-to-site/" + portType + "/" + portId + "/transactions");
-        urlConnection.setDoOutput(false);
+        urlConnection.setDoOutput(true);
         urlConnection.setRequestMethod("POST");
         urlConnection.setRequestProperty("Accept", "application/json");
         urlConnection.setRequestProperty(HttpHeaders.PROTOCOL_VERSION, String.valueOf(transportProtocolVersionNegotiator.getVersion()));
 
         setHandshakeProperties();
+
+        urlConnection.getOutputStream().flush();
 
         int responseCode = urlConnection.getResponseCode();
         logger.debug("initiateTransaction responseCode={}", responseCode);
@@ -116,6 +125,8 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
                 Integer protocolVersionConfirmedByServer = Integer.valueOf(protocolVersionConfirmedByServerStr);
                 logger.debug("Finished version negotiation, protocolVersionConfirmedByServer={}", protocolVersionConfirmedByServer);
                 transportProtocolVersionNegotiator.setVersion(protocolVersionConfirmedByServer);
+
+                setTrustedPeerDn();
                 break;
 
             default:
@@ -123,6 +134,27 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
         }
         logger.debug("initiateTransaction handshaking finished, transactionUrl={}", transactionUrl);
         return transactionUrl;
+    }
+
+    private void setTrustedPeerDn() throws SSLPeerUnverifiedException {
+        if (sslContext != null && urlConnection instanceof HttpsURLConnection) {
+            Certificate[] serverCerts = ((HttpsURLConnection) urlConnection).getServerCertificates();
+            try {
+                final X509Certificate cert = CertificateUtils.convertAbstractX509Certificate(serverCerts[0]);
+                cert.checkValidity();
+                trustedPeerDn =  cert.getSubjectDN().getName().trim();
+            } catch (CertificateException e) {
+                // This shouldn't be happening because the server cert is already verified.
+                logger.warn("Failed to get peer DN due to {}", e.getMessage());
+                if (logger.isDebugEnabled()) {
+                    logger.debug("", e);
+                }
+            }
+        }
+    }
+
+    public String getTrustedPeerDn() {
+        return this.trustedPeerDn;
     }
 
     public void openConnectionForSend(String transactionUrl, CommunicationsSession commSession) throws IOException {

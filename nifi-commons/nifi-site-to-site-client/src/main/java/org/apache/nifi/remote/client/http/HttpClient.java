@@ -145,6 +145,7 @@ public class HttpClient extends AbstractSiteToSiteClient implements PeerStatusPr
             final String transactionUrl;
             try {
                 transactionUrl = apiUtil.initiateTransaction(direction, portId);
+                commSession.setUserDn(apiUtil.getTrustedPeerDn());
             } catch (Exception e) {
                 logger.debug("Penalizing a peer due to {}", e.getMessage());
                 peerSelector.penalize(peer, penaltyMillis);

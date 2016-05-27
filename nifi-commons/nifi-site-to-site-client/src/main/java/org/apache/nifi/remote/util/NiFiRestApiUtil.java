@@ -28,12 +28,15 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSession;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.Proxy;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.regex.Pattern;
+
+import static org.apache.commons.lang3.StringUtils.isEmpty;
 
 public class NiFiRestApiUtil {
 
@@ -47,7 +50,7 @@ public class NiFiRestApiUtil {
     protected static final int RESPONSE_CODE_SERVICE_UNAVAILABLE = 503;
 
     private String baseUrl;
-    private final SSLContext sslContext;
+    protected final SSLContext sslContext;
     private final Proxy proxy;
 
     private int connectTimeoutMillis;
@@ -103,9 +106,36 @@ public class NiFiRestApiUtil {
             final ObjectMapper mapper = new ObjectMapper();
             return mapper.readValue(responseMessage, entityClass);
         } else {
-            StreamUtils.copy(connection.getErrorStream(), baos);
-            final String responseMessage = baos.toString();
-            throw new IOException("Got HTTP response Code " + responseCode + ": " + connection.getResponseMessage() + " with explanation: " + responseMessage);
+            InputStream responseStream = connection.getInputStream() != null ? connection.getInputStream() : connection.getErrorStream();
+            final String explanation;
+            if (responseStream != null) {
+                StreamUtils.copy(connection.getErrorStream(), baos);
+                explanation = baos.toString();
+            } else {
+                explanation = null;
+            }
+
+            throw new HttpGetFailedException(responseCode, connection.getResponseMessage(), explanation);
+        }
+    }
+
+    public class HttpGetFailedException extends IOException {
+        private final int responseCode;
+        private final String responseMessage;
+        private final String explanation;
+        public HttpGetFailedException(final int responseCode, final String responseMessage, final String explanation) {
+            super("response code " + responseCode + ":" + responseMessage + " with explanation: " + explanation);
+            this.responseCode = responseCode;
+            this.responseMessage = responseMessage;
+            this.explanation = explanation;
+        }
+
+        public int getResponseCode() {
+            return responseCode;
+        }
+
+        public String getDescription() {
+            return !isEmpty(explanation) ? explanation : responseMessage;
         }
     }
 
