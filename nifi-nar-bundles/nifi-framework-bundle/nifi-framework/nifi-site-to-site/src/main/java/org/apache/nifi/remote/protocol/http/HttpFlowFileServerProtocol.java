@@ -166,7 +166,7 @@ public class HttpFlowFileServerProtocol extends AbstractFlowFileServerProtocol {
         HttpServerCommunicationsSession commSession = (HttpServerCommunicationsSession) peer.getCommunicationsSession();
         String transactionId = commSession.getTransactionId();
         logger.debug("{} Holding transaction. transactionId={}", this, transactionId);
-        transactionManager.proceedTransaction(transactionId, transaction);
+        transactionManager.holdTransaction(transactionId, transaction);
 
         return transaction.getFlowFilesSent().size();
     }

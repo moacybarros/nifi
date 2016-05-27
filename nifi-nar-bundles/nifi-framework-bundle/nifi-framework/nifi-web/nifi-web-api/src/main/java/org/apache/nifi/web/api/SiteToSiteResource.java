@@ -66,6 +66,7 @@ import javax.ws.rs.DefaultValue;
 import javax.ws.rs.GET;
 import javax.ws.rs.HttpMethod;
 import javax.ws.rs.POST;
+import javax.ws.rs.PUT;
 import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
@@ -166,8 +167,9 @@ public class SiteToSiteResource extends ApplicationResource {
         return clusterContext(noCache(Response.ok(entity))).build();
     }
 
-    private Response.ResponseBuilder protocolVersion(Response.ResponseBuilder builder, Integer transportProtocolVersion) {
-        return builder.header(HttpHeaders.PROTOCOL_VERSION, transportProtocolVersion);
+    private Response.ResponseBuilder setCommonHeaders(Response.ResponseBuilder builder, Integer transportProtocolVersion) {
+        return builder.header(HttpHeaders.PROTOCOL_VERSION, transportProtocolVersion)
+                .header(HttpHeaders.SERVER_SIDE_TRANSACTION_TTL, transactionManager.getTransactionTtlSec());
     }
 
     private Integer negotiateTransportProtocolVersion(@Context HttpServletRequest req) throws BadRequestException {
@@ -278,7 +280,7 @@ public class SiteToSiteResource extends ApplicationResource {
         PeersEntity entity = new PeersEntity();
         entity.setPeers(peers);
 
-        return clusterContext(noCache(protocolVersion(Response.ok(entity), transportProtocolVersion))).build();
+        return clusterContext(noCache(setCommonHeaders(Response.ok(entity), transportProtocolVersion))).build();
     }
 
     @POST
@@ -347,9 +349,11 @@ public class SiteToSiteResource extends ApplicationResource {
             return responseCreator.locationResponse(uriInfo, portType, portId, transactionId, entity, transportProtocolVersion);
 
         } catch (HandshakeException e) {
+            transactionManager.cancelTransaction(transactionId);
             return responseCreator.handshakeExceptionResponse(e);
 
         } catch (Exception e) {
+            transactionManager.cancelTransaction(transactionId);
             return responseCreator.unexpectedErrorResponse(clientId, portId, e);
         }
     }
@@ -510,6 +514,11 @@ public class SiteToSiteResource extends ApplicationResource {
             )
             @QueryParam(CLIENT_ID) @DefaultValue(StringUtils.EMPTY) ClientIdParameter clientId,
             @ApiParam(
+                    value = "The response code. Available values are CONFIRM_TRANSACTION(12) or CANCEL_TRANSACTION(15).",
+                    required = true
+            )
+            @QueryParam(RESPONSE_CODE) Integer responseCode,
+            @ApiParam(
                     value = "A checksum calculated at client side using CRC32 to check flow file content integrity. It must be matched with the value calculated at server side.",
                     required = true
             )
@@ -543,6 +552,25 @@ public class SiteToSiteResource extends ApplicationResource {
         final TransactionResultEntity entity = new TransactionResultEntity();
         try {
             HttpFlowFileServerProtocol serverProtocol = initiateServerProtocol(peer, transportProtocolVersion);
+
+            String inputErrMessage = null;
+            if (responseCode == null) {
+                inputErrMessage = "responseCode is required.";
+            } else if(ResponseCode.CONFIRM_TRANSACTION.getCode() != responseCode
+                    && ResponseCode.CANCEL_TRANSACTION.getCode() != responseCode) {
+                inputErrMessage = "responseCode " + responseCode + " is invalid. ";
+            }
+
+            if (inputErrMessage != null){
+                entity.setMessage(inputErrMessage);
+                entity.setResponseCode(ResponseCode.ABORT.getCode());
+                return Response.status(Response.Status.BAD_REQUEST).entity(entity).build();
+            }
+
+            if (ResponseCode.CANCEL_TRANSACTION.getCode() == responseCode) {
+                return cancelTransaction(transactionId, entity);
+            }
+
             int flowFileSent = serverProtocol.commitTransferTransaction(peer, checksum);
             entity.setResponseCode(ResponseCode.CONFIRM_TRANSACTION.getCode());
             entity.setFlowFileSent(flowFileSent);
@@ -564,7 +592,7 @@ public class SiteToSiteResource extends ApplicationResource {
             return responseCreator.unexpectedErrorResponse(clientId, portId, transactionId, e);
         }
 
-        return clusterContext(noCache(protocolVersion(Response.ok(entity), transportProtocolVersion))).build();
+        return clusterContext(noCache(setCommonHeaders(Response.ok(entity), transportProtocolVersion))).build();
     }
 
 
@@ -598,7 +626,7 @@ public class SiteToSiteResource extends ApplicationResource {
             )
             @QueryParam(CLIENT_ID) @DefaultValue(StringUtils.EMPTY) ClientIdParameter clientId,
             @ApiParam(
-                    value = "The response code. Available values are BAD_CHECKSUM(19) or CONFIRM_TRANSACTION(12).",
+                    value = "The response code. Available values are BAD_CHECKSUM(19), CONFIRM_TRANSACTION(12) or CANCEL_TRANSACTION(15).",
                     required = true
             )
             @QueryParam(RESPONSE_CODE) Integer responseCode,
@@ -635,18 +663,24 @@ public class SiteToSiteResource extends ApplicationResource {
             HttpServerCommunicationsSession commsSession = (HttpServerCommunicationsSession) peer.getCommunicationsSession();
             // Pass the response code sent from the client.
             String inputErrMessage = null;
-            if(responseCode == null) {
+            if (responseCode == null) {
                 inputErrMessage = "responseCode is required.";
             } else if(ResponseCode.BAD_CHECKSUM.getCode() != responseCode
-                    && ResponseCode.CONFIRM_TRANSACTION.getCode() != responseCode) {
+                    && ResponseCode.CONFIRM_TRANSACTION.getCode() != responseCode
+                    && ResponseCode.CANCEL_TRANSACTION.getCode() != responseCode) {
                 inputErrMessage = "responseCode " + responseCode + " is invalid. ";
             }
 
-            if(inputErrMessage != null){
+            if (inputErrMessage != null){
                 entity.setMessage(inputErrMessage);
                 entity.setResponseCode(ResponseCode.ABORT.getCode());
                 return Response.status(Response.Status.BAD_REQUEST).entity(entity).build();
             }
+
+            if (ResponseCode.CANCEL_TRANSACTION.getCode() == responseCode) {
+                return cancelTransaction(transactionId, entity);
+            }
+
             commsSession.setResponseCode(ResponseCode.fromCode(responseCode));
 
             try {
@@ -655,7 +689,7 @@ public class SiteToSiteResource extends ApplicationResource {
                 entity.setFlowFileSent(flowFileSent);
 
             } catch (IOException e){
-                if(ResponseCode.BAD_CHECKSUM.getCode() == responseCode && e.getMessage().contains("Received a BadChecksum response")){
+                if (ResponseCode.BAD_CHECKSUM.getCode() == responseCode && e.getMessage().contains("Received a BadChecksum response")){
                     // AbstractFlowFileServerProtocol throws IOException after it canceled transaction.
                     // This is a known behavior and if we return 500 with this exception,
                     // it's not clear if there is an issue at server side, or cancel operation has been accomplished.
@@ -674,7 +708,17 @@ public class SiteToSiteResource extends ApplicationResource {
             return responseCreator.unexpectedErrorResponse(clientId, portId, transactionId, e);
         }
 
-        return clusterContext(noCache(protocolVersion(Response.ok(entity), transportProtocolVersion))).build();
+        return clusterContext(noCache(setCommonHeaders(Response.ok(entity), transportProtocolVersion))).build();
+    }
+
+    private Response cancelTransaction(@ApiParam(
+            value = "The transaction id.",
+            required = true
+    ) @PathParam("transactionId") String transactionId, TransactionResultEntity entity) {
+        transactionManager.cancelTransaction(transactionId);
+        entity.setMessage("Transaction has been canceled.");
+        entity.setResponseCode(ResponseCode.CANCEL_TRANSACTION.getCode());
+        return Response.ok(entity).build();
     }
 
 
@@ -754,6 +798,7 @@ public class SiteToSiteResource extends ApplicationResource {
                         throw new IOException("Failed to process the request.", e);
                     }
                 }
+
             };
 
             return responseCreator.acceptedResponse(flowFileContent, transportProtocolVersion);
@@ -764,6 +809,136 @@ public class SiteToSiteResource extends ApplicationResource {
         } catch (Exception e) {
             return responseCreator.unexpectedErrorResponse(clientId, portId, e);
         }
+    }
+
+    @PUT
+    @Consumes(MediaType.WILDCARD)
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("input-ports/{portId}/transactions/{transactionId}")
+    // TODO - @PreAuthorize("hasAnyRole('ROLE_MONITOR', 'ROLE_DFM', 'ROLE_ADMIN')")
+    @ApiOperation(
+            value = "Extend transaction TTL",
+            response = TransactionResultEntity.class,
+            authorizations = {
+                    @Authorization(value = "Read Only", type = "ROLE_MONITOR"),
+                    @Authorization(value = "Data Flow Manager", type = "ROLE_DFM"),
+                    @Authorization(value = "Administrator", type = "ROLE_ADMIN")
+            }
+    )
+    @ApiResponses(
+            value = {
+                    @ApiResponse(code = 204, message = "There is no flow file to return."),
+                    @ApiResponse(code = 400, message = "NiFi was unable to complete the request because it was invalid. The request should not be retried without modification."),
+                    @ApiResponse(code = 401, message = "Client could not be authenticated."),
+                    @ApiResponse(code = 403, message = "Client is not authorized to make this request."),
+                    @ApiResponse(code = 404, message = "The specified resource could not be found."),
+                    @ApiResponse(code = 409, message = "The request was valid but NiFi was not in the appropriate state to process it. Retrying the same request later may be successful.")
+            }
+    )
+    public Response extendInputPortTransactionTTL(
+            @ApiParam(
+                    value = "If the client id is not specified, new one will be generated. This value (whether specified or generated) is included in the response.",
+                    required = false
+            )
+            @QueryParam(CLIENT_ID) @DefaultValue(StringUtils.EMPTY) ClientIdParameter clientId,
+            @PathParam("portId") String portId,
+            @PathParam("transactionId") String transactionId,
+            @Context HttpServletRequest req,
+            @Context HttpServletResponse res,
+            @Context ServletContext context,
+            @Context UriInfo uriInfo,
+            InputStream inputStream) {
+
+        return extendPortTransactionTTL(clientId, PORT_TYPE_INPUT, portId, transactionId, req, res, context, uriInfo, inputStream);
+
+    }
+
+    @PUT
+    @Consumes(MediaType.WILDCARD)
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("output-ports/{portId}/transactions/{transactionId}")
+    // TODO - @PreAuthorize("hasAnyRole('ROLE_MONITOR', 'ROLE_DFM', 'ROLE_ADMIN')")
+    @ApiOperation(
+            value = "Extend transaction TTL",
+            response = TransactionResultEntity.class,
+            authorizations = {
+                    @Authorization(value = "Read Only", type = "ROLE_MONITOR"),
+                    @Authorization(value = "Data Flow Manager", type = "ROLE_DFM"),
+                    @Authorization(value = "Administrator", type = "ROLE_ADMIN")
+            }
+    )
+    @ApiResponses(
+            value = {
+                    @ApiResponse(code = 204, message = "There is no flow file to return."),
+                    @ApiResponse(code = 400, message = "NiFi was unable to complete the request because it was invalid. The request should not be retried without modification."),
+                    @ApiResponse(code = 401, message = "Client could not be authenticated."),
+                    @ApiResponse(code = 403, message = "Client is not authorized to make this request."),
+                    @ApiResponse(code = 404, message = "The specified resource could not be found."),
+                    @ApiResponse(code = 409, message = "The request was valid but NiFi was not in the appropriate state to process it. Retrying the same request later may be successful.")
+            }
+    )
+    public Response extendOutputPortTransactionTTL(
+            @ApiParam(
+                    value = "If the client id is not specified, new one will be generated. This value (whether specified or generated) is included in the response.",
+                    required = false
+            )
+            @QueryParam(CLIENT_ID) @DefaultValue(StringUtils.EMPTY) ClientIdParameter clientId,
+            @PathParam("portId") String portId,
+            @PathParam("transactionId") String transactionId,
+            @Context HttpServletRequest req,
+            @Context HttpServletResponse res,
+            @Context ServletContext context,
+            @Context UriInfo uriInfo,
+            InputStream inputStream) {
+
+        return extendPortTransactionTTL(clientId, PORT_TYPE_OUTPUT, portId, transactionId, req, res, context, uriInfo, inputStream);
+
+    }
+
+    public Response extendPortTransactionTTL(
+            ClientIdParameter clientId,
+            String portType,
+            String portId,
+            String transactionId,
+            HttpServletRequest req,
+            HttpServletResponse res,
+            ServletContext context,
+            UriInfo uriInfo,
+            InputStream inputStream) {
+
+        final ValidateRequestResult validationResult = validateResult(req, clientId, portId, transactionId);
+        if (validationResult.errResponse != null) {
+            return validationResult.errResponse;
+        }
+
+        if(!PORT_TYPE_INPUT.equals(portType) && !PORT_TYPE_OUTPUT.equals(portType)){
+            return responseCreator.wrongPortTypeResponse(clientId, portType, portId);
+        }
+
+        logger.debug("extendOutputPortTransactionTTL request: clientId={}, portType={}, portId={}, transactionId={}",
+                clientId.getClientId(), portType, portId, transactionId);
+
+        final int transportProtocolVersion = validationResult.transportProtocolVersion;
+        final ByteArrayOutputStream out = new ByteArrayOutputStream();
+        final Peer peer = constructPeer(req, inputStream, out, portId, transactionId);
+
+        try {
+            // Do handshake
+            initiateServerProtocol(peer, transportProtocolVersion);
+            transactionManager.extendsTransaction(transactionId);
+
+            final TransactionResultEntity entity = new TransactionResultEntity();
+            entity.setResponseCode(ResponseCode.CONTINUE_TRANSACTION.getCode());
+            entity.setMessage("Extended TTL.");
+            return clusterContext(noCache(setCommonHeaders(Response.ok(entity), transportProtocolVersion))).build();
+
+        } catch (HandshakeException e) {
+            return responseCreator.handshakeExceptionResponse(e);
+
+        } catch (Exception e) {
+            return responseCreator.unexpectedErrorResponse(clientId, portId, transactionId, e);
+        }
+
     }
 
     private class ValidateRequestResult {
@@ -827,7 +1002,7 @@ public class SiteToSiteResource extends ApplicationResource {
         }
 
         private Response wrongPortTypeResponse(ClientIdParameter clientId, String portType, String portId) {
-            logger.debug("Transaction was not found. clientId={}, portType={}, portId={}", clientId.getClientId(), portType, portId);
+            logger.debug("Port type was wrong. clientId={}, portType={}, portId={}", clientId.getClientId(), portType, portId);
             TransactionResultEntity entity = new TransactionResultEntity();
             entity.setResponseCode(ResponseCode.ABORT.getCode());
             entity.setMessage("Port was not found.");
@@ -913,14 +1088,14 @@ public class SiteToSiteResource extends ApplicationResource {
         }
 
         private Response acceptedResponse(Object entity, Integer protocolVersion) {
-            return noCache(protocolVersion(Response.status(Response.Status.ACCEPTED), protocolVersion))
+            return noCache(setCommonHeaders(Response.status(Response.Status.ACCEPTED), protocolVersion))
                     .entity(entity).build();
         }
 
         private Response locationResponse(UriInfo uriInfo, String portType, String portId, String transactionId, Object entity, Integer protocolVersion) {
             String path = "/site-to-site/" + portType + "/" + portId + "/transactions/" + transactionId;
             URI location = uriInfo.getBaseUriBuilder().path(path).build();
-            return noCache(protocolVersion(Response.created(location), protocolVersion)
+            return noCache(setCommonHeaders(Response.created(location), protocolVersion)
                     .header(LOCATION_URI_INTENT_NAME, LOCATION_URI_INTENT_VALUE))
                     .entity(entity).build();
         }

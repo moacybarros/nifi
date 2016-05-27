@@ -73,7 +73,8 @@ public class HttpClientTransaction extends AbstractTransaction {
                             logger.debug("{} {} There's no transaction to confirm.", this, peer);
                             ResponseCode.CONFIRM_TRANSACTION.writeResponse(dos, "");
                         } else {
-                            TransactionResultEntity transactionResult = apiUtil.commitReceivingFlowFiles(transactionUrl, commSession.getChecksum());
+                            TransactionResultEntity transactionResult
+                                    = apiUtil.commitReceivingFlowFiles(transactionUrl, ResponseCode.CONFIRM_TRANSACTION, commSession.getChecksum());
                             ResponseCode responseCode = ResponseCode.fromCode(transactionResult.getResponseCode());
                             if(responseCode.containsMessage()){
                                 String message = transactionResult.getMessage();
@@ -119,6 +120,19 @@ public class HttpClientTransaction extends AbstractTransaction {
                 case TRANSACTION_FINISHED:
                     logger.debug("{} Finishing transaction.", this);
                     break;
+                case CANCEL_TRANSACTION:
+                    logger.debug("{} Canceling transaction. explanation={}", this, explanation);
+                    TransactionResultEntity resultEntity = apiUtil.commitReceivingFlowFiles(transactionUrl, ResponseCode.CANCEL_TRANSACTION, null);
+                    ResponseCode cancelResponse = ResponseCode.fromCode(resultEntity.getResponseCode());
+                    switch (cancelResponse) {
+                        case CANCEL_TRANSACTION:
+                            logger.debug("{} CANCEL_TRANSACTION, The transaction is canceled on server properly.", this);
+                            break;
+                        default:
+                            logger.warn("{} CANCEL_TRANSACTION, Expected the transaction is canceled on server, but received {}.", this, cancelResponse);
+                            break;
+                    }
+                    break;
             }
         } else {
             switch (response) {
@@ -126,25 +140,43 @@ public class HttpClientTransaction extends AbstractTransaction {
                     // The actual HTTP request will be sent in readTransactionResponse.
                     logger.debug("{} Finished sending flow files.", this);
                     break;
-                case BAD_CHECKSUM:
-                    TransactionResultEntity resultEntity = apiUtil.commitTransferFlowFiles(transactionUrl, ResponseCode.BAD_CHECKSUM);
-                    ResponseCode badChecksumCancelResponse = ResponseCode.fromCode(resultEntity.getResponseCode());
-                    switch (badChecksumCancelResponse) {
-                        case CANCEL_TRANSACTION:
-                            logger.debug("{} BAD_CHECKSUM, The transaction is canceled on server properly.", this);
-                            break;
-                        default:
-                            logger.warn("{} BAD_CHECKSUM, Expected the transaction is canceled on server, but received {}.", this, badChecksumCancelResponse);
-                            break;
+                case BAD_CHECKSUM: {
+                        TransactionResultEntity resultEntity = apiUtil.commitTransferFlowFiles(transactionUrl, ResponseCode.BAD_CHECKSUM);
+                        ResponseCode badChecksumCancelResponse = ResponseCode.fromCode(resultEntity.getResponseCode());
+                        switch (badChecksumCancelResponse) {
+                            case CANCEL_TRANSACTION:
+                                logger.debug("{} BAD_CHECKSUM, The transaction is canceled on server properly.", this);
+                                break;
+                            default:
+                                logger.warn("{} BAD_CHECKSUM, Expected the transaction is canceled on server, but received {}.", this, badChecksumCancelResponse);
+                                break;
+                        }
+
                     }
                     break;
                 case CONFIRM_TRANSACTION:
                     // The actual HTTP request will be sent in readTransactionResponse.
                     logger.debug("{} Transaction is confirmed.", this);
                     break;
+                case CANCEL_TRANSACTION: {
+                        logger.debug("{} Canceling transaction.", this);
+                        TransactionResultEntity resultEntity = apiUtil.commitTransferFlowFiles(transactionUrl, ResponseCode.CANCEL_TRANSACTION);
+                        ResponseCode cancelResponse = ResponseCode.fromCode(resultEntity.getResponseCode());
+                        switch (cancelResponse) {
+                            case CANCEL_TRANSACTION:
+                                logger.debug("{} CANCEL_TRANSACTION, The transaction is canceled on server properly.", this);
+                                break;
+                            default:
+                                logger.warn("{} CANCEL_TRANSACTION, Expected the transaction is canceled on server, but received {}.", this, cancelResponse);
+                                break;
+                        }
+                    }
+                    break;
             }
         }
     }
+
+
 
 }
 

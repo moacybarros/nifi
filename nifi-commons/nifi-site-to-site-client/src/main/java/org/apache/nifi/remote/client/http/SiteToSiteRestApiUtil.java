@@ -44,12 +44,17 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLPeerUnverifiedException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.Proxy;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.Collection;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 import static org.apache.commons.lang3.StringUtils.isEmpty;
 import static org.apache.nifi.remote.protocol.http.HttpHeaders.HANDSHAKE_PROPERTY_BATCH_COUNT;
@@ -68,14 +73,18 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
 
     private boolean compress = false;
     private int requestExpirationMillis = 0;
+    private int serverTransactionTtl = 0;
     private int batchCount = 0;
     private long batchSize = 0;
     private long batchDurationMillis = 0;
     private TransportProtocolVersionNegotiator transportProtocolVersionNegotiator = new TransportProtocolVersionNegotiator(1);
     private String trustedPeerDn;
+    private final ScheduledExecutorService taskExecutor;
+    private ScheduledFuture<?> ttlExtendingThread;
 
     public SiteToSiteRestApiUtil(SSLContext sslContext, Proxy proxy) {
         super(sslContext, proxy);
+        taskExecutor = Executors.newScheduledThreadPool(1);
     }
 
     public Collection<PeerDTO> getPeers() throws IOException {
@@ -126,6 +135,12 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
                 logger.debug("Finished version negotiation, protocolVersionConfirmedByServer={}", protocolVersionConfirmedByServer);
                 transportProtocolVersionNegotiator.setVersion(protocolVersionConfirmedByServer);
 
+                String serverTransactionTTLStr = urlConnection.getHeaderField(HttpHeaders.SERVER_SIDE_TRANSACTION_TTL);
+                if (isEmpty(serverTransactionTTLStr)) {
+                    throw new ProtocolException("Server didn't return " + HttpHeaders.SERVER_SIDE_TRANSACTION_TTL);
+                }
+                serverTransactionTtl = Integer.parseInt(serverTransactionTTLStr);
+
                 setTrustedPeerDn();
                 break;
 
@@ -169,7 +184,16 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
 
         setHandshakeProperties();
 
-        ((HttpOutput)commSession.getOutput()).setOutputStream(urlConnection.getOutputStream());
+        OutputStream httpOut = urlConnection.getOutputStream();
+        OutputStream streamCapture = new OutputStream(){
+            @Override
+            public void write(int b) throws IOException {
+                httpOut.write(b);
+                startExtendingTtl(transactionUrl);
+            }
+        };
+
+        ((HttpOutput)commSession.getOutput()).setOutputStream(streamCapture);
 
     }
 
@@ -183,7 +207,8 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
 
     public boolean openConnectionForReceive(String transactionUrl, CommunicationsSession commSession) throws IOException {
 
-        urlConnection = getConnection(transactionUrl + "/flow-files");
+        final String flowFilesUrl = transactionUrl + "/flow-files";
+        urlConnection = getConnection(flowFilesUrl);
         urlConnection.setRequestMethod("GET");
         urlConnection.setRequestProperty("Accept", "application/octet-stream");
         urlConnection.setInstanceFollowRedirects(false);
@@ -200,11 +225,62 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
                 return false;
 
             case RESPONSE_CODE_ACCEPTED :
-                ((HttpInput)commSession.getInput()).setInputStream(urlConnection.getInputStream());
+                InputStream httpIn = urlConnection.getInputStream();
+                InputStream streamCapture = new InputStream() {
+                    @Override
+                    public int read() throws IOException {
+                        int r = httpIn.read();
+                        if (r < 0) {
+                            stopExtendingTtl();
+                        }
+                        return r;
+                    }
+                };
+                ((HttpInput)commSession.getInput()).setInputStream(streamCapture);
+
+                startExtendingTtl(transactionUrl);
                 return true;
 
             default:
                 throw handleErrResponse(responseCode);
+        }
+    }
+
+    private void startExtendingTtl(String transactionUrl) {
+        if (ttlExtendingThread != null) {
+            // Already started.
+            return;
+        }
+        logger.debug("Starting extending TTL thread...");
+        SiteToSiteRestApiUtil extendingUtil = new SiteToSiteRestApiUtil(sslContext, proxy);
+        extendingUtil.transportProtocolVersionNegotiator = this.transportProtocolVersionNegotiator;
+        extendingUtil.connectTimeoutMillis = this.connectTimeoutMillis;
+        extendingUtil.readTimeoutMillis = this.readTimeoutMillis;
+        int extendFrequency = serverTransactionTtl / 2;
+        ttlExtendingThread = taskExecutor.scheduleWithFixedDelay(() -> {
+            try {
+                extendingUtil.extendReceiveTransaction(transactionUrl);
+            } catch (Exception e) {
+                logger.warn("Got an exception during extending transaction ttl: {}", e.getMessage());
+                if (logger.isDebugEnabled()) {
+                    logger.warn("", e);
+                }
+                stopExtendingTtl();
+                // Without disconnecting, Site-to-Site client keep reading data packet,
+                // while server has already rollback.
+                urlConnection.disconnect();
+            }
+        }, extendFrequency, extendFrequency, TimeUnit.SECONDS);
+    }
+
+    private void stopExtendingTtl() {
+        if (ttlExtendingThread != null && !ttlExtendingThread.isCancelled()) {
+            logger.debug("Cancelling extending ttl...");
+            ttlExtendingThread.cancel(true);
+        }
+
+        if (!taskExecutor.isShutdown()) {
+            taskExecutor.shutdown();
         }
     }
 
@@ -243,6 +319,8 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
 
         commSession.getOutput().getOutputStream().flush();
 
+        stopExtendingTtl();
+
         int responseCode = urlConnection.getResponseCode();
 
         switch (responseCode) {
@@ -262,10 +340,18 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
 
     }
 
-    public TransactionResultEntity commitReceivingFlowFiles(String transactionUrl, String checksum) throws IOException {
-        logger.debug("Sending commitReceivingFlowFiles request to transactionUrl: {}, checksum=", transactionUrl, checksum);
+    public TransactionResultEntity commitReceivingFlowFiles(String transactionUrl, ResponseCode clientResponse, String checksum) throws IOException {
+        logger.debug("Sending commitReceivingFlowFiles request to transactionUrl: {}, clientResponse={}, checksum={}",
+                transactionUrl, clientResponse, checksum);
 
-        urlConnection = getConnection(transactionUrl + "?checksum=" + checksum);
+        stopExtendingTtl();
+
+        String urlStr = transactionUrl + "?responseCode=" + clientResponse.getCode();
+        if (ResponseCode.CONFIRM_TRANSACTION.equals(clientResponse)) {
+            urlConnection = getConnection(urlStr + "&checksum=" + checksum);
+        } else {
+            urlConnection = getConnection(urlStr);
+        }
         urlConnection.setRequestMethod("DELETE");
         urlConnection.setRequestProperty("Accept", "application/json");
         urlConnection.setRequestProperty(HttpHeaders.PROTOCOL_VERSION, String.valueOf(transportProtocolVersionNegotiator.getVersion()));
@@ -332,6 +418,32 @@ public class SiteToSiteRestApiUtil extends NiFiRestApiUtil {
 
             case RESPONSE_CODE_BAD_REQUEST :
                 return readResponse(urlConnection.getErrorStream());
+
+            default:
+                throw handleErrResponse(responseCode);
+        }
+
+    }
+
+    public TransactionResultEntity extendReceiveTransaction(String transactionUrl) throws IOException {
+        logger.debug("Sending extendReceiveTransaction request to transactionUrl: {}", transactionUrl);
+
+        urlConnection = getConnection(transactionUrl);
+        urlConnection.setRequestMethod("PUT");
+        urlConnection.setDoOutput(true);
+        urlConnection.setRequestProperty("Accept", "application/json");
+        urlConnection.setRequestProperty(HttpHeaders.PROTOCOL_VERSION, String.valueOf(transportProtocolVersionNegotiator.getVersion()));
+
+        setHandshakeProperties();
+
+        urlConnection.getOutputStream().flush();
+
+        int responseCode = urlConnection.getResponseCode();
+        logger.debug("extendReceiveTransaction responseCode={}", responseCode);
+
+        switch (responseCode) {
+            case RESPONSE_CODE_OK :
+                return readResponse(urlConnection.getInputStream());
 
             default:
                 throw handleErrResponse(responseCode);

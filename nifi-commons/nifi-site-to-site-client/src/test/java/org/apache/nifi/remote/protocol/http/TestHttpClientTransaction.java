@@ -43,6 +43,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
+import static org.apache.nifi.remote.protocol.ResponseCode.CONFIRM_TRANSACTION;
 import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.createDataPacket;
 import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execReceiveOneFlowFile;
 import static org.apache.nifi.remote.protocol.SiteToSiteTestUtils.execReceiveTwoFlowFiles;
@@ -118,8 +119,8 @@ public class TestHttpClientTransaction {
         final String transactionUrl = "http://www.example.com/site-to-site/input-ports/portId/transactions/transactionId";
         doReturn(true).when(apiUtil).openConnectionForReceive(eq(transactionUrl), any(CommunicationsSession.class));
         TransactionResultEntity resultEntity = new TransactionResultEntity();
-        resultEntity.setResponseCode(ResponseCode.CONFIRM_TRANSACTION.getCode());
-        doReturn(resultEntity).when(apiUtil).commitReceivingFlowFiles(eq(transactionUrl), eq("3680976076"));
+        resultEntity.setResponseCode(CONFIRM_TRANSACTION.getCode());
+        doReturn(resultEntity).when(apiUtil).commitReceivingFlowFiles(eq(transactionUrl), eq(CONFIRM_TRANSACTION), eq("3680976076"));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         codec.encode(createDataPacket("contents on server 1"), serverResponseBos);
@@ -130,7 +131,7 @@ public class TestHttpClientTransaction {
         execReceiveOneFlowFile(transaction);
 
         assertEquals("Client sends nothing as payload to receive flow files.", 0, clientRequest.toByteArray().length);
-        verify(apiUtil).commitReceivingFlowFiles(transactionUrl, "3680976076");
+        verify(apiUtil).commitReceivingFlowFiles(transactionUrl, CONFIRM_TRANSACTION, "3680976076");
     }
 
     @Test
@@ -140,8 +141,8 @@ public class TestHttpClientTransaction {
         final String transactionUrl = "http://www.example.com/site-to-site/input-ports/portId/transactions/transactionId";
         doReturn(true).when(apiUtil).openConnectionForReceive(eq(transactionUrl), any(CommunicationsSession.class));
         TransactionResultEntity resultEntity = new TransactionResultEntity();
-        resultEntity.setResponseCode(ResponseCode.CONFIRM_TRANSACTION.getCode());
-        doReturn(resultEntity).when(apiUtil).commitReceivingFlowFiles(eq(transactionUrl), eq("2969091230"));
+        resultEntity.setResponseCode(CONFIRM_TRANSACTION.getCode());
+        doReturn(resultEntity).when(apiUtil).commitReceivingFlowFiles(eq(transactionUrl), eq(CONFIRM_TRANSACTION), eq("2969091230"));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         codec.encode(createDataPacket("contents on server 1"), serverResponseBos);
@@ -153,7 +154,7 @@ public class TestHttpClientTransaction {
         execReceiveTwoFlowFiles(transaction);
 
         assertEquals("Client sends nothing as payload to receive flow files.", 0, clientRequest.toByteArray().length);
-        verify(apiUtil).commitReceivingFlowFiles(transactionUrl, "2969091230");
+        verify(apiUtil).commitReceivingFlowFiles(transactionUrl, CONFIRM_TRANSACTION, "2969091230");
     }
 
     @Test
@@ -165,7 +166,7 @@ public class TestHttpClientTransaction {
         // The checksum is correct, but here we simulate as if it's wrong, BAD_CHECKSUM.
         TransactionResultEntity resultEntity = new TransactionResultEntity();
         resultEntity.setResponseCode(ResponseCode.BAD_CHECKSUM.getCode());
-        doReturn(resultEntity).when(apiUtil).commitReceivingFlowFiles(eq(transactionUrl), eq("2969091230"));
+        doReturn(resultEntity).when(apiUtil).commitReceivingFlowFiles(eq(transactionUrl), eq(CONFIRM_TRANSACTION), eq("2969091230"));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         codec.encode(createDataPacket("contents on server 1"), serverResponseBos);
@@ -177,7 +178,7 @@ public class TestHttpClientTransaction {
         execReceiveWithInvalidChecksum(transaction);
 
         assertEquals("Client sends nothing as payload to receive flow files.", 0, clientRequest.toByteArray().length);
-        verify(apiUtil).commitReceivingFlowFiles(transactionUrl, "2969091230");
+        verify(apiUtil).commitReceivingFlowFiles(transactionUrl, CONFIRM_TRANSACTION, "2969091230");
     }
 
     @Test
@@ -214,7 +215,7 @@ public class TestHttpClientTransaction {
         }).when(apiUtil).finishTransferFlowFiles(any(CommunicationsSession.class));
         TransactionResultEntity resultEntity = new TransactionResultEntity();
         resultEntity.setResponseCode(ResponseCode.TRANSACTION_FINISHED.getCode());
-        doReturn(resultEntity).when(apiUtil).commitTransferFlowFiles(eq(transactionUrl), eq(ResponseCode.CONFIRM_TRANSACTION));
+        doReturn(resultEntity).when(apiUtil).commitTransferFlowFiles(eq(transactionUrl), eq(CONFIRM_TRANSACTION));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         ByteArrayInputStream serverResponse = new ByteArrayInputStream(serverResponseBos.toByteArray());
@@ -228,7 +229,7 @@ public class TestHttpClientTransaction {
         assertEquals("contents on client 1", readContents(packetByClient));
         assertEquals(-1, sentByClient.read());
 
-        verify(apiUtil).commitTransferFlowFiles(transactionUrl, ResponseCode.CONFIRM_TRANSACTION);
+        verify(apiUtil).commitTransferFlowFiles(transactionUrl, CONFIRM_TRANSACTION);
     }
 
     @Test
@@ -248,7 +249,7 @@ public class TestHttpClientTransaction {
         }).when(apiUtil).finishTransferFlowFiles(any(CommunicationsSession.class));
         TransactionResultEntity resultEntity = new TransactionResultEntity();
         resultEntity.setResponseCode(ResponseCode.TRANSACTION_FINISHED.getCode());
-        doReturn(resultEntity).when(apiUtil).commitTransferFlowFiles(eq(transactionUrl), eq(ResponseCode.CONFIRM_TRANSACTION));
+        doReturn(resultEntity).when(apiUtil).commitTransferFlowFiles(eq(transactionUrl), eq(CONFIRM_TRANSACTION));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         ByteArrayInputStream serverResponse = new ByteArrayInputStream(serverResponseBos.toByteArray());
@@ -264,7 +265,7 @@ public class TestHttpClientTransaction {
         assertEquals("contents on client 2", readContents(packetByClient));
         assertEquals(-1, sentByClient.read());
 
-        verify(apiUtil).commitTransferFlowFiles(transactionUrl, ResponseCode.CONFIRM_TRANSACTION);
+        verify(apiUtil).commitTransferFlowFiles(transactionUrl, CONFIRM_TRANSACTION);
     }
 
     @Test
@@ -324,7 +325,7 @@ public class TestHttpClientTransaction {
         }).when(apiUtil).finishTransferFlowFiles(any(CommunicationsSession.class));
         TransactionResultEntity resultEntity = new TransactionResultEntity();
         resultEntity.setResponseCode(ResponseCode.TRANSACTION_FINISHED_BUT_DESTINATION_FULL.getCode());
-        doReturn(resultEntity).when(apiUtil).commitTransferFlowFiles(eq(transactionUrl), eq(ResponseCode.CONFIRM_TRANSACTION));
+        doReturn(resultEntity).when(apiUtil).commitTransferFlowFiles(eq(transactionUrl), eq(CONFIRM_TRANSACTION));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         ByteArrayInputStream serverResponse = new ByteArrayInputStream(serverResponseBos.toByteArray());
@@ -340,6 +341,6 @@ public class TestHttpClientTransaction {
         assertEquals("contents on client 2", readContents(packetByClient));
         assertEquals(-1, sentByClient.read());
 
-        verify(apiUtil).commitTransferFlowFiles(transactionUrl, ResponseCode.CONFIRM_TRANSACTION);
+        verify(apiUtil).commitTransferFlowFiles(transactionUrl, CONFIRM_TRANSACTION);
     }
 }

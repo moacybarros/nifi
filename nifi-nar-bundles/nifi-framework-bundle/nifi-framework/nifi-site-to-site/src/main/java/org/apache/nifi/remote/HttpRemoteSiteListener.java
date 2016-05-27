@@ -45,8 +45,9 @@ public class HttpRemoteSiteListener implements RemoteSiteListener {
     private final int transactionTtlSec;
     private static HttpRemoteSiteListener instance;
 
-    private final Map<String, FlowFileTransaction> transactions = new ConcurrentHashMap<>();
+    private final Map<String, TransactionWrapper> transactions = new ConcurrentHashMap<>();
     private final ScheduledExecutorService taskExecutor;
+    private final int httpListenPort;
     private ProcessGroup rootGroup;
     private ScheduledFuture<?> transactionMaintenanceTask;
 
@@ -76,6 +77,8 @@ public class HttpRemoteSiteListener implements RemoteSiteListener {
         }
         transactionTtlSec = txTtlSec;
 
+        httpListenPort = properties.getRemoteInputHttpPort() != null ? properties.getRemoteInputHttpPort() : 0;
+
     }
 
     public static HttpRemoteSiteListener getInstance() {
@@ -87,6 +90,26 @@ public class HttpRemoteSiteListener implements RemoteSiteListener {
             }
         }
         return instance;
+    }
+
+    private class TransactionWrapper {
+        private final FlowFileTransaction transaction;
+        private long lastCommunicationAt;
+
+        private TransactionWrapper(final FlowFileTransaction transaction) {
+            this.transaction = transaction;
+            this.lastCommunicationAt = System.currentTimeMillis();
+        }
+
+        private boolean isExpired() {
+            long elapsedMillis = System.currentTimeMillis() - lastCommunicationAt;
+            long elapsedSec = TimeUnit.SECONDS.convert(elapsedMillis, TimeUnit.MILLISECONDS);
+            return elapsedSec > transactionTtlSec;
+        }
+
+        private void extend() {
+            lastCommunicationAt = System.currentTimeMillis();
+        }
     }
 
     @Override
@@ -108,21 +131,7 @@ public class HttpRemoteSiteListener implements RemoteSiteListener {
                 Set<String> transactionIds = transactions.keySet().stream().collect(Collectors.toSet());
                 transactionIds.stream().filter(tid -> !isTransactionActive(tid))
                     .forEach(tid -> {
-                        FlowFileTransaction t = transactions.remove(tid);
-                        if (t == null) {
-                            logger.debug("The transaction is already finalized. transactionId={}", tid);
-                        } else {
-                            logger.info("Expiring a transaction. transactionId={}", tid);
-                            if(t.getSession() != null){
-                                logger.info("Expiring a transaction, rollback its session. transactionId={}", tid);
-                                try {
-                                    t.getSession().rollback();
-                                } catch (Exception e) {
-                                    // Swallow exception so that it can keep expiring other transactions.
-                                    logger.error("Failed to rollback. transactionId={}", tid, e);
-                                }
-                            }
-                        }
+                        cancelTransaction(tid);
                     });
             } catch (Exception e) {
                 // Swallow exception so that this thread can keep working.
@@ -133,9 +142,28 @@ public class HttpRemoteSiteListener implements RemoteSiteListener {
         }, 0, transactionTtlSec / 2, TimeUnit.SECONDS);
     }
 
+    public void cancelTransaction(String transactionId) {
+        TransactionWrapper wrapper = transactions.remove(transactionId);
+        if (wrapper == null) {
+            logger.debug("The transaction was not found. transactionId={}", transactionId);
+        } else {
+            logger.debug("Cancel a transaction. transactionId={}", transactionId);
+            FlowFileTransaction t = wrapper.transaction;
+            if(t != null && t.getSession() != null){
+                logger.info("Cancel a transaction, rollback its session. transactionId={}", transactionId);
+                try {
+                    t.getSession().rollback();
+                } catch (Exception e) {
+                    // Swallow exception so that it can keep expiring other transactions.
+                    logger.error("Failed to rollback. transactionId={}", transactionId, e);
+                }
+            }
+        }
+    }
+
     @Override
     public int getPort() {
-        return 0;
+        return httpListenPort;
     }
 
     @Override
@@ -148,52 +176,68 @@ public class HttpRemoteSiteListener implements RemoteSiteListener {
 
     public String createTransaction() {
         final String transactionId = UUID.randomUUID().toString();
-        transactions.put(transactionId, new FlowFileTransaction());
+        transactions.put(transactionId, new TransactionWrapper(null));
         logger.debug("Created a new transaction: {}", transactionId);
         return transactionId;
     }
 
     public boolean isTransactionActive(final String transactionId) {
-        FlowFileTransaction transaction = transactions.get(transactionId);
+        TransactionWrapper transaction = transactions.get(transactionId);
         if (transaction == null) {
             return false;
         }
-        if (isTransactionExpired(transaction)) {
+        if (transaction.isExpired()) {
             return false;
         }
         return true;
     }
 
-    private boolean isTransactionExpired(FlowFileTransaction transaction) {
-        long elapsedSec = transaction.getStopWatch().getElapsed(TimeUnit.SECONDS);
-        if (elapsedSec >= transactionTtlSec) {
-            return true;
-        }
-        return false;
-    }
-
-    public void proceedTransaction(final String transactionId, final FlowFileTransaction transaction) throws IllegalStateException {
-        FlowFileTransaction currentTransaction = finalizeTransaction(transactionId);
-        if (currentTransaction.getSession() != null) {
+    public void holdTransaction(final String transactionId, final FlowFileTransaction transaction) throws IllegalStateException {
+        // We don't check expiration of the transaction here, to support large file transport or slow network.
+        // The availability of current transaction is already checked when the HTTP request was received at SiteToSiteResource.
+        TransactionWrapper currentTransaction = transactions.remove(transactionId);
+        if (currentTransaction == null) {
+            logger.debug("The transaction was not found, it looks it took longer than transaction TTL.");
+        } else if (currentTransaction.transaction != null) {
             throw new IllegalStateException("Transaction has already been processed. It can only be finalized. transactionId=" + transactionId);
         }
         if (transaction.getSession() == null) {
-            throw new IllegalStateException("Passed transaction is not associated any session yet, can not proceed. transactionId=" + transactionId);
+            throw new IllegalStateException("Passed transaction is not associated any session yet, can not hold. transactionId=" + transactionId);
         }
-        logger.debug("Proceeding a transaction: {}", transactionId);
-        transactions.put(transactionId, transaction);
+        logger.debug("Holding a transaction: {}", transactionId);
+        // Server has received or sent all data, and transaction TTL count down starts here.
+        // However, if the client doesn't consume data fast enough, server might expire and rollback the transaction.
+        transactions.put(transactionId, new TransactionWrapper(transaction));
     }
 
     public FlowFileTransaction finalizeTransaction(final String transactionId) throws IllegalStateException {
-        if(!isTransactionActive(transactionId)){
+        if (!isTransactionActive(transactionId)){
             throw new IllegalStateException("Transaction was not found or not active anymore. transactionId=" + transactionId);
         }
-        FlowFileTransaction transaction = transactions.remove(transactionId);
+        TransactionWrapper transaction = transactions.remove(transactionId);
         if (transaction == null) {
             throw new IllegalStateException("Transaction was not found anymore. It's already finalized or expired. transactionId=" + transactionId);
         }
+        if (transaction.transaction == null) {
+            throw new IllegalStateException("Transaction has not started yet.");
+        }
         logger.debug("Finalized a transaction: {}", transactionId);
-        return transaction;
+        return transaction.transaction;
+    }
+
+    public void extendsTransaction(final String transactionId) throws IllegalStateException {
+        if (!isTransactionActive(transactionId)){
+            throw new IllegalStateException("Transaction was not found or not active anymore. transactionId=" + transactionId);
+        }
+        TransactionWrapper transaction = transactions.get(transactionId);
+        if (transaction != null) {
+            logger.debug("Extending transaction TTL, transactionId={}", transactionId);
+            transaction.extend();
+        }
+    }
+
+    public int getTransactionTtlSec() {
+        return transactionTtlSec;
     }
 
 }

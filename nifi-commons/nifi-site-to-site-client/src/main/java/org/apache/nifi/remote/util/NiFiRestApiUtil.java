@@ -51,10 +51,10 @@ public class NiFiRestApiUtil {
 
     private String baseUrl;
     protected final SSLContext sslContext;
-    private final Proxy proxy;
+    protected final Proxy proxy;
 
-    private int connectTimeoutMillis;
-    private int readTimeoutMillis;
+    protected int connectTimeoutMillis;
+    protected int readTimeoutMillis;
     private static final Pattern HTTP_ABS_URL = Pattern.compile("^https?://.+$");
 
     public NiFiRestApiUtil(final SSLContext sslContext, final Proxy proxy) {
