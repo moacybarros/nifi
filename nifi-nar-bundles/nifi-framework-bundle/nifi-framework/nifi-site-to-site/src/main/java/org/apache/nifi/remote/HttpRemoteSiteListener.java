@@ -59,7 +59,7 @@ public class HttpRemoteSiteListener implements RemoteSiteListener {
             @Override
             public Thread newThread(final Runnable r) {
                 final Thread thread = defaultFactory.newThread(r);
-                thread.setName("NiFi Http Site-to-Site Connection Transaction Maintenance");
+                thread.setName("Http Site-to-Site Transaction Maintenance");
                 thread.setDaemon(true);
                 return thread;
             }

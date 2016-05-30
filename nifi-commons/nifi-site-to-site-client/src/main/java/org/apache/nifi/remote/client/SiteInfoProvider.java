@@ -17,7 +17,8 @@
 package org.apache.nifi.remote.client;
 
 import org.apache.nifi.remote.TransferDirection;
-import org.apache.nifi.remote.util.NiFiRestApiUtil;
+import org.apache.nifi.remote.protocol.http.HttpProxy;
+import org.apache.nifi.remote.util.SiteToSiteRestApiClient;
 import org.apache.nifi.web.api.dto.ControllerDTO;
 import org.apache.nifi.web.api.dto.PortDTO;
 import org.slf4j.Logger;
@@ -25,7 +26,6 @@ import org.slf4j.LoggerFactory;
 
 import javax.net.ssl.SSLContext;
 import java.io.IOException;
-import java.net.Proxy;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
@@ -47,7 +47,7 @@ public class SiteInfoProvider {
     private Integer siteToSiteHttpPort;
     private Boolean siteToSiteSecure;
     private long remoteRefreshTime;
-    private Proxy proxy;
+    private HttpProxy proxy;
 
     private final Map<String, String> inputPortMap = new HashMap<>(); // map input port name to identifier
     private final Map<String, String> outputPortMap = new HashMap<>(); // map output port name to identifier
@@ -58,12 +58,11 @@ public class SiteInfoProvider {
     private int readTimeoutMillis;
 
     private ControllerDTO refreshRemoteInfo() throws IOException {
-        final boolean webInterfaceSecure = isWebInterfaceSecure();
-        final NiFiRestApiUtil utils = new NiFiRestApiUtil(webInterfaceSecure ? sslContext : null, proxy);
-        utils.resolveBaseUrl(clusterUrl);
-        utils.setConnectTimeoutMillis(connectTimeoutMillis);
-        utils.setReadTimeoutMillis(readTimeoutMillis);
-        final ControllerDTO controller = utils.getController();
+        final SiteToSiteRestApiClient apiClient = new SiteToSiteRestApiClient(sslContext, proxy);
+        apiClient.resolveBaseUrl(clusterUrl);
+        apiClient.setConnectTimeoutMillis(connectTimeoutMillis);
+        apiClient.setReadTimeoutMillis(readTimeoutMillis);
+        final ControllerDTO controller = apiClient.getController();
 
         remoteInfoWriteLock.lock();
         try {
@@ -223,7 +222,7 @@ public class SiteInfoProvider {
         this.readTimeoutMillis = readTimeoutMillis;
     }
 
-    public void setProxy(Proxy proxy) {
+    public void setProxy(HttpProxy proxy) {
         this.proxy = proxy;
     }
 }

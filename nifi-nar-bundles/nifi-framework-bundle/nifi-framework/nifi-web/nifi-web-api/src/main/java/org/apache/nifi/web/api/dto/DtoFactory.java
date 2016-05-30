@@ -101,6 +101,7 @@ import org.apache.nifi.reporting.Bulletin;
 import org.apache.nifi.reporting.ReportingTask;
 import org.apache.nifi.scheduling.SchedulingStrategy;
 import org.apache.nifi.util.FormatUtils;
+import org.apache.nifi.util.StringUtils;
 import org.apache.nifi.web.FlowModification;
 import org.apache.nifi.web.Revision;
 import org.apache.nifi.web.api.dto.PropertyDescriptorDTO.AllowableValueDTO;
@@ -171,6 +172,7 @@ public final class DtoFactory {
             return Collator.getInstance(Locale.US).compare(class1.getSimpleName(), class2.getSimpleName());
         }
     };
+    public static final String SENSITIVE_VALUE_MASK = "********";
 
     private ControllerServiceProvider controllerServiceProvider;
     private EntityFactory entityFactory;
@@ -1137,7 +1139,7 @@ public final class DtoFactory {
             // determine the property value - don't include sensitive properties
             String propertyValue = entry.getValue();
             if (propertyValue != null && descriptor.isSensitive()) {
-                propertyValue = "********";
+                propertyValue = SENSITIVE_VALUE_MASK;
             }
 
             // set the property value
@@ -1201,7 +1203,7 @@ public final class DtoFactory {
             // determine the property value - don't include sensitive properties
             String propertyValue = entry.getValue();
             if (propertyValue != null && descriptor.isSensitive()) {
-                propertyValue = "********";
+                propertyValue = SENSITIVE_VALUE_MASK;
             }
 
             // set the property value
@@ -1289,7 +1291,7 @@ public final class DtoFactory {
                 // determine the property value - don't include sensitive properties
                 String propertyValue = entry.getValue();
                 if (propertyValue != null && descriptor.isSensitive()) {
-                    propertyValue = "********";
+                    propertyValue = SENSITIVE_VALUE_MASK;
                 }
 
                 // set the property value
@@ -1395,6 +1397,10 @@ public final class DtoFactory {
         dto.setTransportProtocol(group.getTransportProtocol().name());
         dto.setProxyHost(group.getProxyHost());
         dto.setProxyPort(group.getProxyPort());
+        dto.setProxyUser(group.getProxyUser());
+        if (!StringUtils.isEmpty(group.getProxyPassword())) {
+            dto.setProxyPassword(SENSITIVE_VALUE_MASK);
+        }
 
         // only specify the secure flag if we know the target system has site to site enabled
         if (group.isSiteToSiteEnabled()) {
@@ -2273,7 +2279,7 @@ public final class DtoFactory {
             // determine the property value - don't include sensitive properties
             String propertyValue = entry.getValue();
             if (propertyValue != null && descriptor.isSensitive()) {
-                propertyValue = "********";
+                propertyValue = SENSITIVE_VALUE_MASK;
             }
 
             // set the property value

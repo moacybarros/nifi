@@ -39,7 +39,9 @@ nf.RemoteProcessGroupConfiguration = (function () {
                                         yieldDuration: $('#remote-process-group-yield-duration').val(),
                                         transportProtocol: $('#remote-process-group-transport-protocol-combo').combo('getSelectedOption').value,
                                         proxyHost: $('#remote-process-group-proxy-host').val(),
-                                        proxyPort: $('#remote-process-group-proxy-port').val()
+                                        proxyPort: $('#remote-process-group-proxy-port').val(),
+                                        proxyUser: $('#remote-process-group-proxy-user').val(),
+                                        proxyPassword: $('#remote-process-group-proxy-password').val()
                                     }
                                 };
 
@@ -99,6 +101,8 @@ nf.RemoteProcessGroupConfiguration = (function () {
                         });
                         $('#remote-process-group-proxy-host').val('');
                         $('#remote-process-group-proxy-port').val('');
+                        $('#remote-process-group-proxy-user').val('');
+                        $('#remote-process-group-proxy-password').val('');
                     }
                 }
             });
@@ -134,6 +138,8 @@ nf.RemoteProcessGroupConfiguration = (function () {
                 $('#remote-process-group-yield-duration').val(selectionData.component.yieldDuration);
                 $('#remote-process-group-proxy-host').val(selectionData.component.proxyHost);
                 $('#remote-process-group-proxy-port').val(selectionData.component.proxyPort);
+                $('#remote-process-group-proxy-user').val(selectionData.component.proxyUser);
+                $('#remote-process-group-proxy-password').val(selectionData.component.proxyPassword);
 
                 // select the appropriate transport-protocol
                 $('#remote-process-group-transport-protocol-combo').combo('setSelectedOption', {

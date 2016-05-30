@@ -38,9 +38,9 @@ import org.apache.nifi.groups.ProcessGroup;
 import org.apache.nifi.groups.ProcessGroupCounts;
 import org.apache.nifi.groups.RemoteProcessGroup;
 import org.apache.nifi.groups.RemoteProcessGroupPortDescriptor;
-import org.apache.nifi.remote.client.SiteToSiteClient;
 import org.apache.nifi.remote.protocol.SiteToSiteTransportProtocol;
-import org.apache.nifi.remote.util.NiFiRestApiUtil;
+import org.apache.nifi.remote.protocol.http.HttpProxy;
+import org.apache.nifi.remote.util.SiteToSiteRestApiClient;
 import org.apache.nifi.reporting.BulletinRepository;
 import org.apache.nifi.reporting.ComponentType;
 import org.apache.nifi.reporting.Severity;
@@ -54,7 +54,6 @@ import org.slf4j.LoggerFactory;
 import javax.net.ssl.SSLContext;
 import java.io.File;
 import java.io.IOException;
-import java.net.Proxy;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
@@ -113,6 +112,8 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
     private volatile SiteToSiteTransportProtocol transportProtocol = SiteToSiteTransportProtocol.RAW;
     private volatile String proxyHost;
     private volatile Integer proxyPort;
+    private volatile String proxyUser;
+    private volatile String proxyPassword;
 
 
     private final ReadWriteLock rwLock = new ReentrantReadWriteLock();
@@ -266,6 +267,26 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
     @Override
     public void setProxyPort(Integer proxyPort) {
         this.proxyPort = proxyPort;
+    }
+
+    @Override
+    public String getProxyUser() {
+        return proxyUser;
+    }
+
+    @Override
+    public void setProxyUser(String proxyUser) {
+        this.proxyUser = proxyUser;
+    }
+
+    @Override
+    public String getProxyPassword() {
+        return proxyPassword;
+    }
+
+    @Override
+    public void setProxyPassword(String proxyPassword) {
+        this.proxyPassword = proxyPassword;
     }
 
     /**
@@ -790,13 +811,13 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
             return;
         }
 
-        final NiFiRestApiUtil apiUtil = getNiFiRestApiUtil();
+        final SiteToSiteRestApiClient apiClient = getSiteToSiteRestApiClient();
 
         try {
             // perform the request
             final ControllerDTO dto;
             try {
-                dto = apiUtil.getController();
+                dto = apiClient.getController();
             } catch (IOException e) {
                 writeLock.lock();
                 try {
@@ -886,13 +907,12 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
         }
     }
 
-    private NiFiRestApiUtil getNiFiRestApiUtil() {
-        final Proxy proxy = new SiteToSiteClient.Builder().proxyHost(proxyHost).proxyPort(proxyPort).buildConfig().getProxy();
-        final NiFiRestApiUtil apiUtil = new NiFiRestApiUtil(sslContext, proxy);
-        apiUtil.setBaseUrl(apiUri.toString());
-        apiUtil.setConnectTimeoutMillis(getCommunicationsTimeout(TimeUnit.MILLISECONDS));
-        apiUtil.setReadTimeoutMillis(getCommunicationsTimeout(TimeUnit.MILLISECONDS));
-        return apiUtil;
+    private SiteToSiteRestApiClient getSiteToSiteRestApiClient() {
+        SiteToSiteRestApiClient apiClient = new SiteToSiteRestApiClient(sslContext, new HttpProxy(proxyHost, proxyPort, proxyUser, proxyPassword));
+        apiClient.setBaseUrl(apiUri.toString());
+        apiClient.setConnectTimeoutMillis(getCommunicationsTimeout(TimeUnit.MILLISECONDS));
+        apiClient.setReadTimeoutMillis(getCommunicationsTimeout(TimeUnit.MILLISECONDS));
+        return apiClient;
     }
 
     /**
@@ -1120,11 +1140,11 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
         public void run() {
             try {
 
-                final NiFiRestApiUtil apiUtil = getNiFiRestApiUtil();
+                final SiteToSiteRestApiClient apiClient = getSiteToSiteRestApiClient();
 
 
                 try {
-                    final ControllerDTO dto = apiUtil.getController();
+                    final ControllerDTO dto = apiClient.getController();
 
                     if (dto.getRemoteSiteListeningPort() == null && SiteToSiteTransportProtocol.RAW.equals(transportProtocol)) {
                         authorizationIssue = "Remote instance is not configured to allow RAW Site-to-Site communications at this time.";
@@ -1147,7 +1167,7 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
                     final boolean isPointingToCluster = flowController.getInstanceId().equals(remoteInstanceId);
                     pointsToCluster.set(isPointingToCluster);
 
-                } catch (NiFiRestApiUtil.HttpGetFailedException e) {
+                } catch (SiteToSiteRestApiClient.HttpGetFailedException e) {
 
                     if (e.getResponseCode() == UNAUTHORIZED_STATUS_CODE) {
                         // TODO: implement registration request

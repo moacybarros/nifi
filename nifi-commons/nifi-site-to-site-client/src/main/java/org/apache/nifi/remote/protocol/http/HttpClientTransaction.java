@@ -21,11 +21,11 @@ import org.apache.nifi.events.EventReporter;
 import org.apache.nifi.remote.AbstractTransaction;
 import org.apache.nifi.remote.Peer;
 import org.apache.nifi.remote.TransferDirection;
-import org.apache.nifi.remote.client.http.SiteToSiteRestApiUtil;
 import org.apache.nifi.remote.codec.StandardFlowFileCodec;
 import org.apache.nifi.remote.io.http.HttpCommunicationsSession;
 import org.apache.nifi.remote.protocol.Response;
 import org.apache.nifi.remote.protocol.ResponseCode;
+import org.apache.nifi.remote.util.SiteToSiteRestApiClient;
 import org.apache.nifi.stream.io.ByteArrayInputStream;
 import org.apache.nifi.stream.io.ByteArrayOutputStream;
 import org.apache.nifi.web.api.entity.TransactionResultEntity;
@@ -36,7 +36,7 @@ import java.io.IOException;
 
 public class HttpClientTransaction extends AbstractTransaction {
 
-    private SiteToSiteRestApiUtil apiUtil;
+    private SiteToSiteRestApiClient apiClient;
     private String transactionUrl;
 
     public HttpClientTransaction(final int protocolVersion, final Peer peer, TransferDirection direction,
@@ -44,9 +44,9 @@ public class HttpClientTransaction extends AbstractTransaction {
         super(peer, direction, useCompression, new StandardFlowFileCodec(), eventReporter, protocolVersion, penaltyMillis, portId);
     }
 
-    public void initialize(SiteToSiteRestApiUtil apiUtil, String transactionUrl) throws IOException {
+    public void initialize(SiteToSiteRestApiClient apiUtil, String transactionUrl) throws IOException {
         this.transactionUrl = transactionUrl;
-        this.apiUtil = apiUtil;
+        this.apiClient = apiUtil;
         if(TransferDirection.RECEIVE.equals(direction)){
             dataAvailable = apiUtil.openConnectionForReceive(transactionUrl, peer.getCommunicationsSession());
         } else {
@@ -74,7 +74,7 @@ public class HttpClientTransaction extends AbstractTransaction {
                             ResponseCode.CONFIRM_TRANSACTION.writeResponse(dos, "");
                         } else {
                             TransactionResultEntity transactionResult
-                                    = apiUtil.commitReceivingFlowFiles(transactionUrl, ResponseCode.CONFIRM_TRANSACTION, commSession.getChecksum());
+                                    = apiClient.commitReceivingFlowFiles(transactionUrl, ResponseCode.CONFIRM_TRANSACTION, commSession.getChecksum());
                             ResponseCode responseCode = ResponseCode.fromCode(transactionResult.getResponseCode());
                             if(responseCode.containsMessage()){
                                 String message = transactionResult.getMessage();
@@ -90,11 +90,11 @@ public class HttpClientTransaction extends AbstractTransaction {
             switch (state){
                 case DATA_EXCHANGED:
                     // Some flow files have been sent via stream, finish transferring.
-                    apiUtil.finishTransferFlowFiles(commSession);
+                    apiClient.finishTransferFlowFiles(commSession);
                     ResponseCode.CONFIRM_TRANSACTION.writeResponse(dos, commSession.getChecksum());
                     break;
                 case TRANSACTION_CONFIRMED:
-                    TransactionResultEntity resultEntity = apiUtil.commitTransferFlowFiles(transactionUrl, ResponseCode.CONFIRM_TRANSACTION);
+                    TransactionResultEntity resultEntity = apiClient.commitTransferFlowFiles(transactionUrl, ResponseCode.CONFIRM_TRANSACTION);
                     ResponseCode responseCode = ResponseCode.fromCode(resultEntity.getResponseCode());
                     if(responseCode.containsMessage()){
                         responseCode.writeResponse(dos, resultEntity.getMessage());
@@ -122,7 +122,7 @@ public class HttpClientTransaction extends AbstractTransaction {
                     break;
                 case CANCEL_TRANSACTION:
                     logger.debug("{} Canceling transaction. explanation={}", this, explanation);
-                    TransactionResultEntity resultEntity = apiUtil.commitReceivingFlowFiles(transactionUrl, ResponseCode.CANCEL_TRANSACTION, null);
+                    TransactionResultEntity resultEntity = apiClient.commitReceivingFlowFiles(transactionUrl, ResponseCode.CANCEL_TRANSACTION, null);
                     ResponseCode cancelResponse = ResponseCode.fromCode(resultEntity.getResponseCode());
                     switch (cancelResponse) {
                         case CANCEL_TRANSACTION:
@@ -141,7 +141,7 @@ public class HttpClientTransaction extends AbstractTransaction {
                     logger.debug("{} Finished sending flow files.", this);
                     break;
                 case BAD_CHECKSUM: {
-                        TransactionResultEntity resultEntity = apiUtil.commitTransferFlowFiles(transactionUrl, ResponseCode.BAD_CHECKSUM);
+                        TransactionResultEntity resultEntity = apiClient.commitTransferFlowFiles(transactionUrl, ResponseCode.BAD_CHECKSUM);
                         ResponseCode badChecksumCancelResponse = ResponseCode.fromCode(resultEntity.getResponseCode());
                         switch (badChecksumCancelResponse) {
                             case CANCEL_TRANSACTION:
@@ -160,7 +160,7 @@ public class HttpClientTransaction extends AbstractTransaction {
                     break;
                 case CANCEL_TRANSACTION: {
                         logger.debug("{} Canceling transaction.", this);
-                        TransactionResultEntity resultEntity = apiUtil.commitTransferFlowFiles(transactionUrl, ResponseCode.CANCEL_TRANSACTION);
+                        TransactionResultEntity resultEntity = apiClient.commitTransferFlowFiles(transactionUrl, ResponseCode.CANCEL_TRANSACTION);
                         ResponseCode cancelResponse = ResponseCode.fromCode(resultEntity.getResponseCode());
                         switch (cancelResponse) {
                             case CANCEL_TRANSACTION:

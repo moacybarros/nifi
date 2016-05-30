@@ -924,7 +924,7 @@ public class StandardFlowSynchronizer implements FlowSynchronizer {
         // add remote process group
         final List<Element> remoteProcessGroupNodeList = getChildrenByTagName(processGroupElement, "remoteProcessGroup");
         for (final Element remoteProcessGroupElement : remoteProcessGroupNodeList) {
-            final RemoteProcessGroupDTO remoteGroupDto = FlowFromDOMFactory.getRemoteProcessGroup(remoteProcessGroupElement);
+            final RemoteProcessGroupDTO remoteGroupDto = FlowFromDOMFactory.getRemoteProcessGroup(remoteProcessGroupElement, encryptor);
             final RemoteProcessGroup remoteGroup = controller.createRemoteProcessGroup(remoteGroupDto.getId(), remoteGroupDto.getTargetUri());
             remoteGroup.setComments(remoteGroupDto.getComments());
             remoteGroup.setPosition(toPosition(remoteGroupDto.getPosition()));
@@ -950,6 +950,14 @@ public class StandardFlowSynchronizer implements FlowSynchronizer {
 
             if (remoteGroupDto.getProxyPort() != null) {
                 remoteGroup.setProxyPort(remoteGroupDto.getProxyPort());
+            }
+
+            if (remoteGroupDto.getProxyUser() != null) {
+                remoteGroup.setProxyUser(remoteGroupDto.getProxyUser());
+            }
+
+            if (remoteGroupDto.getProxyPassword() != null) {
+                remoteGroup.setProxyPassword(remoteGroupDto.getProxyPassword());
             }
 
             final Set<RemoteProcessGroupPortDescriptor> inputPorts = new HashSet<>();

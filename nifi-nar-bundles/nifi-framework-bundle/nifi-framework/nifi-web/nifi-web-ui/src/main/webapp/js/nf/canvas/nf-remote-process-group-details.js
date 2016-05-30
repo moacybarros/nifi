@@ -42,6 +42,8 @@ nf.RemoteProcessGroupDetails = (function () {
                         nf.Common.clearField('read-only-remote-process-group-transport-protocol');
                         nf.Common.clearField('read-only-remote-process-group-proxy-host');
                         nf.Common.clearField('read-only-remote-process-group-proxy-port');
+                        nf.Common.clearField('read-only-remote-process-group-proxy-user');
+                        nf.Common.clearField('read-only-remote-process-group-proxy-password');
                     }
                 }
             });
@@ -66,6 +68,8 @@ nf.RemoteProcessGroupDetails = (function () {
                 nf.Common.populateField('read-only-remote-process-group-transport-protocol', selectionData.component.transportProtocol);
                 nf.Common.populateField('read-only-remote-process-group-proxy-host', selectionData.component.proxyHost);
                 nf.Common.populateField('read-only-remote-process-group-proxy-port', selectionData.component.proxyPort);
+                nf.Common.populateField('read-only-remote-process-group-proxy-user', selectionData.component.proxyUser);
+                nf.Common.populateField('read-only-remote-process-group-proxy-password', selectionData.component.proxyPassword);
 
                 // show the details
                 $('#remote-process-group-details').modal('show');

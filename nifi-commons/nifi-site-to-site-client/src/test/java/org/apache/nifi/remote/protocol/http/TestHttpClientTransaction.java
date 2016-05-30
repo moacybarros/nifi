@@ -20,7 +20,6 @@ import org.apache.nifi.events.EventReporter;
 import org.apache.nifi.remote.Peer;
 import org.apache.nifi.remote.PeerDescription;
 import org.apache.nifi.remote.TransferDirection;
-import org.apache.nifi.remote.client.http.SiteToSiteRestApiUtil;
 import org.apache.nifi.remote.codec.FlowFileCodec;
 import org.apache.nifi.remote.codec.StandardFlowFileCodec;
 import org.apache.nifi.remote.io.http.HttpCommunicationsSession;
@@ -29,6 +28,7 @@ import org.apache.nifi.remote.io.http.HttpOutput;
 import org.apache.nifi.remote.protocol.CommunicationsSession;
 import org.apache.nifi.remote.protocol.DataPacket;
 import org.apache.nifi.remote.protocol.ResponseCode;
+import org.apache.nifi.remote.util.SiteToSiteRestApiClient;
 import org.apache.nifi.reporting.Severity;
 import org.apache.nifi.stream.io.ByteArrayInputStream;
 import org.apache.nifi.stream.io.ByteArrayOutputStream;
@@ -69,7 +69,7 @@ public class TestHttpClientTransaction {
     private Logger logger = LoggerFactory.getLogger(TestHttpClientTransaction.class);
     private FlowFileCodec codec = new StandardFlowFileCodec();
 
-    private HttpClientTransaction getClientTransaction(InputStream is, OutputStream os, SiteToSiteRestApiUtil apiUtil, TransferDirection direction, String transactionUrl) throws IOException {
+    private HttpClientTransaction getClientTransaction(InputStream is, OutputStream os, SiteToSiteRestApiClient apiClient, TransferDirection direction, String transactionUrl) throws IOException {
         PeerDescription description = null;
         String peerUrl = "";
 
@@ -91,7 +91,7 @@ public class TestHttpClientTransaction {
         int protocolVersion = 5;
 
         HttpClientTransaction transaction = new HttpClientTransaction(protocolVersion, peer, direction, useCompression, portId, penaltyMillis, eventReporter);
-        transaction.initialize(apiUtil, transactionUrl);
+        transaction.initialize(apiClient, transactionUrl);
 
         return transaction;
     }
@@ -99,13 +99,13 @@ public class TestHttpClientTransaction {
     @Test
     public void testReceiveZeroFlowFile() throws IOException {
 
-        SiteToSiteRestApiUtil apiUtil = mock(SiteToSiteRestApiUtil.class);
+        SiteToSiteRestApiClient apiClient = mock(SiteToSiteRestApiClient.class);
         final String transactionUrl = "http://www.example.com/site-to-site/input-ports/portId/transactions/transactionId";
-        doReturn(false).when(apiUtil).openConnectionForReceive(eq(transactionUrl), any(CommunicationsSession.class));
+        doReturn(false).when(apiClient).openConnectionForReceive(eq(transactionUrl), any(CommunicationsSession.class));
 
         ByteArrayInputStream serverResponse = new ByteArrayInputStream(new byte[0]);
         ByteArrayOutputStream clientRequest = new ByteArrayOutputStream();
-        HttpClientTransaction transaction = getClientTransaction(serverResponse, clientRequest, apiUtil, TransferDirection.RECEIVE, transactionUrl);
+        HttpClientTransaction transaction = getClientTransaction(serverResponse, clientRequest, apiClient, TransferDirection.RECEIVE, transactionUrl);
 
         execReceiveZeroFlowFile(transaction);
 
@@ -115,83 +115,83 @@ public class TestHttpClientTransaction {
     @Test
     public void testReceiveOneFlowFile() throws IOException {
 
-        SiteToSiteRestApiUtil apiUtil = mock(SiteToSiteRestApiUtil.class);
+        SiteToSiteRestApiClient apiClient = mock(SiteToSiteRestApiClient.class);
         final String transactionUrl = "http://www.example.com/site-to-site/input-ports/portId/transactions/transactionId";
-        doReturn(true).when(apiUtil).openConnectionForReceive(eq(transactionUrl), any(CommunicationsSession.class));
+        doReturn(true).when(apiClient).openConnectionForReceive(eq(transactionUrl), any(CommunicationsSession.class));
         TransactionResultEntity resultEntity = new TransactionResultEntity();
         resultEntity.setResponseCode(CONFIRM_TRANSACTION.getCode());
-        doReturn(resultEntity).when(apiUtil).commitReceivingFlowFiles(eq(transactionUrl), eq(CONFIRM_TRANSACTION), eq("3680976076"));
+        doReturn(resultEntity).when(apiClient).commitReceivingFlowFiles(eq(transactionUrl), eq(CONFIRM_TRANSACTION), eq("3680976076"));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         codec.encode(createDataPacket("contents on server 1"), serverResponseBos);
         ByteArrayInputStream serverResponse = new ByteArrayInputStream(serverResponseBos.toByteArray());
         ByteArrayOutputStream clientRequest = new ByteArrayOutputStream();
-        HttpClientTransaction transaction = getClientTransaction(serverResponse, clientRequest, apiUtil, TransferDirection.RECEIVE, transactionUrl);
+        HttpClientTransaction transaction = getClientTransaction(serverResponse, clientRequest, apiClient, TransferDirection.RECEIVE, transactionUrl);
 
         execReceiveOneFlowFile(transaction);
 
         assertEquals("Client sends nothing as payload to receive flow files.", 0, clientRequest.toByteArray().length);
-        verify(apiUtil).commitReceivingFlowFiles(transactionUrl, CONFIRM_TRANSACTION, "3680976076");
+        verify(apiClient).commitReceivingFlowFiles(transactionUrl, CONFIRM_TRANSACTION, "3680976076");
     }
 
     @Test
     public void testReceiveTwoFlowFiles() throws IOException {
 
-        SiteToSiteRestApiUtil apiUtil = mock(SiteToSiteRestApiUtil.class);
+        SiteToSiteRestApiClient apiClient = mock(SiteToSiteRestApiClient.class);
         final String transactionUrl = "http://www.example.com/site-to-site/input-ports/portId/transactions/transactionId";
-        doReturn(true).when(apiUtil).openConnectionForReceive(eq(transactionUrl), any(CommunicationsSession.class));
+        doReturn(true).when(apiClient).openConnectionForReceive(eq(transactionUrl), any(CommunicationsSession.class));
         TransactionResultEntity resultEntity = new TransactionResultEntity();
         resultEntity.setResponseCode(CONFIRM_TRANSACTION.getCode());
-        doReturn(resultEntity).when(apiUtil).commitReceivingFlowFiles(eq(transactionUrl), eq(CONFIRM_TRANSACTION), eq("2969091230"));
+        doReturn(resultEntity).when(apiClient).commitReceivingFlowFiles(eq(transactionUrl), eq(CONFIRM_TRANSACTION), eq("2969091230"));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         codec.encode(createDataPacket("contents on server 1"), serverResponseBos);
         codec.encode(createDataPacket("contents on server 2"), serverResponseBos);
         ByteArrayInputStream serverResponse = new ByteArrayInputStream(serverResponseBos.toByteArray());
         ByteArrayOutputStream clientRequest = new ByteArrayOutputStream();
-        HttpClientTransaction transaction = getClientTransaction(serverResponse, clientRequest, apiUtil, TransferDirection.RECEIVE, transactionUrl);
+        HttpClientTransaction transaction = getClientTransaction(serverResponse, clientRequest, apiClient, TransferDirection.RECEIVE, transactionUrl);
 
         execReceiveTwoFlowFiles(transaction);
 
         assertEquals("Client sends nothing as payload to receive flow files.", 0, clientRequest.toByteArray().length);
-        verify(apiUtil).commitReceivingFlowFiles(transactionUrl, CONFIRM_TRANSACTION, "2969091230");
+        verify(apiClient).commitReceivingFlowFiles(transactionUrl, CONFIRM_TRANSACTION, "2969091230");
     }
 
     @Test
     public void testReceiveWithInvalidChecksum() throws IOException {
 
-        SiteToSiteRestApiUtil apiUtil = mock(SiteToSiteRestApiUtil.class);
+        SiteToSiteRestApiClient apiClient = mock(SiteToSiteRestApiClient.class);
         final String transactionUrl = "http://www.example.com/site-to-site/input-ports/portId/transactions/transactionId";
-        doReturn(true).when(apiUtil).openConnectionForReceive(eq(transactionUrl), any(CommunicationsSession.class));
+        doReturn(true).when(apiClient).openConnectionForReceive(eq(transactionUrl), any(CommunicationsSession.class));
         // The checksum is correct, but here we simulate as if it's wrong, BAD_CHECKSUM.
         TransactionResultEntity resultEntity = new TransactionResultEntity();
         resultEntity.setResponseCode(ResponseCode.BAD_CHECKSUM.getCode());
-        doReturn(resultEntity).when(apiUtil).commitReceivingFlowFiles(eq(transactionUrl), eq(CONFIRM_TRANSACTION), eq("2969091230"));
+        doReturn(resultEntity).when(apiClient).commitReceivingFlowFiles(eq(transactionUrl), eq(CONFIRM_TRANSACTION), eq("2969091230"));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         codec.encode(createDataPacket("contents on server 1"), serverResponseBos);
         codec.encode(createDataPacket("contents on server 2"), serverResponseBos);
         ByteArrayInputStream serverResponse = new ByteArrayInputStream(serverResponseBos.toByteArray());
         ByteArrayOutputStream clientRequest = new ByteArrayOutputStream();
-        HttpClientTransaction transaction = getClientTransaction(serverResponse, clientRequest, apiUtil, TransferDirection.RECEIVE, transactionUrl);
+        HttpClientTransaction transaction = getClientTransaction(serverResponse, clientRequest, apiClient, TransferDirection.RECEIVE, transactionUrl);
 
         execReceiveWithInvalidChecksum(transaction);
 
         assertEquals("Client sends nothing as payload to receive flow files.", 0, clientRequest.toByteArray().length);
-        verify(apiUtil).commitReceivingFlowFiles(transactionUrl, CONFIRM_TRANSACTION, "2969091230");
+        verify(apiClient).commitReceivingFlowFiles(transactionUrl, CONFIRM_TRANSACTION, "2969091230");
     }
 
     @Test
     public void testSendZeroFlowFile() throws IOException {
 
-        SiteToSiteRestApiUtil apiUtil = mock(SiteToSiteRestApiUtil.class);
+        SiteToSiteRestApiClient apiClient = mock(SiteToSiteRestApiClient.class);
         final String transactionUrl = "http://www.example.com/site-to-site/input-ports/portId/transactions/transactionId";
-        doNothing().when(apiUtil).openConnectionForSend(eq(transactionUrl), any(CommunicationsSession.class));
+        doNothing().when(apiClient).openConnectionForSend(eq(transactionUrl), any(CommunicationsSession.class));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         ByteArrayInputStream serverResponse = new ByteArrayInputStream(serverResponseBos.toByteArray());
         ByteArrayOutputStream clientRequest = new ByteArrayOutputStream();
-        HttpClientTransaction transaction = getClientTransaction(serverResponse, clientRequest, apiUtil, TransferDirection.SEND, transactionUrl);
+        HttpClientTransaction transaction = getClientTransaction(serverResponse, clientRequest, apiClient, TransferDirection.SEND, transactionUrl);
 
         execSendZeroFlowFile(transaction);
 
@@ -201,9 +201,9 @@ public class TestHttpClientTransaction {
     @Test
     public void testSendOneFlowFile() throws IOException {
 
-        SiteToSiteRestApiUtil apiUtil = mock(SiteToSiteRestApiUtil.class);
+        SiteToSiteRestApiClient apiClient = mock(SiteToSiteRestApiClient.class);
         final String transactionUrl = "http://www.example.com/site-to-site/input-ports/portId/transactions/transactionId";
-        doNothing().when(apiUtil).openConnectionForSend(eq(transactionUrl), any(CommunicationsSession.class));
+        doNothing().when(apiClient).openConnectionForSend(eq(transactionUrl), any(CommunicationsSession.class));
         // Emulate that server returns correct checksum.
         doAnswer(new Answer() {
             @Override
@@ -212,15 +212,15 @@ public class TestHttpClientTransaction {
                 commSession.setChecksum("2946083981");
                 return null;
             }
-        }).when(apiUtil).finishTransferFlowFiles(any(CommunicationsSession.class));
+        }).when(apiClient).finishTransferFlowFiles(any(CommunicationsSession.class));
         TransactionResultEntity resultEntity = new TransactionResultEntity();
         resultEntity.setResponseCode(ResponseCode.TRANSACTION_FINISHED.getCode());
-        doReturn(resultEntity).when(apiUtil).commitTransferFlowFiles(eq(transactionUrl), eq(CONFIRM_TRANSACTION));
+        doReturn(resultEntity).when(apiClient).commitTransferFlowFiles(eq(transactionUrl), eq(CONFIRM_TRANSACTION));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         ByteArrayInputStream serverResponse = new ByteArrayInputStream(serverResponseBos.toByteArray());
         ByteArrayOutputStream clientRequest = new ByteArrayOutputStream();
-        HttpClientTransaction transaction = getClientTransaction(serverResponse, clientRequest, apiUtil, TransferDirection.SEND, transactionUrl);
+        HttpClientTransaction transaction = getClientTransaction(serverResponse, clientRequest, apiClient, TransferDirection.SEND, transactionUrl);
 
         execSendOneFlowFile(transaction);
 
@@ -229,15 +229,15 @@ public class TestHttpClientTransaction {
         assertEquals("contents on client 1", readContents(packetByClient));
         assertEquals(-1, sentByClient.read());
 
-        verify(apiUtil).commitTransferFlowFiles(transactionUrl, CONFIRM_TRANSACTION);
+        verify(apiClient).commitTransferFlowFiles(transactionUrl, CONFIRM_TRANSACTION);
     }
 
     @Test
     public void testSendTwoFlowFiles() throws IOException {
 
-        SiteToSiteRestApiUtil apiUtil = mock(SiteToSiteRestApiUtil.class);
+        SiteToSiteRestApiClient apiClient = mock(SiteToSiteRestApiClient.class);
         final String transactionUrl = "http://www.example.com/site-to-site/input-ports/portId/transactions/transactionId";
-        doNothing().when(apiUtil).openConnectionForSend(eq("portId"), any(CommunicationsSession.class));
+        doNothing().when(apiClient).openConnectionForSend(eq("portId"), any(CommunicationsSession.class));
         // Emulate that server returns correct checksum.
         doAnswer(new Answer() {
             @Override
@@ -246,15 +246,15 @@ public class TestHttpClientTransaction {
                 commSession.setChecksum("3359812065");
                 return null;
             }
-        }).when(apiUtil).finishTransferFlowFiles(any(CommunicationsSession.class));
+        }).when(apiClient).finishTransferFlowFiles(any(CommunicationsSession.class));
         TransactionResultEntity resultEntity = new TransactionResultEntity();
         resultEntity.setResponseCode(ResponseCode.TRANSACTION_FINISHED.getCode());
-        doReturn(resultEntity).when(apiUtil).commitTransferFlowFiles(eq(transactionUrl), eq(CONFIRM_TRANSACTION));
+        doReturn(resultEntity).when(apiClient).commitTransferFlowFiles(eq(transactionUrl), eq(CONFIRM_TRANSACTION));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         ByteArrayInputStream serverResponse = new ByteArrayInputStream(serverResponseBos.toByteArray());
         ByteArrayOutputStream clientRequest = new ByteArrayOutputStream();
-        HttpClientTransaction transaction = getClientTransaction(serverResponse, clientRequest, apiUtil, TransferDirection.SEND, transactionUrl);
+        HttpClientTransaction transaction = getClientTransaction(serverResponse, clientRequest, apiClient, TransferDirection.SEND, transactionUrl);
 
         execSendTwoFlowFiles(transaction);
 
@@ -265,14 +265,14 @@ public class TestHttpClientTransaction {
         assertEquals("contents on client 2", readContents(packetByClient));
         assertEquals(-1, sentByClient.read());
 
-        verify(apiUtil).commitTransferFlowFiles(transactionUrl, CONFIRM_TRANSACTION);
+        verify(apiClient).commitTransferFlowFiles(transactionUrl, CONFIRM_TRANSACTION);
     }
 
     @Test
     public void testSendWithInvalidChecksum() throws IOException {
-        SiteToSiteRestApiUtil apiUtil = mock(SiteToSiteRestApiUtil.class);
+        SiteToSiteRestApiClient apiClient = mock(SiteToSiteRestApiClient.class);
         final String transactionUrl = "http://www.example.com/site-to-site/input-ports/portId/transactions/transactionId";
-        doNothing().when(apiUtil).openConnectionForSend(eq(transactionUrl), any(CommunicationsSession.class));
+        doNothing().when(apiClient).openConnectionForSend(eq(transactionUrl), any(CommunicationsSession.class));
         // Emulate that server returns incorrect checksum.
         doAnswer(new Answer() {
             @Override
@@ -281,7 +281,7 @@ public class TestHttpClientTransaction {
                 commSession.setChecksum("Different checksum");
                 return null;
             }
-        }).when(apiUtil).finishTransferFlowFiles(any(CommunicationsSession.class));
+        }).when(apiClient).finishTransferFlowFiles(any(CommunicationsSession.class));
         doAnswer(new Answer() {
             @Override
             public Object answer(InvocationOnMock invocation) throws Throwable {
@@ -289,12 +289,12 @@ public class TestHttpClientTransaction {
                 serverResult.setResponseCode(ResponseCode.CANCEL_TRANSACTION.getCode());
                 return serverResult;
             }
-        }).when(apiUtil).commitTransferFlowFiles(eq(transactionUrl), eq(ResponseCode.BAD_CHECKSUM));
+        }).when(apiClient).commitTransferFlowFiles(eq(transactionUrl), eq(ResponseCode.BAD_CHECKSUM));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         ByteArrayInputStream serverResponse = new ByteArrayInputStream(serverResponseBos.toByteArray());
         ByteArrayOutputStream clientRequest = new ByteArrayOutputStream();
-        HttpClientTransaction transaction = getClientTransaction(serverResponse, clientRequest, apiUtil, TransferDirection.SEND, transactionUrl);
+        HttpClientTransaction transaction = getClientTransaction(serverResponse, clientRequest, apiClient, TransferDirection.SEND, transactionUrl);
 
         execSendWithInvalidChecksum(transaction);
 
@@ -305,15 +305,15 @@ public class TestHttpClientTransaction {
         assertEquals("contents on client 2", readContents(packetByClient));
         assertEquals(-1, sentByClient.read());
 
-        verify(apiUtil).commitTransferFlowFiles(transactionUrl, ResponseCode.BAD_CHECKSUM);
+        verify(apiClient).commitTransferFlowFiles(transactionUrl, ResponseCode.BAD_CHECKSUM);
     }
 
     @Test
     public void testSendButDestinationFull() throws IOException {
 
-        SiteToSiteRestApiUtil apiUtil = mock(SiteToSiteRestApiUtil.class);
+        SiteToSiteRestApiClient apiClient = mock(SiteToSiteRestApiClient.class);
         final String transactionUrl = "http://www.example.com/site-to-site/input-ports/portId/transactions/transactionId";
-        doNothing().when(apiUtil).openConnectionForSend(eq("portId"), any(CommunicationsSession.class));
+        doNothing().when(apiClient).openConnectionForSend(eq("portId"), any(CommunicationsSession.class));
         // Emulate that server returns correct checksum.
         doAnswer(new Answer() {
             @Override
@@ -322,15 +322,15 @@ public class TestHttpClientTransaction {
                 commSession.setChecksum("3359812065");
                 return null;
             }
-        }).when(apiUtil).finishTransferFlowFiles(any(CommunicationsSession.class));
+        }).when(apiClient).finishTransferFlowFiles(any(CommunicationsSession.class));
         TransactionResultEntity resultEntity = new TransactionResultEntity();
         resultEntity.setResponseCode(ResponseCode.TRANSACTION_FINISHED_BUT_DESTINATION_FULL.getCode());
-        doReturn(resultEntity).when(apiUtil).commitTransferFlowFiles(eq(transactionUrl), eq(CONFIRM_TRANSACTION));
+        doReturn(resultEntity).when(apiClient).commitTransferFlowFiles(eq(transactionUrl), eq(CONFIRM_TRANSACTION));
 
         ByteArrayOutputStream serverResponseBos = new ByteArrayOutputStream();
         ByteArrayInputStream serverResponse = new ByteArrayInputStream(serverResponseBos.toByteArray());
         ByteArrayOutputStream clientRequest = new ByteArrayOutputStream();
-        HttpClientTransaction transaction = getClientTransaction(serverResponse, clientRequest, apiUtil, TransferDirection.SEND, transactionUrl);
+        HttpClientTransaction transaction = getClientTransaction(serverResponse, clientRequest, apiClient, TransferDirection.SEND, transactionUrl);
 
         execSendButDestinationFull(transaction);
 
@@ -341,6 +341,6 @@ public class TestHttpClientTransaction {
         assertEquals("contents on client 2", readContents(packetByClient));
         assertEquals(-1, sentByClient.read());
 
-        verify(apiUtil).commitTransferFlowFiles(transactionUrl, CONFIRM_TRANSACTION);
+        verify(apiClient).commitTransferFlowFiles(transactionUrl, CONFIRM_TRANSACTION);
     }
 }

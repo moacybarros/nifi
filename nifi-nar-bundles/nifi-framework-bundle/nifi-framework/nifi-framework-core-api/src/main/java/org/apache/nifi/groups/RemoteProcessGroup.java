@@ -171,6 +171,14 @@ public interface RemoteProcessGroup extends Authorizable, Positionable {
 
     void setProxyPort(Integer proxyPort);
 
+    String getProxyUser();
+
+    void setProxyUser(String proxyUser);
+
+    String getProxyPassword();
+
+    void setProxyPassword(String proxyPassword);
+
     /**
      * Initiates a task in the remote process group to re-initialize, as a
      * result of clustering changes

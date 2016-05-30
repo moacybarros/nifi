@@ -18,7 +18,6 @@ package org.apache.nifi.remote.client;
 
 import java.io.File;
 import java.io.Serializable;
-import java.net.Proxy;
 import java.util.concurrent.TimeUnit;
 
 import javax.net.ssl.SSLContext;
@@ -26,6 +25,7 @@ import javax.net.ssl.SSLContext;
 import org.apache.nifi.events.EventReporter;
 import org.apache.nifi.remote.protocol.DataPacket;
 import org.apache.nifi.remote.protocol.SiteToSiteTransportProtocol;
+import org.apache.nifi.remote.protocol.http.HttpProxy;
 
 public interface SiteToSiteClientConfig extends Serializable {
 
@@ -157,6 +157,6 @@ public interface SiteToSiteClientConfig extends Serializable {
      * Return Proxy for HTTP Transport Protocol.
      * @return proxy or null if not specified
      */
-    Proxy getProxy();
+    HttpProxy getHttpProxy();
 
 }

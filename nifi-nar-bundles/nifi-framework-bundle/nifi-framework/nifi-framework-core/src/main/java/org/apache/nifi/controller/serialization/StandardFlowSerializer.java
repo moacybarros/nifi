@@ -56,6 +56,7 @@ import org.apache.nifi.persistence.TemplateSerializer;
 import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.remote.RemoteGroupPort;
 import org.apache.nifi.remote.RootGroupPort;
+import org.apache.nifi.util.StringUtils;
 import org.w3c.dom.DOMException;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -248,6 +249,11 @@ public class StandardFlowSerializer implements FlowSerializer {
         addTextElement(element, "proxyHost", remoteRef.getProxyHost());
         if (remoteRef.getProxyPort() != null) {
             addTextElement(element, "proxyPort", remoteRef.getProxyPort());
+        }
+        addTextElement(element, "proxyUser", remoteRef.getProxyUser());
+        if (!StringUtils.isEmpty(remoteRef.getProxyPassword())) {
+            String value = ENC_PREFIX + encryptor.encrypt(remoteRef.getProxyPassword()) + ENC_SUFFIX;
+            addTextElement(element, "proxyPassword", value);
         }
 
         for (final RemoteGroupPort port : remoteRef.getInputPorts()) {
