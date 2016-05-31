@@ -66,6 +66,7 @@ import org.apache.nifi.web.api.entity.ControllerEntity;
 import org.apache.nifi.web.api.entity.PeersEntity;
 import org.apache.nifi.web.api.entity.TransactionResultEntity;
 import org.codehaus.jackson.JsonParseException;
+import org.codehaus.jackson.map.DeserializationConfig;
 import org.codehaus.jackson.map.JsonMappingException;
 import org.codehaus.jackson.map.ObjectMapper;
 import org.slf4j.Logger;
@@ -231,9 +232,19 @@ public class SiteToSiteRestApiClient {
     }
 
     public ControllerDTO getController() throws IOException {
-        // TODO: Backward compatibility needs to be added, it was used to be "/controller". Maybe the old resource should respond with 301 Moved Permanently?
-        HttpGet get = createGet("/site-to-site");
-        return execute(get, ControllerEntity.class).getController();
+        try {
+            HttpGet get = createGet("/site-to-site");
+            get.setHeader(HttpHeaders.PROTOCOL_VERSION, String.valueOf(transportProtocolVersionNegotiator.getVersion()));
+            return execute(get, ControllerEntity.class).getController();
+
+        } catch (HttpGetFailedException e) {
+            if (RESPONSE_CODE_NOT_FOUND == e.getResponseCode()) {
+                logger.debug("getController received NOT_FOUND, trying to access the old NiFi version resource url...");
+                HttpGet get = createGet("/controller");
+                return execute(get, ControllerEntity.class).getController();
+            }
+            throw e;
+        }
     }
 
     public Collection<PeerDTO> getPeers() throws IOException {
@@ -719,6 +730,7 @@ public class SiteToSiteRestApiClient {
         final String responseMessage = execute(get);
 
         final ObjectMapper mapper = new ObjectMapper();
+        mapper.configure(DeserializationConfig.Feature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         return mapper.readValue(responseMessage, entityClass);
     }
 

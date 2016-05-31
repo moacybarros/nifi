@@ -163,6 +163,14 @@ public class SiteToSiteResource extends ApplicationResource {
         final ControllerEntity entity = new ControllerEntity();
         entity.setController(controller);
 
+        if (isEmpty(req.getHeader(HttpHeaders.PROTOCOL_VERSION))) {
+            // This indicates the client uses older NiFi version,
+            // which strictly read JSON properties and fail with unknown properties.
+            // Convert result entity so that old version clients can understance.
+            logger.debug("Converting result to provide backward compatibility...");
+            controller.setRemoteSiteHttpListeningPort(null);
+        }
+
         // generate the response
         return clusterContext(noCache(Response.ok(entity))).build();
     }
