@@ -17,30 +17,38 @@
 package org.apache.nifi.remote.io.http;
 
 import org.apache.nifi.remote.protocol.CommunicationsInput;
+import org.apache.nifi.stream.io.ByteCountingInputStream;
 
 import java.io.IOException;
 import java.io.InputStream;
 
 public class HttpInput implements CommunicationsInput {
 
-    private InputStream inputStream;
+    private ByteCountingInputStream countingIn;
 
     @Override
     public InputStream getInputStream() throws IOException {
-        return inputStream;
+        return countingIn;
     }
 
     @Override
     public long getBytesRead() {
-        // TODO: what should I return?
+        if (countingIn != null) {
+            return countingIn.getBytesRead();
+        }
         return 0L;
     }
 
     @Override
     public void consume() throws IOException {
+        final byte[] b = new byte[4096];
+        int bytesRead;
+        do {
+            bytesRead = countingIn.read(b);
+        } while (bytesRead > 0);
     }
 
     public void setInputStream(InputStream inputStream) {
-        this.inputStream = inputStream;
+        this.countingIn = new ByteCountingInputStream(inputStream);
     }
 }

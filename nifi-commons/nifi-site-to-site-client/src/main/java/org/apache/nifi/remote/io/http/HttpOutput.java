@@ -17,26 +17,29 @@
 package org.apache.nifi.remote.io.http;
 
 import org.apache.nifi.remote.protocol.CommunicationsOutput;
+import org.apache.nifi.stream.io.ByteCountingOutputStream;
 
 import java.io.IOException;
 import java.io.OutputStream;
 
 public class HttpOutput implements CommunicationsOutput {
 
-    private OutputStream outputStream;
+    private ByteCountingOutputStream countingOut;
 
     @Override
     public OutputStream getOutputStream() throws IOException {
-        return outputStream;
+        return countingOut;
     }
 
     @Override
     public long getBytesWritten() {
-        // TODO: What should I return?
-        return 0;
+        if (countingOut != null) {
+            return countingOut.getBytesWritten();
+        }
+        return 0L;
     }
 
     public void setOutputStream(OutputStream outputStream) {
-        this.outputStream = outputStream;
+        this.countingOut = new ByteCountingOutputStream(outputStream);
     }
 }
