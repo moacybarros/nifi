@@ -83,11 +83,8 @@ public class StandardRemoteProcessGroupDAO extends ComponentDAO implements Remot
         // create the remote process group
         RemoteProcessGroup remoteProcessGroup = flowController.createRemoteProcessGroup(remoteProcessGroupDTO.getId(), rawTargetUri);
 
-        // update the remote process group
-        if (isNotNull(remoteProcessGroupDTO.getPosition())) {
-            remoteProcessGroup.setPosition(new Position(remoteProcessGroupDTO.getPosition().getX(), remoteProcessGroupDTO.getPosition().getY()));
-        }
-        remoteProcessGroup.setComments(remoteProcessGroupDTO.getComments());
+        // set other properties
+        updateRemoteProcessGroup(remoteProcessGroup, remoteProcessGroupDTO);
 
         // get the group to add the remote process group to
         group.addRemoteProcessGroup(remoteProcessGroup);
@@ -148,11 +145,10 @@ public class StandardRemoteProcessGroupDAO extends ComponentDAO implements Remot
         // if any remote group properties are changing, verify update
         if (isAnyNotNull(remoteProcessGroupDto.getYieldDuration(),
                 remoteProcessGroupDto.getCommunicationsTimeout(),
-                remoteProcessGroup.getTransportProtocol(),
-                remoteProcessGroup.getProxyHost(),
-                remoteProcessGroup.getProxyPort(),
-                remoteProcessGroup.getProxyUser(),
-                remoteProcessGroup.getProxyPassword())) {
+                remoteProcessGroupDto.getProxyHost(),
+                remoteProcessGroupDto.getProxyPort(),
+                remoteProcessGroupDto.getProxyUser(),
+                remoteProcessGroupDto.getProxyPassword())) {
             remoteProcessGroup.verifyCanUpdate();
         }
     }
@@ -343,7 +339,12 @@ public class StandardRemoteProcessGroupDAO extends ComponentDAO implements Remot
     @Override
     public RemoteProcessGroup updateRemoteProcessGroup(RemoteProcessGroupDTO remoteProcessGroupDTO) {
         RemoteProcessGroup remoteProcessGroup = locateRemoteProcessGroup(remoteProcessGroupDTO.getId());
+        return updateRemoteProcessGroup(remoteProcessGroup, remoteProcessGroupDTO);
 
+
+    }
+
+    private RemoteProcessGroup updateRemoteProcessGroup(RemoteProcessGroup remoteProcessGroup, RemoteProcessGroupDTO remoteProcessGroupDTO) {
         // verify the update request
         verifyUpdate(remoteProcessGroup, remoteProcessGroupDTO);
 
