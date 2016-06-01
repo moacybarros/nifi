@@ -41,6 +41,10 @@ public class HttpInput implements CommunicationsInput {
 
     @Override
     public void consume() throws IOException {
+        if (countingIn == null) {
+            return;
+        }
+
         final byte[] b = new byte[4096];
         int bytesRead;
         do {

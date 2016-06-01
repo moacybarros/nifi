@@ -130,6 +130,10 @@ public class HttpClient extends AbstractSiteToSiteClient implements PeerStatusPr
             String portId = config.getPortIdentifier();
             if (StringUtils.isEmpty(portId)) {
                 portId = siteInfoProvider.getPortIdentifier(config.getPortName(), direction);
+                if (StringUtils.isEmpty(portId)) {
+                    peer.close();
+                    throw new IOException("Failed to determine the identifier of port " + config.getPortName());
+                }
             }
 
             SiteToSiteRestApiClient apiClient = new SiteToSiteRestApiClient(config.getSslContext(), config.getHttpProxy());

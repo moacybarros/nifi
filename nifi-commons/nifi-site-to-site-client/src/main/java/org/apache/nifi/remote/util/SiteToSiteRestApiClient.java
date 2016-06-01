@@ -516,17 +516,22 @@ public class SiteToSiteRestApiClient {
             try {
                 extendingApi.extendTransaction(transactionUrl);
             } catch (Exception e) {
-                logger.warn("Got an exception during extending transaction ttl: {}", e.getMessage());
-                if (logger.isDebugEnabled()) {
-                    logger.warn("", e);
-                }
+                logger.warn("Got an exception while extending transaction ttl", e);
                 try {
                     stopExtendingTtl();
                 } finally {
                     // Without disconnecting, Site-to-Site client keep reading data packet,
                     // while server has already rollback.
-                    closeSilently(stream);
-                    closeSilently(response);
+                    try {
+                        closeSilently(stream);
+                    } catch (Exception es) {
+                        logger.warn("Got an exception while closing stream", es);
+                    }
+                    try {
+                        closeSilently(response);
+                    } catch (Exception er) {
+                        logger.warn("Got an exception while closing response", er);
+                    }
                 }
             }
         }, extendFrequency, extendFrequency, TimeUnit.SECONDS);
