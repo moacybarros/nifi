@@ -17,6 +17,7 @@
 package org.apache.nifi.remote.client.http;
 
 import org.apache.nifi.controller.ScheduledState;
+import org.apache.nifi.remote.Peer;
 import org.apache.nifi.remote.Transaction;
 import org.apache.nifi.remote.TransferDirection;
 import org.apache.nifi.remote.client.SiteToSiteClient;
@@ -149,6 +150,19 @@ public class TestHttpClient {
     public static class InputPortTransactionServlet extends HttpServlet {
 
         @Override
+        protected void doPut(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
+            final int reqProtocolVersion = getReqProtocolVersion(req);
+
+            final TransactionResultEntity entity = new TransactionResultEntity();
+            entity.setResponseCode(ResponseCode.CONTINUE_TRANSACTION.getCode());
+            entity.setMessage("Extended TTL.");
+
+            setCommonResponseHeaders(resp, reqProtocolVersion);
+
+            respondWithJson(resp, entity, HttpServletResponse.SC_OK);
+        }
+
+        @Override
         protected void doDelete(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
 
             final int reqProtocolVersion = getReqProtocolVersion(req);
@@ -165,6 +179,19 @@ public class TestHttpClient {
     }
 
     public static class OutputPortTransactionServlet extends HttpServlet {
+
+        @Override
+        protected void doPut(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
+            final int reqProtocolVersion = getReqProtocolVersion(req);
+
+            final TransactionResultEntity entity = new TransactionResultEntity();
+            entity.setResponseCode(ResponseCode.CONTINUE_TRANSACTION.getCode());
+            entity.setMessage("Extended TTL.");
+
+            setCommonResponseHeaders(resp, reqProtocolVersion);
+
+            respondWithJson(resp, entity, HttpServletResponse.SC_OK);
+        }
 
         @Override
         protected void doDelete(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
@@ -191,7 +218,11 @@ public class TestHttpClient {
 
             setCommonResponseHeaders(resp, reqProtocolVersion);
 
-            readIncomingPacket(req);
+            DataPacket dataPacket;
+            while ((dataPacket = readIncomingPacket(req)) != null) {
+                logger.info("received {}", dataPacket);
+                consumeDataPacket(dataPacket);
+            }
 
             assertNotNull("Test case should set <serverChecksum> depending on the test scenario.", serverChecksum);
             respondWithText(resp, serverChecksum, HttpServletResponse.SC_ACCEPTED);
@@ -239,11 +270,14 @@ public class TestHttpClient {
 
             setCommonResponseHeaders(resp, reqProtocolVersion);
 
-            readIncomingPacket(req);
+            consumeDataPacket(readIncomingPacket(req));
 
             sleepUntilTestCaseFinish();
 
-            readIncomingPacket(req);
+            DataPacket dataPacket;
+            while ((dataPacket = readIncomingPacket(req)) != null) {
+                consumeDataPacket(dataPacket);
+            }
 
             assertNotNull("Test case should set <serverChecksum> depending on the test scenario.", serverChecksum);
             respondWithText(resp, serverChecksum, HttpServletResponse.SC_ACCEPTED);
@@ -290,10 +324,9 @@ public class TestHttpClient {
         resp.flushBuffer();
     }
 
-    private static void readIncomingPacket(HttpServletRequest req) throws IOException {
+    private static DataPacket readIncomingPacket(HttpServletRequest req) throws IOException {
         final StandardFlowFileCodec codec = new StandardFlowFileCodec();
-        final DataPacket packet = codec.decode(req.getInputStream());
-        consumeDataPacket(packet);
+        return codec.decode(req.getInputStream());
     }
 
     private static int getReqProtocolVersion(HttpServletRequest req) {
@@ -556,15 +589,24 @@ public class TestHttpClient {
 
             assertNotNull(transaction);
 
-            DataPacket packet = new DataPacketBuilder()
-                .contents("Example contents from client.")
-                .attr("Client attr 1", "Client attr 1 value")
-                .attr("Client attr 2", "Client attr 2 value")
-                .build();
-            serverChecksum = "1345413116";
+            serverChecksum = "3882825556";
 
-            transaction.send(packet);
+
+            for (int i = 0; i < 3; i++) {
+                DataPacket packet = new DataPacketBuilder()
+                        .contents("Example contents from client.")
+                        .attr("Client attr 1", "Client attr 1 value")
+                        .attr("Client attr 2", "Client attr 2 value")
+                        .build();
+                transaction.send(packet);
+                long written = ((Peer)transaction.getCommunicant()).getCommunicationsSession().getBytesWritten();
+                logger.info("{} bytes have been written.", written);
+//                Thread.sleep(1_000);
+            }
+
             transaction.confirm();
+
+
             transaction.complete();
         }
 
@@ -629,21 +671,25 @@ public class TestHttpClient {
                     .attr("Client attr 2", "Client attr 2 value")
                     .build();
 
-            for(int i = 0; i < 1000000; i++) {
-                transaction.send(packet);
-                if (i % 1000 == 0) {
-                    logger.info("Sent {} packets...", i);
+            try {
+                for(int i = 0; i < 100; i++) {
+                    transaction.send(packet);
+                    if (i % 10 == 0) {
+                        logger.info("Sent {} packets...", i);
+                    }
                 }
+            } catch (IOException e) {
+                assertTrue("After exceeding certain amount of data sent to server, the server stop responding. " +
+                        "If this client keeps sending data, it should get an IOException, " +
+                        "because its output stream is already closed.", e.getMessage().contains("Pipe closed"));
             }
-
 
             serverChecksum = "1345413116";
             try {
                 transaction.confirm();
-                fail();
-            } catch (IOException e) {
+                fail("Confirm operation should fail since sending has failed.");
+            } catch (IllegalStateException e) {
                 logger.info("An exception was thrown as expected.", e);
-                assertTrue(e.getMessage().contains("TimeoutException"));
             }
         }
 

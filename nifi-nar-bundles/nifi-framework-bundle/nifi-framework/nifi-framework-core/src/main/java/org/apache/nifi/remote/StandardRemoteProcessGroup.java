@@ -811,12 +811,12 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
             return;
         }
 
-        final SiteToSiteRestApiClient apiClient = getSiteToSiteRestApiClient();
-
         try {
             // perform the request
             final ControllerDTO dto;
-            try {
+            try (
+                final SiteToSiteRestApiClient apiClient = getSiteToSiteRestApiClient();
+            ){
                 dto = apiClient.getController();
             } catch (IOException e) {
                 writeLock.lock();
@@ -1138,11 +1138,9 @@ public class StandardRemoteProcessGroup implements RemoteProcessGroup {
 
         @Override
         public void run() {
-            try {
-
+            try (
                 final SiteToSiteRestApiClient apiClient = getSiteToSiteRestApiClient();
-
-
+            ){
                 try {
                     final ControllerDTO dto = apiClient.getController();
 

@@ -97,18 +97,23 @@ public class HttpClient extends AbstractSiteToSiteClient implements PeerStatusPr
             throw new IllegalArgumentException("Specified clusterUrl was: " + config.getUrl(), e);
         }
 
-        SiteToSiteRestApiClient apiClient = new SiteToSiteRestApiClient(config.getSslContext(), config.getHttpProxy());
-        String clusterApiUrl = apiClient.resolveBaseUrl(scheme, clusterUrl.getHost(), siteInfoProvider.getSiteToSiteHttpPort());
+        try (
+            SiteToSiteRestApiClient apiClient = new SiteToSiteRestApiClient(config.getSslContext(), config.getHttpProxy())
+        ) {
+            String clusterApiUrl = apiClient.resolveBaseUrl(scheme, clusterUrl.getHost(), siteInfoProvider.getSiteToSiteHttpPort());
 
-        int timeoutMillis = (int) config.getTimeout(TimeUnit.MILLISECONDS);
-        apiClient.setConnectTimeoutMillis(timeoutMillis);
-        apiClient.setReadTimeoutMillis(timeoutMillis);
-        Collection<PeerDTO> peers = apiClient.getPeers();
-        if(peers == null || peers.size() == 0){
-            throw new IOException("Couldn't get any peer to communicate with. " + clusterApiUrl + " returned zero peers.");
+            int timeoutMillis = (int) config.getTimeout(TimeUnit.MILLISECONDS);
+            apiClient.setConnectTimeoutMillis(timeoutMillis);
+            apiClient.setReadTimeoutMillis(timeoutMillis);
+            Collection<PeerDTO> peers = apiClient.getPeers();
+            if(peers == null || peers.size() == 0){
+                throw new IOException("Couldn't get any peer to communicate with. " + clusterApiUrl + " returned zero peers.");
+            }
+
+            return peers.stream()
+                    .map(p -> new PeerStatus(new PeerDescription(p.getHostname(), p.getPort(), p.isSecure()), p.getFlowFileCount()))
+                    .collect(Collectors.toSet());
         }
-
-        return peers.stream().map(p -> new PeerStatus(new PeerDescription(p.getHostname(), p.getPort(), p.isSecure()), p.getFlowFileCount())).collect(Collectors.toSet());
     }
 
     @Override

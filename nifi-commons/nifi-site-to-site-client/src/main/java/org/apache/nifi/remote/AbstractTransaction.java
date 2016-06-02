@@ -72,6 +72,9 @@ public abstract class AbstractTransaction implements Transaction {
         this.destinationId = destinationId;
     }
 
+    protected void close() throws IOException {
+    }
+
     @Override
     public void send(final byte[] content, final Map<String, String> attributes) throws IOException {
         send(new StandardDataPacket(attributes, new ByteArrayInputStream(content), content.length));
@@ -80,6 +83,14 @@ public abstract class AbstractTransaction implements Transaction {
     @Override
     public void error() {
         this.state = TransactionState.ERROR;
+        try {
+            close();
+        } catch (IOException e) {
+            logger.warn("Failed to close transaction due to {}", e.getMessage());
+            if (logger.isDebugEnabled()) {
+                logger.warn("", e);
+            }
+        }
     }
 
     @Override
@@ -306,6 +317,8 @@ public abstract class AbstractTransaction implements Transaction {
         } catch (final Exception e) {
             error();
             throw e;
+        } finally {
+            close();
         }
     }
 
@@ -321,6 +334,8 @@ public abstract class AbstractTransaction implements Transaction {
         } catch (final IOException ioe) {
             error();
             throw new IOException("Failed to send 'cancel transaction' message to " + peer + " due to " + ioe, ioe);
+        } finally {
+            close();
         }
     }
 
@@ -350,6 +365,7 @@ public abstract class AbstractTransaction implements Transaction {
                 final OutputStream os = peer.getCommunicationsSession().getOutput().getOutputStream();
                 final OutputStream dataOut = compress ? new CompressionOutputStream(os) : os;
                 final OutputStream out = new CheckedOutputStream(dataOut, crc);
+
                 codec.encode(dataPacket, out);
 
                 // need to close the CompressionOutputStream in order to force it write out any remaining bytes.

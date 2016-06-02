@@ -438,6 +438,8 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
                 logger.debug("{} Received null dataPacket indicating the end of transaction from {}", this, peer);
                 break;
             }
+            //TODO: for debugging
+            logger.info("#### Received data packet {}, {}, {}", dataPacket, dataPacket.getAttributes(), dataPacket.getSize());
             FlowFile flowFile = session.create();
             flowFile = session.importFrom(dataPacket.getData(), flowFile);
             flowFile = session.putAllAttributes(flowFile, dataPacket.getAttributes());

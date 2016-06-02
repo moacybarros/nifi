@@ -58,11 +58,14 @@ public class SiteInfoProvider {
     private int readTimeoutMillis;
 
     private ControllerDTO refreshRemoteInfo() throws IOException {
-        final SiteToSiteRestApiClient apiClient = new SiteToSiteRestApiClient(sslContext, proxy);
-        apiClient.resolveBaseUrl(clusterUrl);
-        apiClient.setConnectTimeoutMillis(connectTimeoutMillis);
-        apiClient.setReadTimeoutMillis(readTimeoutMillis);
-        final ControllerDTO controller = apiClient.getController();
+        final ControllerDTO controller;
+
+        try (final SiteToSiteRestApiClient apiClient = new SiteToSiteRestApiClient(sslContext, proxy)) {
+            apiClient.resolveBaseUrl(clusterUrl);
+            apiClient.setConnectTimeoutMillis(connectTimeoutMillis);
+            apiClient.setReadTimeoutMillis(readTimeoutMillis);
+            controller = apiClient.getController();
+        }
 
         remoteInfoWriteLock.lock();
         try {

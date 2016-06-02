@@ -21,6 +21,8 @@ import org.apache.http.Header;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpException;
 import org.apache.http.HttpHost;
+import org.apache.http.HttpInetConnection;
+import org.apache.http.HttpRequest;
 import org.apache.http.HttpResponse;
 import org.apache.http.HttpResponseInterceptor;
 import org.apache.http.StatusLine;
@@ -35,12 +37,19 @@ import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.methods.HttpRequestBase;
 import org.apache.http.conn.ManagedHttpClientConnection;
-import org.apache.http.entity.ContentProducer;
-import org.apache.http.entity.EntityTemplate;
+import org.apache.http.entity.BasicHttpEntity;
 import org.apache.http.impl.client.BasicCredentialsProvider;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClientBuilder;
 import org.apache.http.impl.client.HttpClients;
+import org.apache.http.impl.nio.client.CloseableHttpAsyncClient;
+import org.apache.http.impl.nio.client.HttpAsyncClientBuilder;
+import org.apache.http.impl.nio.client.HttpAsyncClients;
+import org.apache.http.nio.ContentEncoder;
+import org.apache.http.nio.IOControl;
+import org.apache.http.nio.conn.ManagedNHttpClientConnection;
+import org.apache.http.nio.protocol.BasicAsyncResponseConsumer;
+import org.apache.http.nio.protocol.HttpAsyncRequestProducer;
 import org.apache.http.protocol.HttpContext;
 import org.apache.http.protocol.HttpCoreContext;
 import org.apache.http.util.EntityUtils;
@@ -78,16 +87,19 @@ import javax.net.ssl.SSLSession;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
+import java.nio.channels.ReadableByteChannel;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.Collection;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
@@ -95,7 +107,6 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 
 import static org.apache.commons.lang3.StringUtils.isEmpty;
@@ -108,16 +119,16 @@ import static org.apache.nifi.remote.protocol.http.HttpHeaders.LOCATION_HEADER_N
 import static org.apache.nifi.remote.protocol.http.HttpHeaders.LOCATION_URI_INTENT_NAME;
 import static org.apache.nifi.remote.protocol.http.HttpHeaders.LOCATION_URI_INTENT_VALUE;
 
-public class SiteToSiteRestApiClient {
+public class SiteToSiteRestApiClient implements Closeable {
 
-    protected static final int RESPONSE_CODE_OK = 200;
-    protected static final int RESPONSE_CODE_CREATED = 201;
-    protected static final int RESPONSE_CODE_ACCEPTED = 202;
-    protected static final int RESPONSE_CODE_SEE_OTHER = 303;
-    protected static final int RESPONSE_CODE_BAD_REQUEST = 400;
-    protected static final int RESPONSE_CODE_UNAUTHORIZED = 401;
-    protected static final int RESPONSE_CODE_NOT_FOUND = 404;
-    protected static final int RESPONSE_CODE_SERVICE_UNAVAILABLE = 503;
+    private static final int RESPONSE_CODE_OK = 200;
+    private static final int RESPONSE_CODE_CREATED = 201;
+    private static final int RESPONSE_CODE_ACCEPTED = 202;
+    private static final int RESPONSE_CODE_SEE_OTHER = 303;
+    private static final int RESPONSE_CODE_BAD_REQUEST = 400;
+    private static final int RESPONSE_CODE_UNAUTHORIZED = 401;
+    private static final int RESPONSE_CODE_NOT_FOUND = 404;
+    private static final int RESPONSE_CODE_SERVICE_UNAVAILABLE = 503;
 
     private static final Logger logger = LoggerFactory.getLogger(SiteToSiteRestApiClient.class);
 
@@ -125,6 +136,9 @@ public class SiteToSiteRestApiClient {
     protected final SSLContext sslContext;
     protected final HttpProxy proxy;
     private RequestConfig requestConfig;
+    private CredentialsProvider credentialsProvider;
+    private CloseableHttpClient httpClient;
+    private CloseableHttpAsyncClient httpAsyncClient;
 
     private boolean compress = false;
     private int requestExpirationMillis = 0;
@@ -137,13 +151,11 @@ public class SiteToSiteRestApiClient {
     private String trustedPeerDn;
     private final ScheduledExecutorService ttlExtendTaskExecutor;
     private ScheduledFuture<?> ttlExtendingThread;
+    private SiteToSiteRestApiClient extendingApiClient;
 
-    protected int connectTimeoutMillis;
-    protected int readTimeoutMillis;
+    private int connectTimeoutMillis;
+    private int readTimeoutMillis;
     private static final Pattern HTTP_ABS_URL = Pattern.compile("^https?://.+$");
-
-
-    private CloseableHttpClient httpClient;
 
     public SiteToSiteRestApiClient(final SSLContext sslContext, final HttpProxy proxy) {
         this.sslContext = sslContext;
@@ -160,75 +172,125 @@ public class SiteToSiteRestApiClient {
         });
     }
 
-    protected CloseableHttpClient getHttpClient() {
+    @Override
+    public void close() throws IOException {
+        stopExtendingTtl();
+        closeSilently(httpClient);
+        closeSilently(httpAsyncClient);
+    }
+
+    private CloseableHttpClient getHttpClient() {
         if (httpClient == null) {
             setupClient();
         }
         return httpClient;
     }
 
-    protected RequestConfig getRequestConfig() {
+    private CloseableHttpAsyncClient getHttpAsyncClient() {
+        if (httpAsyncClient == null) {
+            setupAsyncClient();
+        }
+        return httpAsyncClient;
+    }
+
+    private RequestConfig getRequestConfig() {
         if (requestConfig == null) {
-            setupClient();
+            setupRequestConfig();
         }
         return requestConfig;
     }
 
-    protected void setupClient() {
+    private CredentialsProvider getCredentialsProvider() {
+        if (credentialsProvider == null) {
+            setupCredentialsProvider();
+        }
+        return credentialsProvider;
+    }
+
+    private void setupRequestConfig() {
         final RequestConfig.Builder requestConfigBuilder = RequestConfig.custom()
                 .setConnectionRequestTimeout(connectTimeoutMillis)
                 .setConnectTimeout(connectTimeoutMillis)
                 .setSocketTimeout(readTimeoutMillis);
 
-        HttpClientBuilder clientBuilder = HttpClients.custom();
-        CredentialsProvider credsProvider = new BasicCredentialsProvider();
         if (proxy != null) {
-            HttpHost proxyHost = proxy.getHttpHost();
-            requestConfigBuilder.setProxy(proxyHost);
+            requestConfigBuilder.setProxy(proxy.getHttpHost());
+        }
 
+        requestConfig = requestConfigBuilder.build();
+    }
+
+    private void setupCredentialsProvider() {
+        credentialsProvider = new BasicCredentialsProvider();
+        if (proxy != null) {
             if (!isEmpty(proxy.getUsername()) && !isEmpty(proxy.getPassword())) {
-                credsProvider.setCredentials(
-                        new AuthScope(proxyHost),
+                credentialsProvider.setCredentials(
+                        new AuthScope(proxy.getHttpHost()),
                         new UsernamePasswordCredentials(proxy.getUsername(), proxy.getPassword()));
             }
 
         }
+    }
+
+    private void setupClient() {
+        final HttpClientBuilder clientBuilder = HttpClients.custom();
 
         if (sslContext != null) {
             clientBuilder.setSslcontext(sslContext);
-            clientBuilder.addInterceptorFirst(new HttpResponseInterceptor() {
-                @Override
-                public void process(final HttpResponse response, final HttpContext httpContext) throws HttpException, IOException {
-                    final HttpCoreContext coreContext = HttpCoreContext.adapt(httpContext);
-                    final ManagedHttpClientConnection conn = coreContext.getConnection(ManagedHttpClientConnection.class);
-                    if (!conn.isOpen()) {
-                        return;
-                    }
-
-                    final SSLSession sslSession = conn.getSSLSession();
-
-                    if (sslSession != null) {
-                        final Certificate[] certChain = sslSession.getPeerCertificates();
-                        if (certChain == null || certChain.length == 0) {
-                            throw new SSLPeerUnverifiedException("No certificates found");
-                        }
-
-                        try {
-                            final X509Certificate cert = CertificateUtils.convertAbstractX509Certificate(certChain[0]);
-                            trustedPeerDn = cert.getSubjectDN().getName().trim();
-                        } catch (CertificateException e) {
-                            final String msg = "Could not extract subject DN from SSL session peer certificate";
-                            logger.warn(msg);
-                            throw new SSLPeerUnverifiedException(msg);
-                        }
-                    }
-                }
-            });
+            clientBuilder.addInterceptorFirst(new HttpsResponseInterceptor());
         }
 
-        requestConfig = requestConfigBuilder.build();
         httpClient = clientBuilder
-                .setDefaultCredentialsProvider(credsProvider).build();
+                .setDefaultCredentialsProvider(getCredentialsProvider()).build();
+    }
+
+    private void setupAsyncClient() {
+        final HttpAsyncClientBuilder clientBuilder = HttpAsyncClients.custom();
+
+        if (sslContext != null) {
+            clientBuilder.setSSLContext(sslContext);
+            clientBuilder.addInterceptorFirst(new HttpsResponseInterceptor());
+        }
+
+        httpAsyncClient = clientBuilder.setDefaultCredentialsProvider(getCredentialsProvider()).build();
+        httpAsyncClient.start();
+    }
+
+    private class HttpsResponseInterceptor implements HttpResponseInterceptor {
+        @Override
+        public void process(final HttpResponse response, final HttpContext httpContext) throws HttpException, IOException {
+            final HttpCoreContext coreContext = HttpCoreContext.adapt(httpContext);
+            final HttpInetConnection conn = coreContext.getConnection(HttpInetConnection.class);
+            if (!conn.isOpen()) {
+                return;
+            }
+
+            final SSLSession sslSession;
+            if (conn instanceof ManagedHttpClientConnection) {
+                sslSession = ((ManagedHttpClientConnection)conn).getSSLSession();
+            } else if (conn instanceof ManagedNHttpClientConnection) {
+                sslSession = ((ManagedNHttpClientConnection)conn).getSSLSession();
+            } else {
+                throw new RuntimeException("Unexpected connection type was used, " + conn);
+            }
+
+
+            if (sslSession != null) {
+                final Certificate[] certChain = sslSession.getPeerCertificates();
+                if (certChain == null || certChain.length == 0) {
+                    throw new SSLPeerUnverifiedException("No certificates found");
+                }
+
+                try {
+                    final X509Certificate cert = CertificateUtils.convertAbstractX509Certificate(certChain[0]);
+                    trustedPeerDn = cert.getSubjectDN().getName().trim();
+                } catch (CertificateException e) {
+                    final String msg = "Could not extract subject DN from SSL session peer certificate";
+                    logger.warn(msg);
+                    throw new SSLPeerUnverifiedException(msg);
+                }
+            }
+        }
     }
 
     public ControllerDTO getController() throws IOException {
@@ -365,8 +427,9 @@ public class SiteToSiteRestApiClient {
         }
     }
 
-    private Future<String> postRequestForSend;
-    private CountDownLatch finishTransferFlowFiles;
+    private Future<HttpResponse> postResult;
+    private CountDownLatch transferDataLatch;
+    private CountDownLatch transferDataFlushedLatch;
     public void openConnectionForSend(String transactionUrl, CommunicationsSession commSession) throws IOException {
 
         HttpPost post = createPost(transactionUrl + "/flow-files");
@@ -377,113 +440,147 @@ public class SiteToSiteRestApiClient {
 
         setHandshakeProperties(post);
 
-        ExecutorService executorService = Executors.newScheduledThreadPool(1, new ThreadFactory() {
-            private final ThreadFactory defaultFactory = Executors.defaultThreadFactory();
+        CountDownLatch initConnectionLatch = new CountDownLatch(1);
+
+        final URI requestUri = post.getURI();
+        final PipedOutputStream outputStream = new PipedOutputStream();
+        final PipedInputStream inputStream = new PipedInputStream(outputStream);
+        final ReadableByteChannel dataPacketChannel = Channels.newChannel(inputStream);
+        final HttpAsyncRequestProducer asyncRequestProducer = new HttpAsyncRequestProducer() {
+
+            private final ByteBuffer buffer = ByteBuffer.allocate(16384);
 
             @Override
-            public Thread newThread(final Runnable r) {
-                final Thread thread = defaultFactory.newThread(r);
-                thread.setName(Thread.currentThread().getName() + " Http Sender");
-                return thread;
+            public HttpHost getTarget() {
+                return new HttpHost(requestUri.getHost(), requestUri.getPort());
             }
-        });
 
-        CountDownLatch initConnectionLatch = new CountDownLatch(1);
-        finishTransferFlowFiles = new CountDownLatch(1);
+            @Override
+            public HttpRequest generateRequest() throws IOException, HttpException {
 
-        postRequestForSend = executorService.submit(() -> {
-            final EntityTemplate entity = new EntityTemplate(new ContentProducer() {
-                @Override
-                public void writeTo(final OutputStream httpOut) throws IOException {
-                    final AtomicLong lastDataSentAt = new AtomicLong(0);
+                // Pass the output stream so that Site-to-Site client thread can send
+                // data packet through this connection.
+                logger.debug("writeTo {} has started...", transactionUrl);
+                ((HttpOutput)commSession.getOutput()).setOutputStream(outputStream);
+                initConnectionLatch.countDown();
 
-                    OutputStream streamCapture = new OutputStream(){
-                        @Override
-                        public void write(int b) throws IOException {
-                            httpOut.write(b);
-                            startExtendingTtl(transactionUrl, httpOut, null);
-                            lastDataSentAt.set(System.currentTimeMillis());
-                        }
+                final BasicHttpEntity entity = new BasicHttpEntity();
+                entity.setChunked(true);
+                entity.setContentType("application/octet-stream");
+                post.setEntity(entity);
+                return post;
+            }
 
-                    };
+            @Override
+            public void produceContent(ContentEncoder encoder, IOControl ioControl) throws IOException {
 
-                    // Pass the output stream so that Site-to-Site client thread can send
-                    // data packet through this connection.
-                    logger.debug("writeTo {} has started...", transactionUrl);
-                    ((HttpOutput)commSession.getOutput()).setOutputStream(streamCapture);
-                    initConnectionLatch.countDown();
+                // read == 0 means the client didn't write additional packet, but didn't call confirm yet.
+//                final AtomicBoolean reading = new AtomicBoolean(true);
+//                final AtomicInteger read = new AtomicInteger(0);
+//                Thread readerThread = new Thread(() -> {
+//                    try {
+//                        read.set(dataPacketChannel.read(buffer));
+//
+//                        while (reading.get() && read.get() == 0) {
+//                            Thread.sleep(100);
+//                            read.set(dataPacketChannel.read(buffer));
+//                        }
+//                    } catch (Exception e) {
+//                        logger.error("Failed to read data packet to send.", e);
+//                    } finally {
+//                        transferDataLatch.countDown();
+//                    }
+//                });
+//                readerThread.start();
+//
+//                try {
+//                    logger.debug("Waiting for data is written to dataPacketChannel, requestExpirationMillis={}", requestExpirationMillis);
+//                    transferDataLatch.await(requestExpirationMillis, TimeUnit.MILLISECONDS);
+//                } catch (InterruptedException e) {
+//                    logger.info("readDataLatch was interrupted, {}", e.getMessage());
+//                }
+//                reading.set(false);
+//
+                int read = dataPacketChannel.read(buffer);
 
-                    try {
-                        while (true) {
-                            logger.debug("Waiting for finishTransferFlowFiles to be called for {} sec...", serverTransactionTtl);
-                            if (!finishTransferFlowFiles.await(serverTransactionTtl, TimeUnit.SECONDS)) {
-                                long elapsedSinceLastDataSent = System.currentTimeMillis() - lastDataSentAt.get();
-                                if (elapsedSinceLastDataSent > TimeUnit.MILLISECONDS.convert(serverTransactionTtl, TimeUnit.SECONDS)) {
-                                    throw new IOException("Awaiting finishTransferFlowFiles has been timeout.");
-                                }
-                            }
-                            return;
-                        }
-                    } catch (InterruptedException e) {
-                        throw new IOException("Awaiting finishTransferFlowFiles has been interrupted.", e);
-                    }
+                logger.debug("Read {} bytes from dataPacketChannel. {}", read, transactionUrl);
 
+                if (read <= 0) {
+                    logger.debug("writeTo {} has reached to its end.", transactionUrl);
+                    encoder.complete();
+                    dataPacketChannel.close();
+                    return;
                 }
-            }) {
-                @Override
-                public boolean isStreaming() {
-                    return true;
-                }
-            };
 
+                buffer.flip();
+                encoder.write(buffer);
+            }
 
-            post.setEntity(entity);
-
-            try (CloseableHttpResponse response = getHttpClient().execute(post)) {
-
-                int responseCode = response.getStatusLine().getStatusCode();
-
-                switch (responseCode) {
-                    case RESPONSE_CODE_ACCEPTED :
-                        String receivedChecksum = EntityUtils.toString(response.getEntity());
-                        ((HttpInput)commSession.getInput()).setInputStream(new ByteArrayInputStream(receivedChecksum.getBytes()));
-                        ((HttpCommunicationsSession)commSession).setChecksum(receivedChecksum);
-                        logger.debug("receivedChecksum={}", receivedChecksum);
-                        return receivedChecksum;
-
-                    default:
-                        try (InputStream content = response.getEntity().getContent()) {
-                            throw handleErrResponse(responseCode, content);
-                        }
+            @Override
+            public void requestCompleted(HttpContext context) {
+                try {
+                    logger.debug("requestCompleted(), closing dataPacketChannel.");
+                    dataPacketChannel.close();
+                } catch (IOException e) {
+                    logger.warn("An exception occurred while closing dataPacketChannel.", e);
                 }
             }
 
-        });
+            @Override
+            public void failed(Exception ex) {
+                logger.error("Sending data to {} has failed", transactionUrl, ex);
+            }
+
+            @Override
+            public boolean isRepeatable() {
+                // TODO: In order to pass authentication, request has to repeatable.??
+                return true;
+            }
+
+            @Override
+            public void resetRequest() throws IOException {
+            }
+
+            @Override
+            public void close() throws IOException {
+                logger.debug("close(), closing dataPacketChannel.");
+                dataPacketChannel.close();
+                stopExtendingTtl();
+            }
+        };
+
+        postResult = getHttpAsyncClient().execute(asyncRequestProducer, new BasicAsyncResponseConsumer(), null);
 
         try {
+            // Need to wait the post request actually started so that we can write to its output stream.
             if (!initConnectionLatch.await(connectTimeoutMillis, TimeUnit.MILLISECONDS)) {
                 throw new IOException("Awaiting initConnectionLatch has been timeout.");
             }
+
+            // Started.
+            transferDataLatch = new CountDownLatch(1);
+            startExtendingTtl(transactionUrl, dataPacketChannel, null);
+
         } catch (InterruptedException e) {
             throw new IOException("Awaiting initConnectionLatch has been interrupted.", e);
         }
 
-        executorService.shutdown();
     }
 
     public void finishTransferFlowFiles(CommunicationsSession commSession) throws IOException {
 
+        if (postResult == null) {
+            new IllegalStateException("Data transfer has not started yet.");
+        }
+
+//        transferDataLatch.countDown();
         commSession.getOutput().getOutputStream().flush();
 
         stopExtendingTtl();
 
-        if (postRequestForSend == null) {
-            new IllegalStateException("Data transfer has not started yet.");
-        }
-
+        final HttpResponse response;
         try {
-            finishTransferFlowFiles.countDown();
-            postRequestForSend.get(readTimeoutMillis, TimeUnit.MILLISECONDS);
+            response = postResult.get(readTimeoutMillis, TimeUnit.MILLISECONDS);
         } catch (ExecutionException e) {
             logger.debug("Something has happened at sending thread. {}", e.getMessage());
             Throwable cause = e.getCause();
@@ -496,6 +593,20 @@ public class SiteToSiteRestApiClient {
             throw new IOException(e);
         }
 
+        int responseCode = response.getStatusLine().getStatusCode();
+        switch (responseCode) {
+            case RESPONSE_CODE_ACCEPTED :
+                String receivedChecksum = EntityUtils.toString(response.getEntity());
+                ((HttpInput)commSession.getInput()).setInputStream(new ByteArrayInputStream(receivedChecksum.getBytes()));
+                ((HttpCommunicationsSession)commSession).setChecksum(receivedChecksum);
+                logger.debug("receivedChecksum={}", receivedChecksum);
+                break;
+
+            default:
+                try (InputStream content = response.getEntity().getContent()) {
+                    throw handleErrResponse(responseCode, content);
+                }
+        }
     }
 
 
@@ -507,31 +618,22 @@ public class SiteToSiteRestApiClient {
             return;
         }
         logger.debug("Starting extending TTL thread...");
-        final SiteToSiteRestApiClient extendingApi = new SiteToSiteRestApiClient(sslContext, proxy);
-        extendingApi.transportProtocolVersionNegotiator = this.transportProtocolVersionNegotiator;
-        extendingApi.connectTimeoutMillis = this.connectTimeoutMillis;
-        extendingApi.readTimeoutMillis = this.readTimeoutMillis;
+        extendingApiClient = new SiteToSiteRestApiClient(sslContext, proxy);
+        extendingApiClient.transportProtocolVersionNegotiator = this.transportProtocolVersionNegotiator;
+        extendingApiClient.connectTimeoutMillis = this.connectTimeoutMillis;
+        extendingApiClient.readTimeoutMillis = this.readTimeoutMillis;
         int extendFrequency = serverTransactionTtl / 2;
         ttlExtendingThread = ttlExtendTaskExecutor.scheduleWithFixedDelay(() -> {
             try {
-                extendingApi.extendTransaction(transactionUrl);
+                extendingApiClient.extendTransaction(transactionUrl);
             } catch (Exception e) {
-                logger.warn("Got an exception while extending transaction ttl", e);
+                logger.warn("Failed to extend transaction ttl", e);
                 try {
-                    stopExtendingTtl();
-                } finally {
                     // Without disconnecting, Site-to-Site client keep reading data packet,
                     // while server has already rollback.
-                    try {
-                        closeSilently(stream);
-                    } catch (Exception es) {
-                        logger.warn("Got an exception while closing stream", es);
-                    }
-                    try {
-                        closeSilently(response);
-                    } catch (Exception er) {
-                        logger.warn("Got an exception while closing response", er);
-                    }
+                    this.close();
+                } catch (IOException ec) {
+                    logger.warn("Failed to close", e);
                 }
             }
         }, extendFrequency, extendFrequency, TimeUnit.SECONDS);
@@ -539,7 +641,9 @@ public class SiteToSiteRestApiClient {
 
     private void closeSilently(final Closeable closeable) {
         try {
-            closeable.close();
+            if (closeable != null) {
+                closeable.close();
+            }
         } catch (IOException e) {
             logger.warn("Got an exception during closing {}: {}", closeable, e.getMessage());
             if (logger.isDebugEnabled()) {
@@ -576,14 +680,16 @@ public class SiteToSiteRestApiClient {
     }
 
     private void stopExtendingTtl() {
+        if (!ttlExtendTaskExecutor.isShutdown()) {
+            ttlExtendTaskExecutor.shutdown();
+        }
+
         if (ttlExtendingThread != null && !ttlExtendingThread.isCancelled()) {
             logger.debug("Cancelling extending ttl...");
             ttlExtendingThread.cancel(true);
         }
 
-        if (!ttlExtendTaskExecutor.isShutdown()) {
-            ttlExtendTaskExecutor.shutdown();
-        }
+        closeSilently(extendingApiClient);
     }
 
     private IOException handleErrResponse(final int responseCode, final InputStream in) throws IOException {
