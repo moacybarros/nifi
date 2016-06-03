@@ -22,6 +22,7 @@ import org.apache.nifi.remote.AbstractTransaction;
 import org.apache.nifi.remote.Peer;
 import org.apache.nifi.remote.TransferDirection;
 import org.apache.nifi.remote.codec.StandardFlowFileCodec;
+import org.apache.nifi.remote.codec.StandardFlowFileCodecN;
 import org.apache.nifi.remote.io.http.HttpCommunicationsSession;
 import org.apache.nifi.remote.protocol.Response;
 import org.apache.nifi.remote.protocol.ResponseCode;
@@ -41,7 +42,7 @@ public class HttpClientTransaction extends AbstractTransaction {
 
     public HttpClientTransaction(final int protocolVersion, final Peer peer, TransferDirection direction,
                                  final boolean useCompression, final String portId, int penaltyMillis, EventReporter eventReporter) throws IOException {
-        super(peer, direction, useCompression, new StandardFlowFileCodec(), eventReporter, protocolVersion, penaltyMillis, portId);
+        super(peer, direction, useCompression, new StandardFlowFileCodecN(), eventReporter, protocolVersion, penaltyMillis, portId);
     }
 
     public void initialize(SiteToSiteRestApiClient apiUtil, String transactionUrl) throws IOException {

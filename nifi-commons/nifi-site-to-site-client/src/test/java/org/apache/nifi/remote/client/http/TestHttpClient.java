@@ -556,14 +556,17 @@ public class TestHttpClient {
 
             assertNotNull(transaction);
 
-            DataPacket packet = new DataPacketBuilder()
-                .contents("Example contents from client.")
-                .attr("Client attr 1", "Client attr 1 value")
-                .attr("Client attr 2", "Client attr 2 value")
-                .build();
-            serverChecksum = "1345413116";
+            for(int i = 0; i < 2; i++) {
+                DataPacket packet = new DataPacketBuilder()
+                        .contents("Example contents from client.")
+                        .attr("Client attr 1", "Client attr 1 value")
+                        .attr("Client attr 2", "Client attr 2 value")
+                        .build();
+                serverChecksum = "1345413116";
 
-            transaction.send(packet);
+                transaction.send(packet);
+//                Thread.sleep(3_000);
+            }
             transaction.confirm();
             transaction.complete();
         }
@@ -629,11 +632,18 @@ public class TestHttpClient {
                     .attr("Client attr 2", "Client attr 2 value")
                     .build();
 
-            for(int i = 0; i < 1000000; i++) {
-                transaction.send(packet);
-                if (i % 1000 == 0) {
-                    logger.info("Sent {} packets...", i);
+
+            try {
+                for(int i = 0; i < 1000000; i++) {
+                    transaction.send(packet);
+                    if (i % 1000 == 0) {
+                        logger.info("Sent {} packets...", i);
+                    }
                 }
+                fail();
+            } catch (IOException e) {
+                logger.info("An exception was thrown as expected.", e);
+                assertTrue(e.getMessage().contains("TimeoutException"));
             }
 
 
@@ -641,10 +651,11 @@ public class TestHttpClient {
             try {
                 transaction.confirm();
                 fail();
-            } catch (IOException e) {
+            } catch (IllegalStateException e) {
                 logger.info("An exception was thrown as expected.", e);
-                assertTrue(e.getMessage().contains("TimeoutException"));
             }
+
+            Thread.sleep(10_000);
         }
 
     }

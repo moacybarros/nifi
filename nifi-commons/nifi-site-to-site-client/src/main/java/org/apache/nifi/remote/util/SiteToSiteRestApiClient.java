@@ -539,7 +539,9 @@ public class SiteToSiteRestApiClient {
 
     private void closeSilently(final Closeable closeable) {
         try {
-            closeable.close();
+            if (closeable != null) {
+                closeable.close();
+            }
         } catch (IOException e) {
             logger.warn("Got an exception during closing {}: {}", closeable, e.getMessage());
             if (logger.isDebugEnabled()) {
