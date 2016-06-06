@@ -34,7 +34,6 @@ import org.apache.nifi.remote.exception.HandshakeException;
 import org.apache.nifi.remote.exception.ProtocolException;
 import org.apache.nifi.remote.io.CompressionInputStream;
 import org.apache.nifi.remote.io.CompressionOutputStream;
-import org.apache.nifi.remote.protocol.socket.HandshakeProperty;
 import org.apache.nifi.remote.util.StandardDataPacket;
 import org.apache.nifi.util.FormatUtils;
 import org.apache.nifi.util.StopWatch;
@@ -73,7 +72,7 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
     @Override
     public void setRootProcessGroup(final ProcessGroup group) {
         if (!group.isRootGroup()) {
-            throw new IllegalArgumentException();
+            throw new IllegalArgumentException("Specified group was not a root group.");
         }
         this.rootGroup = group;
     }
@@ -438,8 +437,6 @@ public abstract class AbstractFlowFileServerProtocol implements ServerProtocol {
                 logger.debug("{} Received null dataPacket indicating the end of transaction from {}", this, peer);
                 break;
             }
-            //TODO: for debugging
-            logger.info("#### Received data packet {}, {}, {}", dataPacket, dataPacket.getAttributes(), dataPacket.getSize());
             FlowFile flowFile = session.create();
             flowFile = session.importFrom(dataPacket.getData(), flowFile);
             flowFile = session.putAllAttributes(flowFile, dataPacket.getAttributes());

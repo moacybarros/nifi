@@ -43,7 +43,7 @@ import org.apache.nifi.remote.io.http.HttpOutput;
 import org.apache.nifi.remote.io.http.HttpServerCommunicationsSession;
 import org.apache.nifi.remote.protocol.http.HttpFlowFileServerProtocol;
 import org.apache.nifi.remote.protocol.http.HttpHeaders;
-import org.apache.nifi.remote.protocol.socket.HandshakeProperty;
+import org.apache.nifi.remote.protocol.HandshakeProperty;
 import org.apache.nifi.remote.protocol.ResponseCode;
 import org.apache.nifi.stream.io.ByteArrayOutputStream;
 import org.apache.nifi.util.NiFiProperties;
@@ -93,10 +93,10 @@ import static org.apache.nifi.remote.protocol.http.HttpHeaders.HANDSHAKE_PROPERT
 import static org.apache.nifi.remote.protocol.http.HttpHeaders.HANDSHAKE_PROPERTY_REQUEST_EXPIRATION;
 import static org.apache.nifi.remote.protocol.http.HttpHeaders.LOCATION_URI_INTENT_NAME;
 import static org.apache.nifi.remote.protocol.http.HttpHeaders.LOCATION_URI_INTENT_VALUE;
-import static org.apache.nifi.remote.protocol.socket.HandshakeProperty.BATCH_COUNT;
-import static org.apache.nifi.remote.protocol.socket.HandshakeProperty.BATCH_DURATION;
-import static org.apache.nifi.remote.protocol.socket.HandshakeProperty.BATCH_SIZE;
-import static org.apache.nifi.remote.protocol.socket.HandshakeProperty.REQUEST_EXPIRATION_MILLIS;
+import static org.apache.nifi.remote.protocol.HandshakeProperty.BATCH_COUNT;
+import static org.apache.nifi.remote.protocol.HandshakeProperty.BATCH_DURATION;
+import static org.apache.nifi.remote.protocol.HandshakeProperty.BATCH_SIZE;
+import static org.apache.nifi.remote.protocol.HandshakeProperty.REQUEST_EXPIRATION_MILLIS;
 
 /**
  * RESTful endpoint for managing a SiteToSite connection.

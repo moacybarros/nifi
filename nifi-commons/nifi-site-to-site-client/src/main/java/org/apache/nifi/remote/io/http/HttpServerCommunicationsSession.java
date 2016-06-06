@@ -17,7 +17,7 @@
 package org.apache.nifi.remote.io.http;
 
 import org.apache.nifi.remote.Transaction;
-import org.apache.nifi.remote.protocol.socket.HandshakeProperty;
+import org.apache.nifi.remote.protocol.HandshakeProperty;
 import org.apache.nifi.remote.protocol.ResponseCode;
 
 import java.io.InputStream;
