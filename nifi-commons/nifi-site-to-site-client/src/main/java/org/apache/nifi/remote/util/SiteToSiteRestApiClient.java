@@ -36,6 +36,7 @@ import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.methods.HttpRequestBase;
+import org.apache.http.client.utils.URIUtils;
 import org.apache.http.conn.ManagedHttpClientConnection;
 import org.apache.http.entity.BasicHttpEntity;
 import org.apache.http.impl.client.BasicCredentialsProvider;
@@ -107,6 +108,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
 import static org.apache.commons.lang3.StringUtils.isEmpty;
@@ -141,7 +143,7 @@ public class SiteToSiteRestApiClient implements Closeable {
     private CloseableHttpAsyncClient httpAsyncClient;
 
     private boolean compress = false;
-    private int requestExpirationMillis = 0;
+    private long requestExpirationMillis = 0;
     private int serverTransactionTtl = 0;
     private int batchCount = 0;
     private long batchSize = 0;
@@ -427,12 +429,14 @@ public class SiteToSiteRestApiClient implements Closeable {
         }
     }
 
+    private final int DATA_PACKET_CHANNEL_READ_BUFFER_SIZE = 16384;
     private Future<HttpResponse> postResult;
-    private CountDownLatch transferDataLatch;
-    private CountDownLatch transferDataFlushedLatch;
+    private CountDownLatch transferDataLatch = new CountDownLatch(1);
+    private AtomicBoolean transferringData = new AtomicBoolean(true);
     public void openConnectionForSend(String transactionUrl, CommunicationsSession commSession) throws IOException {
 
-        HttpPost post = createPost(transactionUrl + "/flow-files");
+        final String flowFilesPath = transactionUrl + "/flow-files";
+        HttpPost post = createPost(flowFilesPath);
 
         post.setHeader("Content-Type", "application/octet-stream");
         post.setHeader("Accept", "text/plain");
@@ -448,11 +452,11 @@ public class SiteToSiteRestApiClient implements Closeable {
         final ReadableByteChannel dataPacketChannel = Channels.newChannel(inputStream);
         final HttpAsyncRequestProducer asyncRequestProducer = new HttpAsyncRequestProducer() {
 
-            private final ByteBuffer buffer = ByteBuffer.allocate(16384);
+            private final ByteBuffer buffer = ByteBuffer.allocate(DATA_PACKET_CHANNEL_READ_BUFFER_SIZE);
 
             @Override
             public HttpHost getTarget() {
-                return new HttpHost(requestUri.getHost(), requestUri.getPort());
+                return URIUtils.extractHost(requestUri);
             }
 
             @Override
@@ -460,7 +464,7 @@ public class SiteToSiteRestApiClient implements Closeable {
 
                 // Pass the output stream so that Site-to-Site client thread can send
                 // data packet through this connection.
-                logger.debug("writeTo {} has started...", transactionUrl);
+                logger.debug("writeTo {} has started...", flowFilesPath);
                 ((HttpOutput)commSession.getOutput()).setOutputStream(outputStream);
                 initConnectionLatch.countDown();
 
@@ -474,39 +478,27 @@ public class SiteToSiteRestApiClient implements Closeable {
             @Override
             public void produceContent(ContentEncoder encoder, IOControl ioControl) throws IOException {
 
-                // read == 0 means the client didn't write additional packet, but didn't call confirm yet.
-//                final AtomicBoolean reading = new AtomicBoolean(true);
-//                final AtomicInteger read = new AtomicInteger(0);
-//                Thread readerThread = new Thread(() -> {
-//                    try {
-//                        read.set(dataPacketChannel.read(buffer));
-//
-//                        while (reading.get() && read.get() == 0) {
-//                            Thread.sleep(100);
-//                            read.set(dataPacketChannel.read(buffer));
-//                        }
-//                    } catch (Exception e) {
-//                        logger.error("Failed to read data packet to send.", e);
-//                    } finally {
-//                        transferDataLatch.countDown();
-//                    }
-//                });
-//                readerThread.start();
-//
-//                try {
-//                    logger.debug("Waiting for data is written to dataPacketChannel, requestExpirationMillis={}", requestExpirationMillis);
-//                    transferDataLatch.await(requestExpirationMillis, TimeUnit.MILLISECONDS);
-//                } catch (InterruptedException e) {
-//                    logger.info("readDataLatch was interrupted, {}", e.getMessage());
-//                }
-//                reading.set(false);
-//
                 int read = dataPacketChannel.read(buffer);
 
-                logger.debug("Read {} bytes from dataPacketChannel. {}", read, transactionUrl);
+                // read == 0 means the client didn't write additional packet, but didn't call confirm either yet.
+                // Wait until one of those event happens.
+                long started = System.currentTimeMillis();
+                while (read == 0 && transferringData.get()) {
+                    final long elapsed = System.currentTimeMillis() - started;
+                    if (elapsed > requestExpirationMillis) {
+                        final String msg = "Didn't received additional packet to send, nor confirm transaction call for " + elapsed + " millis";
+                        logger.warn(msg + " which exceeds idle connection expiration millis({})." +
+                                " This transaction will timeout.", requestExpirationMillis);
+                        throw new IOException(msg);
+                    }
+                    read = dataPacketChannel.read(buffer);
+                }
+
+                logger.debug("Read {} bytes from dataPacketChannel. {}", read, flowFilesPath);
 
                 if (read <= 0) {
-                    logger.debug("writeTo {} has reached to its end.", transactionUrl);
+                    logger.debug("writeTo {} has reached to its end.", flowFilesPath);
+                    transferDataLatch.countDown();
                     encoder.complete();
                     dataPacketChannel.close();
                     return;
@@ -518,32 +510,27 @@ public class SiteToSiteRestApiClient implements Closeable {
 
             @Override
             public void requestCompleted(HttpContext context) {
-                try {
-                    logger.debug("requestCompleted(), closing dataPacketChannel.");
-                    dataPacketChannel.close();
-                } catch (IOException e) {
-                    logger.warn("An exception occurred while closing dataPacketChannel.", e);
-                }
             }
 
             @Override
             public void failed(Exception ex) {
-                logger.error("Sending data to {} has failed", transactionUrl, ex);
+                logger.error("Sending data to {} has failed", flowFilesPath, ex);
             }
 
             @Override
             public boolean isRepeatable() {
-                // TODO: In order to pass authentication, request has to repeatable.??
+                // In order to pass authentication, request has to be repeatable.
                 return true;
             }
 
             @Override
             public void resetRequest() throws IOException {
+                logger.debug("Request has been reset...");
             }
 
             @Override
             public void close() throws IOException {
-                logger.debug("close(), closing dataPacketChannel.");
+                logger.debug("close(), closing dataPacketChannel. {}", flowFilesPath);
                 dataPacketChannel.close();
                 stopExtendingTtl();
             }
@@ -573,7 +560,17 @@ public class SiteToSiteRestApiClient implements Closeable {
             new IllegalStateException("Data transfer has not started yet.");
         }
 
-//        transferDataLatch.countDown();
+        // No more data can be sent.
+        transferringData.set(false);
+
+        try {
+            if (!transferDataLatch.await(requestExpirationMillis, TimeUnit.MILLISECONDS)) {
+                throw new IOException("Awaiting transferDataLatch has been timeout.");
+            }
+        } catch (InterruptedException e) {
+            throw new IOException("Awaiting transferDataLatch has been interrupted.", e);
+        }
+
         commSession.getOutput().getOutputStream().flush();
 
         stopExtendingTtl();
@@ -608,9 +605,6 @@ public class SiteToSiteRestApiClient implements Closeable {
                 }
         }
     }
-
-
-
 
     private void startExtendingTtl(final String transactionUrl, final Closeable stream, final CloseableHttpResponse response) {
         if (ttlExtendingThread != null) {
@@ -893,7 +887,7 @@ public class SiteToSiteRestApiClient implements Closeable {
         this.compress = compress;
     }
 
-    public void setRequestExpirationMillis(int requestExpirationMillis) {
+    public void setRequestExpirationMillis(long requestExpirationMillis) {
         if(requestExpirationMillis < 0) throw new IllegalArgumentException("requestExpirationMillis can't be a negative value.");
         this.requestExpirationMillis = requestExpirationMillis;
     }

@@ -238,6 +238,8 @@ public class TestHttpClient {
             setCommonResponseHeaders(resp, reqProtocolVersion);
 
             writeOutgoingPacket(resp);
+            writeOutgoingPacket(resp);
+            writeOutgoingPacket(resp);
         }
     }
 
@@ -274,13 +276,6 @@ public class TestHttpClient {
 
             sleepUntilTestCaseFinish();
 
-            DataPacket dataPacket;
-            while ((dataPacket = readIncomingPacket(req)) != null) {
-                consumeDataPacket(dataPacket);
-            }
-
-            assertNotNull("Test case should set <serverChecksum> depending on the test scenario.", serverChecksum);
-            respondWithText(resp, serverChecksum, HttpServletResponse.SC_ACCEPTED);
         }
 
         @Override
@@ -295,8 +290,6 @@ public class TestHttpClient {
             writeOutgoingPacket(resp);
 
             sleepUntilTestCaseFinish();
-
-            writeOutgoingPacket(resp);
         }
     }
 
@@ -601,15 +594,111 @@ public class TestHttpClient {
                 transaction.send(packet);
                 long written = ((Peer)transaction.getCommunicant()).getCommunicationsSession().getBytesWritten();
                 logger.info("{} bytes have been written.", written);
-//                Thread.sleep(1_000);
             }
 
             transaction.confirm();
 
-
             transaction.complete();
         }
 
+    }
+
+    @Test
+    public void testSendSlowClientSuccess() throws Exception {
+
+        final URI uri = server.getURI();
+
+        logger.info("uri={}", uri);
+        try (
+                SiteToSiteClient client = getDefaultBuilder()
+                        .idleExpiration(1000, TimeUnit.MILLISECONDS)
+                        .portName("input-running")
+                        .build()
+        ) {
+            final Transaction transaction = client.createTransaction(TransferDirection.SEND);
+
+            assertNotNull(transaction);
+
+            serverChecksum = "3882825556";
+
+
+            for (int i = 0; i < 3; i++) {
+                DataPacket packet = new DataPacketBuilder()
+                        .contents("Example contents from client.")
+                        .attr("Client attr 1", "Client attr 1 value")
+                        .attr("Client attr 2", "Client attr 2 value")
+                        .build();
+                transaction.send(packet);
+                long written = ((Peer)transaction.getCommunicant()).getCommunicationsSession().getBytesWritten();
+                logger.info("{} bytes have been written.", written);
+                Thread.sleep(50);
+            }
+
+            transaction.confirm();
+            transaction.complete();
+        }
+
+    }
+
+    @Test
+    public void testSendSlowClientTimeout() throws Exception {
+
+        final URI uri = server.getURI();
+
+        logger.info("uri={}", uri);
+        try (
+                SiteToSiteClient client = getDefaultBuilder()
+                        .idleExpiration(10, TimeUnit.MILLISECONDS)
+                        .portName("input-running")
+                        .build()
+        ) {
+            final Transaction transaction = client.createTransaction(TransferDirection.SEND);
+
+            assertNotNull(transaction);
+
+            serverChecksum = "3882825556";
+
+
+            try {
+                for (int i = 0; i < 3; i++) {
+                    DataPacket packet = new DataPacketBuilder()
+                            .contents("Example contents from client.")
+                            .attr("Client attr 1", "Client attr 1 value")
+                            .attr("Client attr 2", "Client attr 2 value")
+                            .build();
+                    transaction.send(packet);
+                    long written = ((Peer)transaction.getCommunicant()).getCommunicationsSession().getBytesWritten();
+                    logger.info("{} bytes have been written.", written);
+                    Thread.sleep(50);
+                }
+                fail("Transaction should timeout when its client doesn't process fast enough.");
+            } catch (IOException e) {
+                logger.info("An exception was thrown as expected.", e);
+                assertTrue(e.getMessage().contains("Pipe closed"));
+            }
+
+            confirmShouldFail(transaction);
+            completeShouldFail(transaction);
+        }
+
+    }
+
+    private void completeShouldFail(Transaction transaction) throws IOException {
+        try {
+            transaction.complete();
+            fail("Complete operation should fail since transaction has already failed.");
+        } catch (IllegalStateException e) {
+            logger.info("An exception was thrown as expected.", e);
+        }
+    }
+
+    private void confirmShouldFail(Transaction transaction) throws IOException {
+        try {
+            transaction.confirm();
+            fail("Confirm operation should fail since transaction has already failed.");
+        } catch (IllegalStateException e) {
+            logger.info("An exception was thrown as expected.", e);
+        }
     }
 
     @Test
@@ -643,6 +732,8 @@ public class TestHttpClient {
                 logger.info("An exception was thrown as expected.", e);
                 assertTrue(e.getMessage().contains("TimeoutException"));
             }
+
+            completeShouldFail(transaction);
         }
 
     }
@@ -657,7 +748,8 @@ public class TestHttpClient {
         logger.info("uri={}", uri);
         try (
                 SiteToSiteClient client = getDefaultBuilder()
-                        .timeout(1, TimeUnit.SECONDS)
+                        .idleExpiration(500, TimeUnit.MILLISECONDS)
+                        .timeout(500, TimeUnit.MILLISECONDS)
                         .portName("input-timeout-data-ex")
                         .build()
         ) {
@@ -685,12 +777,8 @@ public class TestHttpClient {
             }
 
             serverChecksum = "1345413116";
-            try {
-                transaction.confirm();
-                fail("Confirm operation should fail since sending has failed.");
-            } catch (IllegalStateException e) {
-                logger.info("An exception was thrown as expected.", e);
-            }
+            confirmShouldFail(transaction);
+            completeShouldFail(transaction);
         }
 
     }
@@ -731,6 +819,31 @@ public class TestHttpClient {
             DataPacket packet;
             while ((packet = transaction.receive()) != null) {
                 consumeDataPacket(packet);
+            }
+            transaction.confirm();
+            transaction.complete();
+        }
+    }
+
+    @Test
+    public void testReceiveSlowClientSuccess() throws Exception {
+
+        final URI uri = server.getURI();
+
+        logger.info("uri={}", uri);
+        try (
+                SiteToSiteClient client = getDefaultBuilder()
+                        .portName("output-running")
+                        .build()
+        ) {
+            final Transaction transaction = client.createTransaction(TransferDirection.RECEIVE);
+
+            assertNotNull(transaction);
+
+            DataPacket packet;
+            while ((packet = transaction.receive()) != null) {
+                consumeDataPacket(packet);
+                Thread.sleep(500);
             }
             transaction.confirm();
             transaction.complete();
@@ -786,6 +899,8 @@ public class TestHttpClient {
                 assertTrue(e.getCause() instanceof SocketTimeoutException);
             }
 
+            confirmShouldFail(transaction);
+            completeShouldFail(transaction);
         }
     }
 

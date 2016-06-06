@@ -148,7 +148,7 @@ public class HttpClient extends AbstractSiteToSiteClient implements PeerStatusPr
             apiClient.setReadTimeoutMillis(timeoutMillis);
 
             apiClient.setCompress(config.isUseCompression());
-            apiClient.setRequestExpirationMillis(timeoutMillis);
+            apiClient.setRequestExpirationMillis(config.getIdleConnectionExpiration(TimeUnit.MILLISECONDS));
             apiClient.setBatchCount(config.getPreferredBatchCount());
             apiClient.setBatchSize(config.getPreferredBatchSize());
             apiClient.setBatchDurationMillis(config.getPreferredBatchDuration(TimeUnit.MILLISECONDS));
