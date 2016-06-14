@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package org.apache.nifi.controller.state;
+package org.apache.nifi.components.state;
 
 import java.util.Collections;
 import java.util.Map;

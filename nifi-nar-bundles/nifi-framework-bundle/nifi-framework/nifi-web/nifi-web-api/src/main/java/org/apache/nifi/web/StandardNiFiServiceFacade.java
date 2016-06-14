@@ -1979,10 +1979,11 @@ public class StandardNiFiServiceFacade implements NiFiServiceFacade {
             public ComponentStateDTO withRevision(Revision revision) {
                 final StateMap clusterState = isClustered() ? processorDAO.getState(processorId, Scope.CLUSTER) : null;
                 final StateMap localState = processorDAO.getState(processorId, Scope.LOCAL);
+                final StateMap externalState = processorDAO.getState(processorId, Scope.EXTERNAL);
 
                 // processor will be non null as it was already found when getting the state
                 final ProcessorNode processor = processorDAO.getProcessor(processorId);
-                return dtoFactory.createComponentStateDTO(processorId, processor.getProcessor().getClass(), localState, clusterState);
+                return dtoFactory.createComponentStateDTO(processor.getProcessor(), localState, clusterState, externalState);
             }
         });
     }
@@ -1994,10 +1995,12 @@ public class StandardNiFiServiceFacade implements NiFiServiceFacade {
             public ComponentStateDTO withRevision(Revision revision) {
                 final StateMap clusterState = isClustered() ? controllerServiceDAO.getState(controllerServiceId, Scope.CLUSTER) : null;
                 final StateMap localState = controllerServiceDAO.getState(controllerServiceId, Scope.LOCAL);
+                final StateMap externalState = controllerServiceDAO.getState(controllerServiceId, Scope.EXTERNAL);
 
                 // controller service will be non null as it was already found when getting the state
                 final ControllerServiceNode controllerService = controllerServiceDAO.getControllerService(controllerServiceId);
-                return dtoFactory.createComponentStateDTO(controllerServiceId, controllerService.getControllerServiceImplementation().getClass(), localState, clusterState);
+                return dtoFactory.createComponentStateDTO(controllerService.getControllerServiceImplementation(),
+                        localState, clusterState, externalState);
             }
         });
     }
@@ -2009,10 +2012,11 @@ public class StandardNiFiServiceFacade implements NiFiServiceFacade {
             public ComponentStateDTO withRevision(Revision revision) {
                 final StateMap clusterState = isClustered() ? reportingTaskDAO.getState(reportingTaskId, Scope.CLUSTER) : null;
                 final StateMap localState = reportingTaskDAO.getState(reportingTaskId, Scope.LOCAL);
+                final StateMap externalState = reportingTaskDAO.getState(reportingTaskId, Scope.EXTERNAL);
 
                 // reporting task will be non null as it was already found when getting the state
                 final ReportingTaskNode reportingTask = reportingTaskDAO.getReportingTask(reportingTaskId);
-                return dtoFactory.createComponentStateDTO(reportingTaskId, reportingTask.getReportingTask().getClass(), localState, clusterState);
+                return dtoFactory.createComponentStateDTO(reportingTask.getReportingTask(), localState, clusterState, externalState);
             }
         });
     }

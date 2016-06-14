@@ -316,19 +316,31 @@ abstract class AbstractKafkaProcessor<T extends Closeable> extends AbstractSessi
      * Builds Kafka {@link Properties}
      */
     Properties buildKafkaProperties(ProcessContext context) {
-        Properties properties = new Properties();
+        Properties properties = getDefaultKafkaProperties();
         for (PropertyDescriptor propertyDescriptor : context.getProperties().keySet()) {
             String pName = propertyDescriptor.getName();
             String pValue = propertyDescriptor.isExpressionLanguageSupported()
                     ? context.getProperty(propertyDescriptor).evaluateAttributeExpressions().getValue()
                     : context.getProperty(propertyDescriptor).getValue();
-            if (pValue != null) {
-                if (pName.endsWith(".ms")) { // kafka standard time notation
-                    pValue = String.valueOf(FormatUtils.getTimeDuration(pValue.trim(), TimeUnit.MILLISECONDS));
-                }
-                properties.setProperty(pName, pValue);
-            }
+            setKafkaProperty(properties, pName, pValue);
         }
         return properties;
+    }
+
+    /**
+     * Returns new Properties instance with default values.
+     * Subclasses can override this method to define default Kafka property values.
+     */
+    protected Properties getDefaultKafkaProperties() {
+        return new Properties();
+    }
+
+    protected void setKafkaProperty(Properties properties, String pName, String pValue) {
+        if (pValue != null) {
+            if (pName.endsWith(".ms")) { // kafka standard time notation
+                pValue = String.valueOf(FormatUtils.getTimeDuration(pValue.trim(), TimeUnit.MILLISECONDS));
+            }
+            properties.setProperty(pName, pValue);
+        }
     }
 }

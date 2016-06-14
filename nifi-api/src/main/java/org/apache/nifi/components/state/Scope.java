@@ -32,7 +32,13 @@ public enum Scope {
      * State is to be treated local to the node. I.e., the same component will have different state on each
      * node in the cluster.
      */
-    LOCAL;
+    LOCAL,
+
+    /**
+     * State is to be treated as "global" across the cluster. I.e., the same component on all nodes will
+     * have access to the same state stored in an external system the component interact with.
+     */
+    EXTERNAL;
 
     @Override
     public String toString() {

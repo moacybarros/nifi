@@ -134,7 +134,7 @@ nf.ComponentState = (function () {
      *
      * @param {object} componentState
      */
-    var loadComponentState = function (localState, clusterState) {
+    var loadComponentState = function (localState, clusterState, externalState) {
         var count = 0;
         var totalEntries = 0;
         var showPartialDetails = false;
@@ -145,34 +145,35 @@ nf.ComponentState = (function () {
         // begin the update
         componentStateData.beginUpdate();
 
-        // local state
-        if (nf.Common.isDefinedAndNotNull(localState)) {
-            $.each(localState.state, function (i, stateEntry) {
-                componentStateData.addItem($.extend({
-                    id: count++,
-                    scope: stateEntry.clusterNodeAddress
-                }, stateEntry));
-            });
-            totalEntries += localState.totalEntryCount;
+        var addComponentStateData = function (componentState, getScope) {
+            if (nf.Common.isDefinedAndNotNull(componentState)
+                && nf.Common.isDefinedAndNotNull(componentState.state)) {
 
-            if (nf.Common.isDefinedAndNotNull(localState.state) && localState.totalEntryCount !== localState.state.length) {
-                showPartialDetails = true;
+                $.each(componentState.state, function (i, stateEntry) {６
+                    componentStateData.addItem($.extend({
+                        id: count++,
+                        scope: getScope(stateEntry),
+                    }, stateEntry));
+                });
+                totalEntries += componentState.totalEntryCount;
+
+                if (componentState.totalEntryCount !== componentState.state.length) {
+                    showPartialDetails = true;
+                }
             }
         }
 
-        if (nf.Common.isDefinedAndNotNull(clusterState)) {
-            $.each(clusterState.state, function (i, stateEntry) {
-                componentStateData.addItem($.extend({
-                    id: count++,
-                    scope: 'Cluster'
-                }, stateEntry));
-            });
-            totalEntries += clusterState.totalEntryCount;
+        addComponentStateData(localState, function(stateEntry) {
+            return stateEntry.clusterNodeAddress;
+        });
 
-            if (nf.Common.isDefinedAndNotNull(clusterState.state) && clusterState.totalEntryCount !== clusterState.state.length) {
-                showPartialDetails = true;
-            }
-        }
+        addComponentStateData(clusterState, function(stateEntry) {
+            return 'Cluster';
+        });
+
+        addComponentStateData(externalState, function(stateEntry) {
+            return 'External';
+        });
 
         // complete the update
         componentStateData.endUpdate();
@@ -278,11 +279,6 @@ nf.ComponentState = (function () {
                 {id: 'value', field: 'value', name: 'Value', sortable: true, resizable: true}
             ];
 
-            // conditionally show the cluster node identifier
-            if (nf.Canvas.isClustered()) {
-                componentStateColumns.push({id: 'scope', field: 'scope', name: 'Scope', sortable: true, resizable: true});
-            }
-
             var componentStateOptions = {
                 forceFitColumns: true,
                 enableTextSelectionOnCells: true,
@@ -356,8 +352,25 @@ nf.ComponentState = (function () {
                 var componentState = response.componentState;
                 var componentStateTable = $('#component-state-table');
 
+                // conditionally show the cluster node identifier
+                var gridInstance = componentStateTable.data().gridInstance;
+                var componentStateColumns = gridInstance.getColumns();
+                if (nf.Canvas.isClustered() || nf.Common.isDefinedAndNotNull(componentState.externalState)) {
+                    if (componentStateColumns.length === 2) {
+                        // Show scope column
+                        componentStateColumns.push({id: 'scope', field: 'scope', name: 'Scope', sortable: true, resizable: true});
+                        gridInstance.setColumns(componentStateColumns);
+                    }
+                } else {
+                    if (componentStateColumns.length === 3) {
+                        // Hide scope columns
+                        componentStateColumns.pop();
+                        gridInstance.setColumns(componentStateColumns);
+                    }
+                }
+
                 // load the table
-                loadComponentState(componentState.localState, componentState.clusterState);
+                loadComponentState(componentState.localState, componentState.clusterState, componentState.externalState);
 
                 // populate the name/description
                 $('#component-state-name').text(component.name);
