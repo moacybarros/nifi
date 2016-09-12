@@ -376,6 +376,11 @@ language governing permissions and limitations under the License. -->
             <artifactId>nifi-windows-event-log-nar</artifactId>
             <type>nar</type>
         </dependency>
+        <dependency>
+            <groupId>org.apache.nifi</groupId>
+            <artifactId>nifi-stdplus-nar</artifactId>
+            <type>nar</type>
+        </dependency>
     </dependencies>
     <profiles>
         <profile>
