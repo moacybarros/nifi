@@ -1934,7 +1934,7 @@ public class TestPersistentProvenanceRepository {
             final ProvenanceEventRecord record = builder.build();
             try {
                 repo.registerEvent(record);
-                Assert.fail("Expected OutOfMmeoryError but was able to register event");
+                Assert.fail("Expected OutOfMemoryError but was able to register event");
             } catch (final OutOfMemoryError oome) {
             }
         }
@@ -1945,7 +1945,7 @@ public class TestPersistentProvenanceRepository {
             final ProvenanceEventRecord record = builder.build();
             try {
                 repo.registerEvent(record);
-                Assert.fail("Expected OutOfMmeoryError but was able to register event");
+                Assert.fail("Expected OutOfMemoryError but was able to register event");
             } catch (final IllegalStateException ise) {
             }
         }

@@ -111,7 +111,10 @@ public class ConsumeJMS extends AbstractJMSProcessor<JMSConsumer> {
     }
 
     /**
-     *
+     * Copies JMS attributes (i.e., headers and properties) as FF attributes.
+     * Given that FF attributes mandate that values are of type String, the
+     * copied values of JMS attributes will be "stringified" via
+     * String.valueOf(attribute).
      */
     private FlowFile updateFlowFileAttributesWithJmsHeaders(Map<String, Object> jmsHeaders, FlowFile flowFile, ProcessSession processSession) {
         Map<String, String> attributes = new HashMap<String, String>();

@@ -464,7 +464,7 @@ public interface TestRunner {
      * to the given relationship
      *
      * @param relationship to get flowfiles for
-     * @return flowfiles transfered to given relationship
+     * @return flowfiles transferred to given relationship
      */
     List<MockFlowFile> getFlowFilesForRelationship(String relationship);
 
@@ -473,7 +473,7 @@ public interface TestRunner {
      * to the given relationship
      *
      * @param relationship to get flowfiles for
-     * @return flowfiles transfered to given relationship
+     * @return flowfiles transferred to given relationship
      */
     List<MockFlowFile> getFlowFilesForRelationship(Relationship relationship);
 
@@ -756,7 +756,7 @@ public interface TestRunner {
     ValidationResult setProperty(ControllerService service, String propertyName, String value);
 
     /**
-     * Sets the annontation data of the given service to the provided annotation
+     * Sets the annotation data of the given service to the provided annotation
      * data.
      *
      * @param service to modify

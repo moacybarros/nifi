@@ -1052,7 +1052,7 @@ public class ControllerFacade implements Authorizable {
             provenanceDto.setResults(resultsDto);
             return provenanceDto;
         } catch (final IOException ioe) {
-            throw new NiFiCoreException("An error occured while searching the provenance events.", ioe);
+            throw new NiFiCoreException("An error occurred while searching the provenance events.", ioe);
         }
     }
 
@@ -1214,7 +1214,7 @@ public class ControllerFacade implements Authorizable {
             // convert the event record
             return createProvenanceEventDto(event);
         } catch (final IOException ioe) {
-            throw new NiFiCoreException("An error occured while getting the specified event.", ioe);
+            throw new NiFiCoreException("An error occurred while getting the specified event.", ioe);
         }
     }
 
@@ -1286,7 +1286,7 @@ public class ControllerFacade implements Authorizable {
             // convert the event
             return createProvenanceEventDto(event);
         } catch (final IOException ioe) {
-            throw new NiFiCoreException("An error occured while getting the specified event.", ioe);
+            throw new NiFiCoreException("An error occurred while getting the specified event.", ioe);
         }
     }
 
