@@ -14,28 +14,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.nifi.remote.client;
 
-package org.apache.nifi.remote;
-
-import org.apache.nifi.controller.FlowController;
-import org.apache.nifi.groups.ProcessGroup;
-import org.apache.nifi.util.NiFiProperties;
 import org.junit.Test;
-import org.mockito.Mockito;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-public class TestStandardRemoteProcessGroup {
+public class TestSiteInfoProvider {
+
+    private static final Logger logger = LoggerFactory.getLogger(TestSiteInfoProvider.class);
 
     @Test
-    public void testApiUri() throws Exception {
-        final NiFiProperties properties = Mockito.mock(NiFiProperties.class);
-        final FlowController controller = Mockito.mock(FlowController.class);
-        final ProcessGroup group = Mockito.mock(ProcessGroup.class);
-
-        final String expectedUri = "http://localhost:8080/nifi-api";
-        StandardRemoteProcessGroup rpg = new StandardRemoteProcessGroup("id", "http://localhost:8080/nifi", group, controller, null, properties);
-        rpg.isSecure();
-
-        // TODO: Add tests
+    public void test() {
+        // TODO: Add tests.
     }
 
 }

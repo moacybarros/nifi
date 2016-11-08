@@ -805,6 +805,20 @@ public class TestHttpClient {
     }
 
     @Test
+    public void testSendSuccessMultipleUrls() throws Exception {
+
+        try (
+                final SiteToSiteClient client = getDefaultBuilder()
+                        .url("http://localhost:9999, http://localhost:" + httpConnector.getLocalPort() + "/nifi")
+                        .portName("input-running")
+                        .build()
+        ) {
+            testSend(client);
+        }
+
+    }
+
+    @Test
     public void testSendSuccessWithProxy() throws Exception {
 
         try (

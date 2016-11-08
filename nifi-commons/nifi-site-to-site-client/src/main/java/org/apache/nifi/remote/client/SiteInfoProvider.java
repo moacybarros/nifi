@@ -18,6 +18,7 @@ package org.apache.nifi.remote.client;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -50,19 +51,29 @@ public class SiteInfoProvider {
     private final Map<String, String> inputPortMap = new HashMap<>(); // map input port name to identifier
     private final Map<String, String> outputPortMap = new HashMap<>(); // map output port name to identifier
 
-    private URI clusterUrl;
+    private String clusterUrls;
+    /**
+     * An active working cluster URL is cached out of the clusterUrls.
+     */
+    private URI activeClusterUrl;
     private SSLContext sslContext;
     private int connectTimeoutMillis;
     private int readTimeoutMillis;
 
     private ControllerDTO refreshRemoteInfo() throws IOException {
-        final ControllerDTO controller;
 
+        final ControllerDTO controller;
+        final URI connectedClusterUrl;
         try (final SiteToSiteRestApiClient apiClient = new SiteToSiteRestApiClient(sslContext, proxy, EventReporter.NO_OP)) {
-            apiClient.setBaseUrl(SiteToSiteRestApiClient.resolveBaseUrl(clusterUrl));
             apiClient.setConnectTimeoutMillis(connectTimeoutMillis);
             apiClient.setReadTimeoutMillis(readTimeoutMillis);
-            controller = apiClient.getController();
+            controller = apiClient.getController(clusterUrls);
+            try {
+                connectedClusterUrl = new URI(apiClient.getBaseUrl());
+            } catch (URISyntaxException e) {
+                // This should not happen since apiClient has successfully communicated with this URL.
+                throw new RuntimeException("Failed to parse connected cluster URL due to " + e);
+            }
         }
 
         remoteInfoWriteLock.lock();
@@ -70,6 +81,7 @@ public class SiteInfoProvider {
             this.siteToSitePort = controller.getRemoteSiteListeningPort();
             this.siteToSiteHttpPort = controller.getRemoteSiteHttpListeningPort();
             this.siteToSiteSecure = controller.isSiteToSiteSecure();
+            this.activeClusterUrl = connectedClusterUrl;
 
             inputPortMap.clear();
             for (final PortDTO inputPort : controller.getInputPorts()) {
@@ -90,7 +102,7 @@ public class SiteInfoProvider {
     }
 
     public boolean isWebInterfaceSecure() {
-        return clusterUrl.toString().startsWith("https");
+        return clusterUrls.startsWith("https");
     }
 
     /**
@@ -162,7 +174,7 @@ public class SiteInfoProvider {
         final ControllerDTO controller = refreshRemoteInfo();
         final Boolean isSecure = controller.isSiteToSiteSecure();
         if (isSecure == null) {
-            throw new IOException("Remote NiFi instance " + clusterUrl + " is not currently configured to accept site-to-site connections");
+            throw new IOException("Remote NiFi instance " + clusterUrls + " is not currently configured to accept site-to-site connections");
         }
 
         return isSecure;
@@ -207,8 +219,39 @@ public class SiteInfoProvider {
         }
     }
 
-    public void setClusterUrl(URI clusterUrl) {
-        this.clusterUrl = clusterUrl;
+    /**
+     * Return an active cluster URL that is known to work.
+     * If it is unknown yet or cache is expired, then remote info will be refreshed.
+     * @return an active cluster URL
+     */
+    public URI getActiveClusterUrl() throws IOException {
+        URI resultClusterUrl;
+        remoteInfoReadLock.lock();
+        try {
+            resultClusterUrl = this.activeClusterUrl;
+            if (resultClusterUrl != null && this.remoteRefreshTime > System.currentTimeMillis() - REMOTE_REFRESH_MILLIS) {
+                return resultClusterUrl;
+            }
+        } finally {
+            remoteInfoReadLock.unlock();
+        }
+
+        refreshRemoteInfo();
+
+        remoteInfoReadLock.lock();
+        try {
+            return this.activeClusterUrl;
+        } finally {
+            remoteInfoReadLock.unlock();
+        }
+    }
+
+    public void setClusterUrls(String clusterUrls) {
+        this.clusterUrls = clusterUrls;
+    }
+
+    public String getClusterUrls() {
+        return clusterUrls;
     }
 
     public void setSslContext(SSLContext sslContext) {

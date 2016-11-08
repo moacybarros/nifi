@@ -108,7 +108,7 @@ public class TestStandardRemoteGroupPort {
 
         doReturn(true).when(remoteGroup).isTransmitting();
         doReturn(protocol).when(remoteGroup).getTransportProtocol();
-        doReturn(new URI(REMOTE_CLUSTER_URL)).when(remoteGroup).getTargetUri();
+        doReturn(REMOTE_CLUSTER_URL).when(remoteGroup).getTargetUri();
         doReturn(siteToSiteClient).when(port).getSiteToSiteClient();
         doReturn(transaction).when(siteToSiteClient).createTransaction(eq(direction));
         doReturn(eventReporter).when(remoteGroup).getEventReporter();

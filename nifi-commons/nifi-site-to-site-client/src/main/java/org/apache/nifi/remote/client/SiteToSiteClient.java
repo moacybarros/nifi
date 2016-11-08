@@ -560,7 +560,8 @@ public interface SiteToSiteClient extends Closeable {
         }
 
         /**
-         * @return the configured URL for the remote NiFi instance
+         * @return the configured URL for the remote NiFi instance.
+         * The URL string possibly contains multiple URL entries in comma-separated format.
          */
         public String getUrl() {
             return url;

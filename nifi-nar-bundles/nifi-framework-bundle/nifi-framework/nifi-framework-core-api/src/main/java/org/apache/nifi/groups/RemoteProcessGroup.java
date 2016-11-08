@@ -32,7 +32,7 @@ public interface RemoteProcessGroup extends Authorizable, Positionable {
 
     String getIdentifier();
 
-    URI getTargetUri();
+    String getTargetUri();
 
     ProcessGroup getProcessGroup();
 

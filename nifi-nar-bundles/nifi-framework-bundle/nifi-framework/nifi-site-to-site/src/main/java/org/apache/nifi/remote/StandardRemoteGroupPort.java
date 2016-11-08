@@ -142,7 +142,7 @@ public class StandardRemoteGroupPort extends RemoteGroupPort {
         final long penalizationMillis = FormatUtils.getTimeDuration(remoteGroup.getYieldDuration(), TimeUnit.MILLISECONDS);
 
         final SiteToSiteClient client = new SiteToSiteClient.Builder()
-                .url(remoteGroup.getTargetUri().toString())
+                .url(remoteGroup.getTargetUri())
                 .portIdentifier(getIdentifier())
                 .sslContext(sslContext)
                 .useCompression(isUseCompression())
@@ -168,7 +168,7 @@ public class StandardRemoteGroupPort extends RemoteGroupPort {
             return;
         }
 
-        final String url = getRemoteProcessGroup().getTargetUri().toString();
+        final String url = getRemoteProcessGroup().getTargetUri();
 
         // If we are sending data, we need to ensure that we have at least 1 FlowFile to send. Otherwise,
         // we don't want to create a transaction at all.
@@ -430,7 +430,7 @@ public class StandardRemoteGroupPort extends RemoteGroupPort {
 
     @Override
     public String toString() {
-        return "RemoteGroupPort[name=" + getName() + ",target=" + remoteGroup.getTargetUri().toString() + "]";
+        return "RemoteGroupPort[name=" + getName() + ",target=" + remoteGroup.getTargetUri() + "]";
     }
 
     @Override

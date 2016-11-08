@@ -107,7 +107,10 @@ import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
@@ -118,6 +121,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
 import static org.apache.commons.lang3.StringUtils.isEmpty;
@@ -316,7 +320,36 @@ public class SiteToSiteRestApiClient implements Closeable {
         }
     }
 
-    public ControllerDTO getController() throws IOException {
+    /**
+     * Parse the comma-separated URLs string for the remote NiFi instances, and try getting controller resource
+     * from those remote NiFi instances until a controller is successfully returned or try out all URLs.
+     * After this method execution, the base URL is set with the successful URL.
+     * @throws IllegalArgumentException when it fails to parse the URLs string,
+     * URLs string contains multiple protocols (http and https mix),
+     * or none of URL is specified.
+     */
+    public ControllerDTO getController(final String clusterUrlStr) throws IOException {
+        final Set<String> clusterUrls = parseClusterUrls(clusterUrlStr);
+
+        IOException lastException = null;
+        for (final String clusterUrl : clusterUrls) {
+            setBaseUrl(clusterUrl);
+            try {
+                return getController();
+            } catch (IOException e) {
+                lastException = e;
+                logger.warn("Failed to get controller from " + clusterUrl + " due to " + e);
+                if (logger.isDebugEnabled()) {
+                    logger.debug("", e);
+                }
+            }
+        }
+
+        logger.warn("Tried all cluster URLs but none of those was accessible.");
+        throw lastException;
+    }
+
+    private ControllerDTO getController() throws IOException {
         try {
             final HttpGet get = createGetControllerRequest();
             return execute(get, ControllerEntity.class).getController();
@@ -1158,13 +1191,43 @@ public class SiteToSiteRestApiClient implements Closeable {
         this.readTimeoutMillis = readTimeoutMillis;
     }
 
-    public static String resolveBaseUrl(final String clusterUrl) {
+
+    /**
+     * Parse the comma-separated URLs string for the remote NiFi instances.
+     * @throws IllegalArgumentException when it fails to parse the URLs string,
+     * URLs string contains multiple protocols (http and https mix),
+     * or none of URL is specified.
+     */
+    public static Set<String> parseClusterUrls(final String clusterUrlStr) {
+        final Set<String> urls = new LinkedHashSet<>();
+        if (clusterUrlStr != null && clusterUrlStr.length() > 0) {
+            Arrays.stream(clusterUrlStr.split(","))
+                    .map(s -> s.trim())
+                    .filter(s -> s.length() > 0)
+                    .forEach(s -> {
+                        urls.add(resolveBaseUrl(s));
+                    });
+        }
+
+        if (urls.size() == 0) {
+            throw new IllegalArgumentException("Cluster URL was not specified.");
+        }
+
+        final Predicate<String> isHttps = url -> url.toLowerCase().startsWith("https:");
+        if (urls.stream().anyMatch(isHttps) && urls.stream().anyMatch(isHttps.negate())) {
+            throw new IllegalArgumentException("Different protocols are used in the cluster URLs " + clusterUrlStr);
+        }
+
+        return Collections.unmodifiableSet(urls);
+    }
+
+    private static String resolveBaseUrl(final String clusterUrl) {
         Objects.requireNonNull(clusterUrl, "clusterUrl cannot be null.");
         URI clusterUri;
         try {
             clusterUri = new URI(clusterUrl.trim());
         } catch (final URISyntaxException e) {
-            throw new IllegalArgumentException("Specified clusterUrl was: " + clusterUrl, e);
+            throw new IllegalArgumentException("Failed to parse the clusterUrl due to " + e, e);
         }
         return resolveBaseUrl(clusterUri);
     }
@@ -1179,7 +1242,7 @@ public class SiteToSiteRestApiClient implements Closeable {
      * @param clusterUrl url to be resolved
      * @return resolved url
      */
-    public static String resolveBaseUrl(final URI clusterUrl) {
+    private static String resolveBaseUrl(final URI clusterUrl) {
         String uriPath = clusterUrl.getPath().trim();
 
         if (StringUtils.isEmpty(uriPath) || uriPath.equals("/")) {

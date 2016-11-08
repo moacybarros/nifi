@@ -1510,7 +1510,7 @@ public final class DtoFactory {
         dto.setCommunicationsTimeout(group.getCommunicationsTimeout());
         dto.setYieldDuration(group.getYieldDuration());
         dto.setParentGroupId(group.getProcessGroup().getIdentifier());
-        dto.setTargetUri(group.getTargetUri().toString());
+        dto.setTargetUri(group.getTargetUri());
         dto.setFlowRefreshed(group.getLastRefreshTime());
         dto.setContents(contents);
         dto.setTransportProtocol(group.getTransportProtocol().name());
