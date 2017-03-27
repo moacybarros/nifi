@@ -463,6 +463,11 @@ language governing permissions and limitations under the License. -->
             <artifactId>nifi-cdc-mysql-nar</artifactId>
             <type>nar</type>
         </dependency>
+        <dependency>
+            <groupId>org.apache.nifi</groupId>
+            <artifactId>nifi-atlas-nar</artifactId>
+            <type>nar</type>
+        </dependency>
     </dependencies>
     <profiles>
         <profile>
