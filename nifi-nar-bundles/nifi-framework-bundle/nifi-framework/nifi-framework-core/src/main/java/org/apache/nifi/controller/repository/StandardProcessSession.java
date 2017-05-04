@@ -207,7 +207,7 @@ public final class StandardProcessSession implements ProcessSession, ProvenanceE
         }
 
         if (!recursionSet.isEmpty()) {
-            throw new IllegalStateException();
+            throw new IllegalStateException(String.format("recursionSet was not empty: %s", recursionSet));
         }
 
         if (this.checkpoint == null) {
@@ -2116,6 +2116,9 @@ public final class StandardProcessSession implements ProcessSession, ProvenanceE
             boolean cnfeThrown = false;
 
             try {
+                if ("true".equals(source.getAttribute("debug"))) {
+                    LOG.warn("Started reading {}, recursionSet={}.", source, recursionSet);
+                }
                 recursionSet.add(source);
                 reader.process(ffais);
 
@@ -2130,6 +2133,10 @@ public final class StandardProcessSession implements ProcessSession, ProvenanceE
             } finally {
                 recursionSet.remove(source);
                 bytesRead += countingStream.getBytesRead();
+
+                if ("true".equals(source.getAttribute("debug"))) {
+                    LOG.warn("Finished reading {}, recursionSet={}.", source, recursionSet);
+                }
 
                 // if cnfeThrown is true, we don't need to re-thrown the Exception; it will propagate.
                 if (!cnfeThrown && ffais.getContentNotFoundException() != null) {
@@ -2419,6 +2426,10 @@ public final class StandardProcessSession implements ProcessSession, ProvenanceE
         ByteCountingOutputStream outStream = appendableStreams.get(oldClaim);
         long originalByteWrittenCount = 0;
 
+        if ("true".equals(source.getAttribute("debug"))) {
+            LOG.warn("Started appending {}, recursionSet={}.", source, recursionSet);
+        }
+
         ContentClaim newClaim = null;
         try {
             if (outStream == null) {
@@ -2458,6 +2469,10 @@ public final class StandardProcessSession implements ProcessSession, ProvenanceE
                 } finally {
                     recursionSet.remove(source);
                 }
+            }
+
+            if ("true".equals(source.getAttribute("debug"))) {
+                LOG.warn("Finished appending {}, recursionSet={}.", source, recursionSet);
             }
 
             // update the newSize to reflect the number of bytes written
@@ -2925,6 +2940,10 @@ public final class StandardProcessSession implements ProcessSession, ProvenanceE
         createdFlowFiles.add(fFile.getAttribute(CoreAttributes.UUID.key()));
 
         registerForkEvent(parent, fFile);
+
+        if ("true".equals(parent.getAttribute("debug"))) {
+            LOG.warn("{} is created.", fFile);
+        }
         return fFile;
     }
 
