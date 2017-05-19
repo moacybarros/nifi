@@ -1195,6 +1195,12 @@
             </dependency>
             <dependency>
                 <groupId>org.apache.nifi</groupId>
+                <artifactId>nifi-couchbase-service-api-nar</artifactId>
+                <version>1.3.0-SNAPSHOT</version>
+                <type>nar</type>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.nifi</groupId>
                 <artifactId>nifi-couchbase-nar</artifactId>
                 <version>1.3.0-SNAPSHOT</version>
                 <type>nar</type>

@@ -35,8 +35,8 @@ import org.apache.nifi.annotation.documentation.CapabilityDescription;
 import org.apache.nifi.annotation.documentation.SeeAlso;
 import org.apache.nifi.annotation.documentation.Tags;
 import org.apache.nifi.components.PropertyDescriptor;
-import org.apache.nifi.couchbase.CouchbaseAttributes;
 import org.apache.nifi.couchbase.CouchbaseClusterControllerService;
+import org.apache.nifi.couchbase.DocumentType;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
 import org.apache.nifi.logging.ComponentLog;
@@ -56,6 +56,10 @@ import com.couchbase.client.java.document.BinaryDocument;
 import com.couchbase.client.java.document.Document;
 import com.couchbase.client.java.document.RawJsonDocument;
 
+import static org.apache.nifi.couchbase.CouchbaseConfigurationProperties.BUCKET_NAME;
+import static org.apache.nifi.couchbase.CouchbaseConfigurationProperties.COUCHBASE_CLUSTER_SERVICE;
+import static org.apache.nifi.couchbase.CouchbaseConfigurationProperties.DOCUMENT_TYPE;
+
 @Tags({"nosql", "couchbase", "database", "put"})
 @CapabilityDescription("Put a document to Couchbase Server via Key/Value access.")
 @SeeAlso({CouchbaseClusterControllerService.class})
@@ -74,14 +78,18 @@ import com.couchbase.client.java.document.RawJsonDocument;
 public class PutCouchbaseKey extends AbstractCouchbaseProcessor {
 
 
-    public static final PropertyDescriptor PERSIST_TO = new PropertyDescriptor.Builder().name("Persist To")
+    public static final PropertyDescriptor PERSIST_TO = new PropertyDescriptor.Builder()
+        .name("persist-to")
+        .displayName("Persist To")
         .description("Durability constraint about disk persistence.")
         .required(true)
         .allowableValues(PersistTo.values())
         .defaultValue(PersistTo.NONE.toString())
         .build();
 
-    public static final PropertyDescriptor REPLICATE_TO = new PropertyDescriptor.Builder().name("Replicate To")
+    public static final PropertyDescriptor REPLICATE_TO = new PropertyDescriptor.Builder()
+        .name("replicate-to")
+        .displayName("Replicate To")
         .description("Durability constraint about replication.")
         .required(true)
         .allowableValues(ReplicateTo.values())
@@ -98,9 +106,12 @@ public class PutCouchbaseKey extends AbstractCouchbaseProcessor {
 
     @Override
     protected void addSupportedRelationships(Set<Relationship> relationships) {
-        relationships.add(REL_SUCCESS);
-        relationships.add(REL_RETRY);
-        relationships.add(REL_FAILURE);
+        relationships.add(RELB_SUCCESS
+                .description("All FlowFiles that are written to Couchbase Server are routed to this relationship.").build());
+        relationships.add(RELB_RETRY
+                .description("All FlowFiles failed to be written to Couchbase Server but can be retried are routed to this relationship.").build());
+        relationships.add(RELB_FAILURE
+                .description("All FlowFiles failed to be written to Couchbase Server and not retry-able are routed to this relationship.").build());
     }
 
     @Override

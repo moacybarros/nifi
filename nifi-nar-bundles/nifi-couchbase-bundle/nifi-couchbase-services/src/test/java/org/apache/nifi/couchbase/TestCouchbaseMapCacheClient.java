@@ -14,23 +14,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.nifi.processors.couchbase;
+package org.apache.nifi.couchbase;
 
+import org.apache.nifi.distributed.cache.client.Deserializer;
+import org.apache.nifi.distributed.cache.client.Serializer;
+import org.junit.Test;
 
-/**
- * Supported Couchbase document types.
- *
- * In order to handle a variety type of document classes such as JsonDocument,
- * JsonLongDocument or JsonStringDocument, Couchbase processors use
- * RawJsonDocument for Json type.
- *
- * The distinction between Json and Binary exists because BinaryDocument doesn't
- * set Json flag when it stored on Couchbase Server even if the content byte
- * array represents a Json string, and it can't be retrieved as a Json document.
- */
-public enum DocumentType {
+import java.nio.charset.StandardCharsets;
 
-    Json,
-    Binary
+public class TestCouchbaseMapCacheClient {
+
+    private final Serializer<String> stringSerializer = (value, output) -> output.write(value.getBytes(StandardCharsets.UTF_8));
+    private final Deserializer<String> stringDeserializer = input -> new String(input, StandardCharsets.UTF_8);
+
+    @Test
+    public void test() throws Exception {
+        final CouchbaseMapCacheClient client = new CouchbaseMapCacheClient();
+        final String cacheEntry = client.get("key", stringSerializer, stringDeserializer);
+    }
 
 }

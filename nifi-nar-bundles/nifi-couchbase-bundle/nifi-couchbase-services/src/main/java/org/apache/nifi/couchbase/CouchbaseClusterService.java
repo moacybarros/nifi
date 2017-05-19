@@ -43,14 +43,17 @@ import com.couchbase.client.java.CouchbaseCluster;
 @CapabilityDescription("Provides a centralized Couchbase connection and bucket passwords management."
         + " Bucket passwords can be specified via dynamic properties.")
 @Tags({ "nosql", "couchbase", "database", "connection" })
-@DynamicProperty(name = "Bucket Password for BUCKET_NAME", value = "bucket password", description = "Specify bucket password if necessary.")
+@DynamicProperty(name = "bucket.password.<BUCKET_NAME>", value = "bucket password", description = "Specify bucket password if necessary.")
 public class CouchbaseClusterService extends AbstractControllerService implements CouchbaseClusterControllerService {
 
     public static final PropertyDescriptor CONNECTION_STRING = new PropertyDescriptor
-            .Builder().name("Connection String")
+            .Builder()
+            .name("connection-string")
+            .displayName("Connection String")
             .description("The hostnames or ip addresses of the bootstraping nodes and optional parameters."
                     + " Syntax) couchbase://node1,node2,nodeN?param1=value1&param2=value2&paramN=valueN")
             .required(true)
+            .expressionLanguageSupported(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .build();
 
@@ -63,7 +66,7 @@ public class CouchbaseClusterService extends AbstractControllerService implement
         properties = Collections.unmodifiableList(props);
     }
 
-    private static final String DYNAMIC_PROP_BUCKET_PASSWORD = "Bucket Password for ";
+    private static final String DYNAMIC_PROP_BUCKET_PASSWORD = "bucket.password.";
     private static final Map<String, String> bucketPasswords = new HashMap<>();
 
     private volatile CouchbaseCluster cluster;
@@ -105,7 +108,7 @@ public class CouchbaseClusterService extends AbstractControllerService implement
             }
         }
         try {
-            cluster = CouchbaseCluster.fromConnectionString(context.getProperty(CONNECTION_STRING).getValue());
+            cluster = CouchbaseCluster.fromConnectionString(context.getProperty(CONNECTION_STRING).evaluateAttributeExpressions().getValue());
         } catch(CouchbaseException e) {
             throw new InitializationException(e);
         }

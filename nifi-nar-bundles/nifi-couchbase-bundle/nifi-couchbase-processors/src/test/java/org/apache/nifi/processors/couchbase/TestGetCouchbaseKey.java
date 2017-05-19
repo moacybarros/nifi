@@ -16,15 +16,17 @@
  */
 package org.apache.nifi.processors.couchbase;
 
-import static org.apache.nifi.couchbase.CouchbaseAttributes.Exception;
-import static org.apache.nifi.processors.couchbase.AbstractCouchbaseProcessor.BUCKET_NAME;
-import static org.apache.nifi.processors.couchbase.AbstractCouchbaseProcessor.COUCHBASE_CLUSTER_SERVICE;
-import static org.apache.nifi.processors.couchbase.AbstractCouchbaseProcessor.DOCUMENT_TYPE;
+import static org.apache.nifi.couchbase.CouchbaseConfigurationProperties.BUCKET_NAME;
+import static org.apache.nifi.couchbase.CouchbaseConfigurationProperties.COUCHBASE_CLUSTER_SERVICE;
+import static org.apache.nifi.couchbase.CouchbaseConfigurationProperties.DOCUMENT_TYPE;
+import static org.apache.nifi.processors.couchbase.CouchbaseAttributes.Exception;
 import static org.apache.nifi.processors.couchbase.AbstractCouchbaseProcessor.DOC_ID;
 import static org.apache.nifi.processors.couchbase.AbstractCouchbaseProcessor.REL_FAILURE;
 import static org.apache.nifi.processors.couchbase.AbstractCouchbaseProcessor.REL_ORIGINAL;
 import static org.apache.nifi.processors.couchbase.AbstractCouchbaseProcessor.REL_RETRY;
 import static org.apache.nifi.processors.couchbase.AbstractCouchbaseProcessor.REL_SUCCESS;
+import static org.apache.nifi.processors.couchbase.GetCouchbaseKey.PUT_VALUE_TO_ATTRIBUTE;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -34,16 +36,19 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
+import com.couchbase.client.java.CouchbaseCluster;
 import org.apache.nifi.attribute.expression.language.exception.AttributeExpressionLanguageException;
-import org.apache.nifi.couchbase.CouchbaseAttributes;
 import org.apache.nifi.couchbase.CouchbaseClusterControllerService;
+import org.apache.nifi.couchbase.DocumentType;
 import org.apache.nifi.processor.exception.ProcessException;
+import org.apache.nifi.provenance.ProvenanceEventType;
 import org.apache.nifi.reporting.InitializationException;
 import org.apache.nifi.util.MockFlowFile;
 import org.apache.nifi.util.TestRunner;
 import org.apache.nifi.util.TestRunners;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import com.couchbase.client.core.BackpressureException;
@@ -249,6 +254,57 @@ public class TestGetCouchbaseKey {
     }
 
     @Test
+    public void testPutToAttribute() throws Exception {
+
+        Bucket bucket = mock(Bucket.class);
+        String inFileDataStr = "doc-in";
+        String content = "some-value";
+        when(bucket.get(inFileDataStr, RawJsonDocument.class))
+            .thenReturn(RawJsonDocument.create(inFileDataStr, content));
+        setupMockBucket(bucket);
+
+        byte[] inFileData = inFileDataStr.getBytes(StandardCharsets.UTF_8);
+        testRunner.setProperty(PUT_VALUE_TO_ATTRIBUTE, "targetAttribute");
+        testRunner.enqueue(inFileData);
+        testRunner.run();
+
+        testRunner.assertTransferCount(REL_SUCCESS, 1);
+        // Result is put to Attribute, so no need to pass it to original.
+        testRunner.assertTransferCount(REL_ORIGINAL, 0);
+        testRunner.assertTransferCount(REL_RETRY, 0);
+        testRunner.assertTransferCount(REL_FAILURE, 0);
+        MockFlowFile outFile = testRunner.getFlowFilesForRelationship(REL_SUCCESS).get(0);
+        outFile.assertContentEquals(inFileDataStr);
+        outFile.assertAttributeEquals("targetAttribute", content);
+
+        assertEquals(1, testRunner.getProvenanceEvents().size());
+        assertEquals(ProvenanceEventType.FETCH, testRunner.getProvenanceEvents().get(0).getEventType());
+    }
+
+    @Test
+    public void testPutToAttributeNoTargetAttribute() throws Exception {
+
+        Bucket bucket = mock(Bucket.class);
+        String inFileDataStr = "doc-in";
+        String content = "some-value";
+        when(bucket.get(inFileDataStr, RawJsonDocument.class))
+            .thenReturn(RawJsonDocument.create(inFileDataStr, content));
+        setupMockBucket(bucket);
+
+        byte[] inFileData = inFileDataStr.getBytes(StandardCharsets.UTF_8);
+        testRunner.setProperty(PUT_VALUE_TO_ATTRIBUTE, "${expressionReturningNoValue}");
+        testRunner.enqueue(inFileData);
+        testRunner.run();
+
+        testRunner.assertTransferCount(REL_SUCCESS, 0);
+        testRunner.assertTransferCount(REL_ORIGINAL, 0);
+        testRunner.assertTransferCount(REL_RETRY, 0);
+        testRunner.assertTransferCount(REL_FAILURE, 1);
+        MockFlowFile outFile = testRunner.getFlowFilesForRelationship(REL_FAILURE).get(0);
+        outFile.assertContentEquals(inFileDataStr);
+    }
+
+    @Test
     public void testBinaryDocument() throws Exception {
 
         Bucket bucket = mock(Bucket.class);
@@ -273,6 +329,32 @@ public class TestGetCouchbaseKey {
         outFile.assertContentEquals(content);
         MockFlowFile orgFile = testRunner.getFlowFilesForRelationship(REL_ORIGINAL).get(0);
         orgFile.assertContentEquals(inFileDataStr);
+    }
+
+    @Test
+    public void testBinaryDocumentToAttribute() throws Exception {
+
+        Bucket bucket = mock(Bucket.class);
+        String inFileDataStr = "doc-in";
+        String content = "binary";
+        ByteBuf buf = Unpooled.copiedBuffer(content.getBytes(StandardCharsets.UTF_8));
+        when(bucket.get(inFileDataStr, BinaryDocument.class))
+            .thenReturn(BinaryDocument.create(inFileDataStr, buf));
+        setupMockBucket(bucket);
+
+        byte[] inFileData = inFileDataStr.getBytes(StandardCharsets.UTF_8);
+        testRunner.enqueue(inFileData);
+        testRunner.setProperty(DOCUMENT_TYPE, DocumentType.Binary.toString());
+        testRunner.setProperty(PUT_VALUE_TO_ATTRIBUTE, "targetAttribute");
+        testRunner.run();
+
+        testRunner.assertTransferCount(REL_SUCCESS, 1);
+        testRunner.assertTransferCount(REL_ORIGINAL, 0);
+        testRunner.assertTransferCount(REL_RETRY, 0);
+        testRunner.assertTransferCount(REL_FAILURE, 0);
+        MockFlowFile outFile = testRunner.getFlowFilesForRelationship(REL_SUCCESS).get(0);
+        outFile.assertContentEquals(inFileDataStr);
+        outFile.assertAttributeEquals("targetAttribute", "binary");
     }
 
 
@@ -458,5 +540,39 @@ public class TestGetCouchbaseKey {
         MockFlowFile orgFile = testRunner.getFlowFilesForRelationship(REL_FAILURE).get(0);
         orgFile.assertContentEquals(inputFileDataStr);
         orgFile.assertAttributeEquals(Exception.key(), DocumentDoesNotExistException.class.getName());
+    }
+
+    @Ignore
+    public void test() throws Exception {
+        final CouchbaseCluster cluster = CouchbaseCluster.fromConnectionString("couchbase://127.0.0.1");
+        final Bucket bucket = cluster.openBucket("users");
+//        final BinaryDocument document = bucket.get("test", BinaryDocument.class);
+//        final ByteBuf content = document.content();
+//        final byte[] bytes = new byte[document.content().readableBytes()];
+//        content.readBytes(bytes);
+
+//        String bucketName = "nifi-cache";
+//        String regex = "^d.*";
+////        Statement statement = Select.select("meta().id").from(i(bucketName)).where(regexpContains("meta().id", regex));
+//        Statement statement = Delete.deleteFromCurrentBucket().where(regexpContains("meta().id", regex));
+//        final N1qlQueryResult result = bucket.query(N1qlQuery.simple(statement));
+//        result.info();
+//        result.forEach(row -> {
+//            final JsonObject value = row.value();
+//            System.out.println(value);
+//        });
+
+//        Map<String, String> coordinates = new HashMap<>();
+//        coordinates.put("key", "ijokarumawak");
+//        final Optional<String> value = Optional.ofNullable(coordinates)
+//                .map(c -> c.get("key"))
+//                .map(key -> bucket.get(key, RawJsonDocument.class))
+//                .map(RawJsonDocument::content);
+//
+//        final RawJsonDocument document = bucket.get("ijokarumawak", RawJsonDocument.class);
+//        final DocumentFragment<Lookup> fragment = bucket.lookupIn("ijokarumawak").get("address.country").execute();
+//        System.out.println(fragment.content(0));
+        final BinaryDocument document = bucket.get("ijokarumawak", BinaryDocument.class);
+        System.out.println(document);
     }
 }

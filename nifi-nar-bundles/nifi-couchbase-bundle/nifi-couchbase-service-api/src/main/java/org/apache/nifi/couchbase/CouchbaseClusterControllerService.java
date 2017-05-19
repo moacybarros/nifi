@@ -16,10 +16,9 @@
  */
 package org.apache.nifi.couchbase;
 
+import com.couchbase.client.java.Bucket;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
 import org.apache.nifi.controller.ControllerService;
-
-import com.couchbase.client.java.Bucket;
 
 /**
  * Provides a connection to a Couchbase Server cluster throughout a NiFi Data
@@ -33,6 +32,6 @@ public interface CouchbaseClusterControllerService extends ControllerService {
      * @param bucketName the bucket name to access
      * @return a connected bucket instance
      */
-    public Bucket openBucket(String bucketName);
+    Bucket openBucket(String bucketName);
 
 }
