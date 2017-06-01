@@ -419,18 +419,13 @@ public abstract class ConsumerLease implements Closeable, ConsumerRebalanceListe
 
 
     private void writeRecordData(final ProcessSession session, final List<ConsumerRecord<byte[], byte[]>> records, final TopicPartition topicPartition) {
-        // In order to obtain a RecordReader from the RecordReaderFactory, we need to give it a FlowFile.
-        // We don't want to create a new FlowFile for each record that we receive, so we will just create
-        // a "temporary flowfile" that will be removed in the finally block below and use that to pass to
-        // the createRecordReader method.
-        final FlowFile tempFlowFile = session.create();
         RecordSetWriter writer = null;
 
         try {
             for (final ConsumerRecord<byte[], byte[]> consumerRecord : records) {
                 final Record record;
                 try (final InputStream in = new ByteArrayInputStream(consumerRecord.value())) {
-                    final RecordReader reader = readerFactory.createRecordReader(tempFlowFile, in, logger);
+                    final RecordReader reader = readerFactory.createRecordReader(in, logger);
                     record = reader.nextRecord();
                 } catch (final Exception e) {
                     // If we are unable to parse the data, we need to transfer it to 'parse failure' relationship
@@ -512,8 +507,6 @@ public abstract class ConsumerLease implements Closeable, ConsumerRebalanceListe
             }
 
             throw new ProcessException(e);
-        } finally {
-            session.remove(tempFlowFile);
         }
     }
 

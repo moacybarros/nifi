@@ -25,10 +25,11 @@ import java.io.InputStream;
 import java.util.Set;
 
 public interface SchemaAccessStrategy {
+
     /**
-     * Returns the schema for the given FlowFile using the supplied stream of content and configuration
+     * Returns the schema for the given FlowFile using the supplied stream of content and configuration.
      *
-     * @param flowFile flowfile
+     * @param flowFile flowfile TODO: document it can be null
      * @param contentStream content of flowfile
      * @return the RecordSchema for the FlowFile
      */

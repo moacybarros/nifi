@@ -31,7 +31,7 @@ import org.apache.nifi.serialization.record.RecordSchema;
  * <p>
  * A Controller Service that is responsible for creating a {@link RecordSetWriter}. The writer is created
  * based on a FlowFile and an InputStream for that FlowFile, but it is important to note that this the FlowFile passed
- * to the {@link #createWriter(ComponentLog, FlowFile, InputStream)} may not be the FlowFile that the Writer will writer to.
+ * to the {@link #createWriter(ComponentLog, RecordSchema, FlowFile, OutputStream)} may not be the FlowFile that the Writer will writer to.
  * Rather, it is the FlowFile and InputStream from which the Writer's Schema should be determined. This is done because most
  * Processors that make use of Record Writers also make use of Record Readers and the schema for the output is often determined
  * by either reading the schema from the content of the input FlowFile or from referencing attributes of the
