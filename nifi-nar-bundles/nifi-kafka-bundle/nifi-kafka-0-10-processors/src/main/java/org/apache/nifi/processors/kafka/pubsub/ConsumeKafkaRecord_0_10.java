@@ -228,7 +228,15 @@ public class ConsumeKafkaRecord_0_10 extends AbstractProcessor {
 
     @Override
     protected Collection<ValidationResult> customValidate(final ValidationContext validationContext) {
-        return KafkaProcessorUtils.validateCommonProperties(validationContext);
+        final Collection<ValidationResult> results = KafkaProcessorUtils.validateCommonProperties(validationContext);
+
+        RecordReaderFactory readerFactory = validationContext.getProperty(RECORD_READER).asControllerService(RecordReaderFactory.class);
+        if (readerFactory.isFlowFileRequired()) {
+            results.add(new ValidationResult.Builder().subject(RECORD_READER.getDisplayName()).valid(false)
+                    .explanation("Specified Record Reader requires an incoming FlowFile to resolve Record Schema.").build());
+        }
+
+        return results;
     }
 
     private synchronized ConsumerPool getConsumerPool(final ProcessContext context) {

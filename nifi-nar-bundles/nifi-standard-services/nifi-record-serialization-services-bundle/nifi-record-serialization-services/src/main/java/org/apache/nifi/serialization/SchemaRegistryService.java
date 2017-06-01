@@ -149,4 +149,9 @@ public abstract class SchemaRegistryService extends AbstractControllerService {
         return SchemaAccessUtils.getSchemaAccessStrategy(allowableValue, schemaRegistry, context);
     }
 
+    public boolean isFlowFileRequired() {
+        SchemaAccessStrategy schemaAccessStrategy = getSchemaAccessStrategy();
+        return schemaAccessStrategy != null && schemaAccessStrategy.isFlowFileRequired();
+    }
+
 }

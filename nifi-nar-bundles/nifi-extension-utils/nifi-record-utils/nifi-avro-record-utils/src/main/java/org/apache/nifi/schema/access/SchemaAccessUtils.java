@@ -116,6 +116,10 @@ public class SchemaAccessUtils {
                 || HWX_SCHEMA_REF_ATTRIBUTES.getValue().equalsIgnoreCase(schemaAccessValue);
     }
 
+    public static boolean isFlowFileRequired(final String schemaAccessValue) {
+        return HWX_SCHEMA_REF_ATTRIBUTES.getValue().equalsIgnoreCase(schemaAccessValue);
+    }
+
     private static SchemaAccessStrategy getSchemaAccessStrategy(
             final String strategy, final SchemaRegistry schemaRegistry, final Function<PropertyDescriptor, PropertyValue> getProperty) {
         if (strategy.equalsIgnoreCase(SCHEMA_NAME_PROPERTY.getValue())) {

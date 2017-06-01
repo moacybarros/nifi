@@ -39,4 +39,9 @@ public interface SchemaAccessStrategy {
      * @return the set of all Schema Fields that are supplied by the RecordSchema that is returned from {@link #getSchema(FlowFile, InputStream)}.
      */
     Set<SchemaField> getSuppliedSchemaFields();
+
+    // TODO: DOC
+    default boolean isFlowFileRequired() {
+        return false;
+    }
 }

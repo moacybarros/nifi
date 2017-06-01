@@ -33,6 +33,9 @@ import org.apache.nifi.schema.access.SchemaNotFoundException;
 public interface RecordReaderFactory extends ControllerService {
 
     default RecordReader createRecordReader(InputStream in, ComponentLog logger) throws MalformedRecordException, IOException, SchemaNotFoundException {
+        if (isFlowFileRequired()) {
+            throw new SchemaNotFoundException(String.format("%s requires an incoming FlowFile to resolve Record Schema.", this));
+        }
         return createRecordReader(null, in, logger);
     }
 
@@ -47,5 +50,10 @@ public interface RecordReaderFactory extends ControllerService {
      * @throws SchemaNotFoundException
      */
     RecordReader createRecordReader(FlowFile flowFile, InputStream in, ComponentLog logger) throws MalformedRecordException, IOException, SchemaNotFoundException;
+
+    // TODO: DOC
+    default boolean isFlowFileRequired() {
+        return false;
+    }
 
 }
