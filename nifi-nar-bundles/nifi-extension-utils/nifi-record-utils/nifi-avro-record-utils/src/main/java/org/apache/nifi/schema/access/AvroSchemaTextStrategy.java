@@ -25,6 +25,7 @@ import org.apache.nifi.serialization.record.RecordSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.EnumSet;
 import java.util.Set;
@@ -40,10 +41,18 @@ public class AvroSchemaTextStrategy implements SchemaAccessStrategy {
     }
 
     @Override
-    public RecordSchema getSchema(final FlowFile flowFile, final InputStream contentStream) throws SchemaNotFoundException {
-        final String schemaText = schemaTextPropertyValue.evaluateAttributeExpressions(flowFile).getValue();
-        if (schemaText == null || schemaText.trim().isEmpty()) {
-            throw new SchemaNotFoundException("FlowFile did not contain appropriate attributes to determine Schema Text");
+    public RecordSchema getSchema(FlowFile flowFile, InputStream contentStream) throws SchemaNotFoundException, IOException {
+        final String schemaText;
+        if (flowFile != null) {
+            schemaText = schemaTextPropertyValue.evaluateAttributeExpressions(flowFile).getValue();
+            if (schemaText == null || schemaText.trim().isEmpty()) {
+                throw new SchemaNotFoundException("FlowFile did not contain appropriate attributes to determine Schema Text");
+            }
+        } else {
+            schemaText = schemaTextPropertyValue.evaluateAttributeExpressions().getValue();
+            if (schemaText == null || schemaText.trim().isEmpty()) {
+                throw new SchemaNotFoundException(String.format("%s did not provide appropriate Schema Text", schemaTextPropertyValue));
+            }
         }
 
         logger.debug("For {} found schema text {}", flowFile, schemaText);

@@ -32,6 +32,36 @@ import org.apache.nifi.schema.access.SchemaNotFoundException;
  */
 public interface RecordReaderFactory extends ControllerService {
 
+    /**
+     * Create a RecordReader instance to read records from specified InputStream.
+     * This is identical to calling {@link #createRecordReader(FlowFile, InputStream, ComponentLog)} with null FlowFile.
+     * If this factory requires a FlowFile, throws SchemaNotFoundException.
+     * @param in InputStream containing Records
+     * @param logger A logger bind to a component
+     * @return Created RecordReader instance
+     */
+    default RecordReader createRecordReader(InputStream in, ComponentLog logger) throws MalformedRecordException, IOException, SchemaNotFoundException {
+        if (isFlowFileRequired()) {
+            throw new SchemaNotFoundException(String.format("%s requires an incoming FlowFile to resolve Record Schema.", this));
+        }
+        return createRecordReader(null, in, logger);
+    }
+
+    /**
+     * Create a RecordReader instance to read records from specified InputStream.
+     * @param flowFile A FlowFile which is used to resolve Record Schema via Expression Language dynamically.
+     *                 This can be null. If this is required, sub classes should implement {@link #isFlowFileRequired()} to return true.
+     * @param in InputStream containing Records
+     * @param logger A logger bind to a component
+     * @return Created RecordReader instance
+     */
     RecordReader createRecordReader(FlowFile flowFile, InputStream in, ComponentLog logger) throws MalformedRecordException, IOException, SchemaNotFoundException;
+
+    /**
+     * @return Whether this factory needs an incoming FlowFile to resolve Record Schema.
+     */
+    default boolean isFlowFileRequired() {
+        return false;
+    }
 
 }

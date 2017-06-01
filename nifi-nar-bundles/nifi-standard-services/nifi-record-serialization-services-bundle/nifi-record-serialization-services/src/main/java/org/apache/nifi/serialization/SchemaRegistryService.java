@@ -134,12 +134,12 @@ public abstract class SchemaRegistryService extends AbstractControllerService {
         return suppliedFields;
     }
 
-    protected SchemaAccessStrategy getSchemaAccessStrategy(final String allowableValue, final SchemaRegistry schemaRegistry, final ConfigurationContext context) {
-        if (allowableValue == null) {
+    protected SchemaAccessStrategy getSchemaAccessStrategy(final String strategy, final SchemaRegistry schemaRegistry, final ConfigurationContext context) {
+        if (strategy == null) {
             return null;
         }
 
-        return SchemaAccessUtils.getSchemaAccessStrategy(allowableValue, schemaRegistry, context);
+        return SchemaAccessUtils.getSchemaAccessStrategy(strategy, schemaRegistry, context);
     }
 
     protected SchemaAccessStrategy getSchemaAccessStrategy(final String allowableValue, final SchemaRegistry schemaRegistry, final ValidationContext context) {
@@ -147,6 +147,11 @@ public abstract class SchemaRegistryService extends AbstractControllerService {
             return null;
         }
         return SchemaAccessUtils.getSchemaAccessStrategy(allowableValue, schemaRegistry, context);
+    }
+
+    public boolean isFlowFileRequired() {
+        SchemaAccessStrategy schemaAccessStrategy = getSchemaAccessStrategy();
+        return schemaAccessStrategy != null && schemaAccessStrategy.isFlowFileRequired();
     }
 
 }

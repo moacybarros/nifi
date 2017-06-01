@@ -25,10 +25,12 @@ import java.io.InputStream;
 import java.util.Set;
 
 public interface SchemaAccessStrategy {
+
     /**
-     * Returns the schema for the given FlowFile using the supplied stream of content and configuration
+     * Returns the schema for the given FlowFile using the supplied stream of content and configuration.
      *
-     * @param flowFile flowfile
+     * @param flowFile A FlowFile which is used to resolve Record Schema via Expression Language dynamically.
+     *                 This can be null. If this is required, sub classes should implement {@link #isFlowFileRequired()} to return true.
      * @param contentStream content of flowfile
      * @return the RecordSchema for the FlowFile
      */
@@ -38,4 +40,11 @@ public interface SchemaAccessStrategy {
      * @return the set of all Schema Fields that are supplied by the RecordSchema that is returned from {@link #getSchema(FlowFile, InputStream)}.
      */
     Set<SchemaField> getSuppliedSchemaFields();
+
+    /**
+     * @return Whether this factory needs an incoming FlowFile to resolve Record Schema.
+     */
+    default boolean isFlowFileRequired() {
+        return false;
+    }
 }
