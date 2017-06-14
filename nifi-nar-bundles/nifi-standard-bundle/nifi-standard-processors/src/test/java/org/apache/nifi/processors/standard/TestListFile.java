@@ -30,11 +30,17 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
@@ -65,8 +71,6 @@ public class TestListFile {
     Long age0millis, age1millis, age2millis, age3millis, age4millis, age5millis;
     String age0, age1, age2, age3, age4, age5;
 
-    static final long DEFAULT_SLEEP_MILLIS = TimeUnit.NANOSECONDS.toMillis(AbstractListProcessor.LISTING_LAG_NANOS * 2);
-
     @Before
     public void setUp() throws Exception {
         processor = new ListFile();
@@ -91,13 +95,31 @@ public class TestListFile {
         }
     }
 
+    private List<File> listFiles(final File file) {
+        if (file.isDirectory()) {
+            final List<File> result = new ArrayList<>();
+            Optional.ofNullable(file.listFiles()).ifPresent(files -> Arrays.stream(files).forEach(f -> result.addAll(listFiles(f))));
+            return result;
+        } else {
+            return Collections.singletonList(file);
+        }
+    }
+
     /**
      * This method ensures runner clears transfer state,
-     * and sleeps the current thread for DEFAULT_SLEEP_MILLIS before executing runner.run().
+     * and sleeps the current thread for specific period defined at {@link AbstractListProcessor#LISTING_LAG_MILLIS}
+     * based on local filesystem timestamp precision before executing runner.run().
      */
     private void runNext() throws InterruptedException {
         runner.clearTransferState();
-        Thread.sleep(DEFAULT_SLEEP_MILLIS);
+
+        final boolean isMillisecondSupported = listFiles(new File(TESTDIR)).stream().anyMatch(file -> file.lastModified() % 1_000 > 0);
+        if (isMillisecondSupported) {
+            Thread.sleep(AbstractListProcessor.LISTING_LAG_MILLIS.get(TimeUnit.MILLISECONDS));
+        } else {
+            // Filesystems such as Mac OS X HFS (Hierarchical File System) or EXT3 are known that only support timestamp in seconds precision.
+            Thread.sleep(AbstractListProcessor.LISTING_LAG_MILLIS.get(TimeUnit.SECONDS));
+        }
         runner.run();
     }
 
@@ -305,7 +327,7 @@ public class TestListFile {
 
     @Test
     public void testFilterHidden() throws Exception {
-        final long now = TimeUnit.MILLISECONDS.convert(System.nanoTime(), TimeUnit.NANOSECONDS);
+        final long now = System.currentTimeMillis();
 
         FileOutputStream fos;
 
@@ -388,7 +410,7 @@ public class TestListFile {
 
     @Test
     public void testFilterPathPattern() throws Exception {
-        final long now = TimeUnit.MILLISECONDS.convert(System.nanoTime(), TimeUnit.NANOSECONDS);
+        final long now = System.currentTimeMillis();
 
         final File subdir1 = new File(TESTDIR + "/subdir1");
         assertTrue(subdir1.mkdirs());
@@ -595,9 +617,9 @@ public class TestListFile {
      * Provides "now" minus 1 second in millis
     */
     private static long getTestModifiedTime() {
-        final long nowNanos = System.nanoTime();
+        final long nowMillis = System.currentTimeMillis();
         // Subtract a second to avoid possible rounding issues
-        final long nowSeconds = TimeUnit.SECONDS.convert(nowNanos, TimeUnit.NANOSECONDS) - 1;
+        final long nowSeconds = TimeUnit.SECONDS.convert(nowMillis, TimeUnit.MILLISECONDS) - 1;
         return TimeUnit.MILLISECONDS.convert(nowSeconds, TimeUnit.SECONDS);
     }
 

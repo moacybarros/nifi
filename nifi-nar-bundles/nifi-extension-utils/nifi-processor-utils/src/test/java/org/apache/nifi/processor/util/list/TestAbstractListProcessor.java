@@ -41,27 +41,45 @@ import org.apache.nifi.distributed.cache.client.Deserializer;
 import org.apache.nifi.distributed.cache.client.DistributedMapCacheClient;
 import org.apache.nifi.distributed.cache.client.Serializer;
 import org.apache.nifi.processor.ProcessContext;
-import org.apache.nifi.processor.util.list.AbstractListProcessor;
-import org.apache.nifi.processor.util.list.ListableEntity;
 import org.apache.nifi.reporting.InitializationException;
 import org.apache.nifi.state.MockStateManager;
 import org.apache.nifi.util.TestRunner;
 import org.apache.nifi.util.TestRunners;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 public class TestAbstractListProcessor {
 
-    static final long DEFAULT_SLEEP_MILLIS = TimeUnit.NANOSECONDS.toMillis(AbstractListProcessor.LISTING_LAG_NANOS * 2);
+    /**
+     * @return current timestamp in milliseconds, but truncated at specified target precision (e.g. SECONDS or MINUTES).
+     */
+    private long getCurrentTimestampMillis(final TimeUnit targetPrecision) {
+        final long timestampInTargetPrecision = targetPrecision.convert(System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+        return TimeUnit.MILLISECONDS.convert(timestampInTargetPrecision, targetPrecision);
+    }
+
+    private static long getSleepMillis(final TimeUnit targetPrecision) {
+        return AbstractListProcessor.LISTING_LAG_MILLIS.get(targetPrecision) * 2;
+    }
+
+    private static final long DEFAULT_SLEEP_MILLIS = getSleepMillis(TimeUnit.MILLISECONDS);
 
     @Rule
     public final TemporaryFolder testFolder = new TemporaryFolder();
 
+    /**
+     * <p>Ensures that files are listed when those are old enough:
+     *   <li>Files with last modified timestamp those are old enough to determine that those are completely written
+     *     and no further files are expected to be added with the same timestamp.</li>
+     *   <li>This behavior is expected when a processor is scheduled less frequently, such as hourly or daily.</li>
+     * </p>
+     */
     @Test
     public void testAllExistingEntriesEmittedOnFirstIteration() throws Exception {
-        final long oldTimestamp = System.nanoTime() - (AbstractListProcessor.LISTING_LAG_NANOS * 2);
+        final long oldTimestamp = System.currentTimeMillis() - getSleepMillis(TimeUnit.MILLISECONDS);
 
         // These entries have existed before the processor runs at the first time.
         final ConcreteListProcessor proc = new ConcreteListProcessor();
@@ -83,13 +101,12 @@ public class TestAbstractListProcessor {
         runner.assertAllFlowFilesTransferred(ConcreteListProcessor.REL_SUCCESS, 0);
     }
 
-    @Test
-    public void testPreviouslySkippedEntriesEmittedOnNextIteration() throws Exception {
+    private void testPreviouslySkippedEntriesEmmitedOnNextIteration(final TimeUnit targetPrecision) throws InterruptedException {
         final ConcreteListProcessor proc = new ConcreteListProcessor();
         final TestRunner runner = TestRunners.newTestRunner(proc);
         runner.run();
 
-        final long initialTimestamp = System.nanoTime();
+        final long initialTimestamp = getCurrentTimestampMillis(targetPrecision);
 
         runner.assertAllFlowFilesTransferred(ConcreteListProcessor.REL_SUCCESS, 0);
         proc.addEntity("name", "id", initialTimestamp);
@@ -101,20 +118,50 @@ public class TestAbstractListProcessor {
         runner.clearTransferState();
 
         // Ensure we have covered the necessary lag period to avoid issues where the processor was immediately scheduled to run again
-        Thread.sleep(DEFAULT_SLEEP_MILLIS);
+        Thread.sleep(getSleepMillis(targetPrecision));
 
         // Run again without introducing any new entries
         runner.run();
         runner.assertAllFlowFilesTransferred(ConcreteListProcessor.REL_SUCCESS, 2);
     }
 
+    /**
+     * <p>Ensures that newly created files should wait to confirm there is no more files created with the same timestamp:
+     *   <li>If files have the latest modified timestamp at an iteration, then those should be postponed to be listed</li>
+     *   <li>If those files still are the latest files at the next iteration, then those should be listed</li>
+     * </p>
+     */
     @Test
-    public void testOnlyNewEntriesEmitted() throws Exception {
+    public void testPreviouslySkippedEntriesEmittedOnNextIterationMilliPrecision() throws Exception {
+        testPreviouslySkippedEntriesEmmitedOnNextIteration(TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Same as {@link #testPreviouslySkippedEntriesEmittedOnNextIterationMilliPrecision()} but simulates that the target
+     * filesystem only provide timestamp precision in Seconds.
+     */
+    @Test
+    public void testPreviouslySkippedEntriesEmittedOnNextIterationSecondPrecision() throws Exception {
+        testPreviouslySkippedEntriesEmmitedOnNextIteration(TimeUnit.SECONDS);
+    }
+
+    /**
+     * Same as {@link #testPreviouslySkippedEntriesEmittedOnNextIterationMilliPrecision()} but simulates that the target
+     * filesystem only provide timestamp precision in Minutes.
+     * This test is ignored because it needs to wait two minutes. Not good for automated unit testing, but still valuable when executed manually.
+     */
+    @Ignore
+    @Test
+    public void testPreviouslySkippedEntriesEmittedOnNextIterationMinutesPrecision() throws Exception {
+        testPreviouslySkippedEntriesEmmitedOnNextIteration(TimeUnit.MINUTES);
+    }
+
+    private void testOnlyNewEntriesEmitted(final TimeUnit targetPrecision) throws InterruptedException {
         final ConcreteListProcessor proc = new ConcreteListProcessor();
         final TestRunner runner = TestRunners.newTestRunner(proc);
         runner.run();
 
-        final long initialTimestamp = System.nanoTime();
+        final long initialTimestamp = getCurrentTimestampMillis(targetPrecision);
 
         runner.assertAllFlowFilesTransferred(ConcreteListProcessor.REL_SUCCESS, 0);
         proc.addEntity("name", "id", initialTimestamp);
@@ -126,7 +173,7 @@ public class TestAbstractListProcessor {
         runner.clearTransferState();
 
         // Ensure we have covered the necessary lag period to avoid issues where the processor was immediately scheduled to run again
-        Thread.sleep(DEFAULT_SLEEP_MILLIS);
+        Thread.sleep(getSleepMillis(targetPrecision));
 
         // Running again, our two previously seen files are now cleared to be released
         runner.run();
@@ -139,18 +186,20 @@ public class TestAbstractListProcessor {
         runner.assertAllFlowFilesTransferred(ConcreteListProcessor.REL_SUCCESS, 0);
         runner.clearTransferState();
 
-        proc.addEntity("name", "id3", initialTimestamp - 1);
+        // An entry that is older than already processed entry should not be listed.
+        proc.addEntity("name", "id3", initialTimestamp - targetPrecision.toMillis(1));
         runner.run();
         runner.assertAllFlowFilesTransferred(ConcreteListProcessor.REL_SUCCESS, 0);
         runner.clearTransferState();
 
+        // If an entry whose timestamp is the same with the last processed timestamp should not be listed.
         proc.addEntity("name", "id2", initialTimestamp);
         runner.run();
         runner.assertAllFlowFilesTransferred(ConcreteListProcessor.REL_SUCCESS, 0);
         runner.clearTransferState();
 
         // Now a new file beyond the current time enters
-        proc.addEntity("name", "id2", initialTimestamp + 1);
+        proc.addEntity("name", "id2", initialTimestamp + targetPrecision.toMillis(1));
 
         // It should show up
         runner.run();
@@ -159,19 +208,38 @@ public class TestAbstractListProcessor {
     }
 
     @Test
+    public void testOnlyNewEntriesEmittedMillisPrecision() throws Exception {
+        testOnlyNewEntriesEmitted(TimeUnit.MILLISECONDS);
+    }
+
+    @Test
+    public void testOnlyNewEntriesEmittedSecondPrecision() throws Exception {
+        testOnlyNewEntriesEmitted(TimeUnit.SECONDS);
+    }
+
+    /**
+     * This test is ignored because it needs to wait two minutes. Not good for automated unit testing, but still valuable when executed manually.
+     */
+    @Ignore
+    @Test
+    public void testOnlyNewEntriesEmittedMinutesPrecision() throws Exception {
+        testOnlyNewEntriesEmitted(TimeUnit.MINUTES);
+    }
+
+    @Test
     public void testHandleRestartWithEntriesAlreadyTransferredAndNoneNew() throws Exception {
         final ConcreteListProcessor proc = new ConcreteListProcessor();
         final TestRunner runner = TestRunners.newTestRunner(proc);
 
-        final long initialTimestamp = System.nanoTime();
+        final long initialTimestamp = System.currentTimeMillis();
 
         proc.addEntity("name", "id", initialTimestamp);
         proc.addEntity("name", "id2", initialTimestamp);
 
         // Emulate having state but not having had the processor run such as in a restart
         final Map<String, String> preexistingState = new HashMap<>();
-        preexistingState.put(AbstractListProcessor.LISTING_TIMESTAMP_KEY, Long.toString(initialTimestamp));
-        preexistingState.put(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY, Long.toString(initialTimestamp));
+        preexistingState.put(AbstractListProcessor.LATEST_LISTED_ENTRY_TIMESTAMP_KEY, Long.toString(initialTimestamp));
+        preexistingState.put(AbstractListProcessor.LAST_PROCESSED_LATEST_ENTRY_TIMESTAMP_KEY, Long.toString(initialTimestamp));
         runner.getStateManager().setState(preexistingState, Scope.CLUSTER);
 
         // run for the first time
@@ -223,23 +291,23 @@ public class TestAbstractListProcessor {
         runner.enableControllerService(cache);
         runner.setProperty(AbstractListProcessor.DISTRIBUTED_CACHE_SERVICE, "cache");
 
-        final long initialTimestamp = System.nanoTime();
+        final long initialTimestamp = System.currentTimeMillis();
 
         proc.addEntity("name", "id", initialTimestamp);
         runner.run();
 
         final Map<String, String> expectedState = new HashMap<>();
         // Ensure only timestamp is migrated
-        expectedState.put(AbstractListProcessor.LISTING_TIMESTAMP_KEY, String.valueOf(initialTimestamp));
-        expectedState.put(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY, "0");
+        expectedState.put(AbstractListProcessor.LATEST_LISTED_ENTRY_TIMESTAMP_KEY, String.valueOf(initialTimestamp));
+        expectedState.put(AbstractListProcessor.LAST_PROCESSED_LATEST_ENTRY_TIMESTAMP_KEY, "0");
         runner.getStateManager().assertStateEquals(expectedState, Scope.CLUSTER);
 
         Thread.sleep(DEFAULT_SLEEP_MILLIS);
 
         runner.run();
         // Ensure only timestamp is migrated
-        expectedState.put(AbstractListProcessor.LISTING_TIMESTAMP_KEY, String.valueOf(initialTimestamp));
-        expectedState.put(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY, String.valueOf(initialTimestamp));
+        expectedState.put(AbstractListProcessor.LATEST_LISTED_ENTRY_TIMESTAMP_KEY, String.valueOf(initialTimestamp));
+        expectedState.put(AbstractListProcessor.LAST_PROCESSED_LATEST_ENTRY_TIMESTAMP_KEY, String.valueOf(initialTimestamp));
         runner.getStateManager().assertStateEquals(expectedState, Scope.CLUSTER);
     }
 
@@ -261,8 +329,8 @@ public class TestAbstractListProcessor {
         final MockStateManager stateManager = runner.getStateManager();
         final Map<String, String> expectedState = new HashMap<>();
         // Ensure only timestamp is migrated
-        expectedState.put(AbstractListProcessor.LISTING_TIMESTAMP_KEY, "1492");
-        expectedState.put(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY, "1492");
+        expectedState.put(AbstractListProcessor.LATEST_LISTED_ENTRY_TIMESTAMP_KEY, "1492");
+        expectedState.put(AbstractListProcessor.LAST_PROCESSED_LATEST_ENTRY_TIMESTAMP_KEY, "1492");
         stateManager.assertStateEquals(expectedState, Scope.CLUSTER);
     }
 
@@ -305,8 +373,8 @@ public class TestAbstractListProcessor {
         // Verify the state manager now maintains the associated state
         final Map<String, String> expectedState = new HashMap<>();
         // Ensure only timestamp is migrated
-        expectedState.put(AbstractListProcessor.LISTING_TIMESTAMP_KEY, "1492");
-        expectedState.put(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY, "1492");
+        expectedState.put(AbstractListProcessor.LATEST_LISTED_ENTRY_TIMESTAMP_KEY, "1492");
+        expectedState.put(AbstractListProcessor.LAST_PROCESSED_LATEST_ENTRY_TIMESTAMP_KEY, "1492");
         runner.getStateManager().assertStateEquals(expectedState, Scope.CLUSTER);
     }
 
@@ -318,7 +386,7 @@ public class TestAbstractListProcessor {
 
         runner.assertAllFlowFilesTransferred(ConcreteListProcessor.REL_SUCCESS, 0);
 
-        final long initialEventTimestamp = System.nanoTime();
+        final long initialEventTimestamp = System.currentTimeMillis();
         proc.addEntity("name", "id", initialEventTimestamp);
         proc.addEntity("name", "id2", initialEventTimestamp);
 
@@ -368,7 +436,7 @@ public class TestAbstractListProcessor {
         final TestRunner runner = TestRunners.newTestRunner(proc);
         runner.run();
 
-        final long initialTimestamp = System.nanoTime();
+        final long initialTimestamp = System.currentTimeMillis();
 
         runner.assertAllFlowFilesTransferred(ConcreteListProcessor.REL_SUCCESS, 0);
         proc.addEntity("name", "id", initialTimestamp);
@@ -390,8 +458,8 @@ public class TestAbstractListProcessor {
         final Map<String, String> map = stateMap.toMap();
         // Ensure only timestamp is migrated
         assertEquals(2, map.size());
-        assertEquals(Long.toString(initialTimestamp), map.get(AbstractListProcessor.LISTING_TIMESTAMP_KEY));
-        assertEquals(Long.toString(initialTimestamp), map.get(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY));
+        assertEquals(Long.toString(initialTimestamp), map.get(AbstractListProcessor.LATEST_LISTED_ENTRY_TIMESTAMP_KEY));
+        assertEquals(Long.toString(initialTimestamp), map.get(AbstractListProcessor.LAST_PROCESSED_LATEST_ENTRY_TIMESTAMP_KEY));
 
         proc.addEntity("new name", "new id", initialTimestamp + 1);
         runner.run();
@@ -403,9 +471,9 @@ public class TestAbstractListProcessor {
         assertEquals(3, updatedStateMap.getVersion());
 
         assertEquals(2, updatedStateMap.toMap().size());
-        assertEquals(Long.toString(initialTimestamp + 1), updatedStateMap.get(AbstractListProcessor.LISTING_TIMESTAMP_KEY));
+        assertEquals(Long.toString(initialTimestamp + 1), updatedStateMap.get(AbstractListProcessor.LATEST_LISTED_ENTRY_TIMESTAMP_KEY));
         // Processed timestamp is now caught up
-        assertEquals(Long.toString(initialTimestamp + 1), updatedStateMap.get(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY));
+        assertEquals(Long.toString(initialTimestamp + 1), updatedStateMap.get(AbstractListProcessor.LAST_PROCESSED_LATEST_ENTRY_TIMESTAMP_KEY));
     }
 
     private static class DistributedCache extends AbstractControllerService implements DistributedMapCacheClient {
