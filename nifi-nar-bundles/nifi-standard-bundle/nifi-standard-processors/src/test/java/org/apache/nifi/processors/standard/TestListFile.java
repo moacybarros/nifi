@@ -33,8 +33,10 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -406,6 +408,99 @@ public class TestListFile {
 
         runNext();
         runner.assertTransferCount(ListFile.REL_SUCCESS, 0);
+    }
+
+    private void makeTestFile(final String name, final long millis, final Map<String, Long> fileTimes) throws IOException {
+        final File file = new File(TESTDIR + name);
+        assertTrue(file.createNewFile());
+        assertTrue(file.setLastModified(millis));
+        fileTimes.put(file.getName(), file.lastModified());
+    }
+
+    private void dumpState(final String message,
+                           final Map<String, String> state, final DateFormat format,
+                           final List<MockFlowFile> flowfiles, final long start, final Map<String, Long> fileTimes,
+                           final File folder) {
+        final long nTime = System.currentTimeMillis();
+        System.out.println(message);
+        System.out.println("--------------------------------------------------------------------");
+        System.out.printf("%-19s   %-13s %-23s %s\n", "", "timestamp", "date from timestamp", "t0 delta");
+        System.out.printf("%-19s   %-13s %-23s %s\n", "-------------------", "-------------", "-----------------------", "--------");
+        System.out.printf("%-19s = %13d %s %8d\n", "current time", nTime, format.format(nTime), nTime - start);
+        System.out.println("---- processor state -----------------------------------------------");
+        if (state.containsKey("processed.timestamp")) {
+            final long pTime = Long.parseLong(state.get("processed.timestamp"));
+            System.out.printf("%19s = %13d %s %8d\n", "processed.timestamp", pTime, format.format(pTime), pTime - start);
+        } else {
+            System.out.printf("%19s = na\n", "processed.timestamp");
+        }
+        if (state.containsKey("listing.timestamp")) {
+            final long lTime = Long.parseLong(state.get("listing.timestamp"));
+            System.out.printf("%19s = %13d %s %8d\n", "listing.timestamp", lTime, format.format(lTime), lTime - start);
+        } else {
+            System.out.printf("%19s = na\n", "listing.timestamp");
+        }
+        System.out.println("---- input folder contents -----------------------------------------");
+        File[] files = folder.listFiles();
+        if (files != null) {
+            Arrays.sort(files);
+            for (File file : files) {
+                System.out.printf("%19s = %12d %s %8d\n", file.getName(), file.lastModified(), format.format(file.lastModified()), file.lastModified() - start);
+            }
+        }
+        System.out.println("---- output flowfiles ----------------------------------------------");
+        for (MockFlowFile ff : flowfiles) {
+            String fName = ff.getAttribute(CoreAttributes.FILENAME.key());
+            long fTime = fileTimes.get(fName);
+            System.out.printf("%19s = %13d %s %8d\n", fName, fTime , format.format(fTime), fTime - start);
+        }
+        System.out.println("REL_SUCCESS count = " + flowfiles.size());
+        System.out.println("--------------------------------------------------------------------");
+        System.out.println("");
+    }
+
+    @Test
+    public void testFilterRunMidFileWrites() throws Exception {
+        final DateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS");
+        final long start = System.currentTimeMillis();
+        final Map<String, Long> fileTimes = new HashMap<>();
+        final File testdir = new File(TESTDIR);
+
+        System.out.println("-----------------------------------------------------------");
+        System.out.printf("%19s   %13d %s\n", "start time (t0)", syncTime, format.format(syncTime));
+        System.out.println("-----------------------------------------------------------");
+        System.out.println("");
+
+        runner.setProperty(ListFile.DIRECTORY, testDir.getAbsolutePath());
+
+        makeTestFile("/batch1-age3.txt", time3millis, fileTimes);
+        makeTestFile("/batch1-age4.txt", time4millis, fileTimes);
+        makeTestFile("/batch1-age5.txt", time5millis, fileTimes);
+        dumpState("create files batch1-age3.txt, batch1-age4.txt, batch1-age5.txt", context.getStateManager().getState(processor.getStateScope(context)).toMap(),
+                format, runner.getFlowFilesForRelationship(ListFile.REL_SUCCESS), start, fileTimes, testdir);
+
+        // check files
+        runNext();
+        dumpState("processor run 1", context.getStateManager().getState(processor.getStateScope(context)).toMap(),
+                format, runner.getFlowFilesForRelationship(ListFile.REL_SUCCESS), start, fileTimes, new File(TESTDIR));
+
+        runner.assertAllFlowFilesTransferred(ListFile.REL_SUCCESS);
+        runner.assertTransferCount(ListFile.REL_SUCCESS, 3);
+        assertEquals(3, runner.getFlowFilesForRelationship(ListFile.REL_SUCCESS).size());
+
+        // Add files having timestamps as follows compared to the previously processed latest timestamp (time3millis)
+        makeTestFile("/batch2-age2.txt", time2millis, fileTimes); // newer timestamp
+        makeTestFile("/batch2-age3.txt", time3millis, fileTimes); // same timestamp
+        makeTestFile("/batch2-age4.txt", time4millis, fileTimes); // older timestamp
+        dumpState("add files batch2-age2, batch2-age3, batch2-age4", context.getStateManager().getState(processor.getStateScope(context)).toMap(),
+                format, runner.getFlowFilesForRelationship(ListFile.REL_SUCCESS), start, fileTimes, new File(TESTDIR));
+
+        runNext();
+        dumpState("after run 2", context.getStateManager().getState(processor.getStateScope(context)).toMap(),
+                format, runner.getFlowFilesForRelationship(ListFile.REL_SUCCESS), start, fileTimes, new File(TESTDIR));
+
+        runner.assertAllFlowFilesTransferred(ListFile.REL_SUCCESS);
+        runner.assertTransferCount(ListFile.REL_SUCCESS, 2);
     }
 
     @Test

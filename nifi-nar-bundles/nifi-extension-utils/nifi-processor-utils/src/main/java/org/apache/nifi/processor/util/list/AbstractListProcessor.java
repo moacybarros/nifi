@@ -384,6 +384,7 @@ public abstract class AbstractListProcessor<T extends ListableEntity> extends Ab
                 filesystemHasSeconds = entityTimestampMillis % 60_000 > 0;
             }
             // New entries are all those that occur at or after the associated timestamp
+            // TODO: here, add ome more OR case for entityTimestampMillis == lastProcessedLatestEntryTimestampMillis.
             final boolean newEntry = minTimestampToListMillis == null || entityTimestampMillis >= minTimestampToListMillis && entityTimestampMillis > lastProcessedLatestEntryTimestampMillis;
 
             if (newEntry) {
