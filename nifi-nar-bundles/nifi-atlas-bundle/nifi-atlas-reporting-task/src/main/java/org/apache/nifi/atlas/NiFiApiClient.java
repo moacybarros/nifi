@@ -48,6 +48,7 @@ import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
+// TODO: This class can be replaced with EventAccess?
 public class NiFiApiClient {
 
     private static Logger logger = LoggerFactory.getLogger(NiFiApiClient.class);
