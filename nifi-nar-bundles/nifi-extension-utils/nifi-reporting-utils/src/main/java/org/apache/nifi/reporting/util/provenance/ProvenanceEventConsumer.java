@@ -71,8 +71,10 @@ public class ProvenanceEventConsumer {
         }
     }
 
-    public void addTargetEventType(final ProvenanceEventType eventType) {
-        eventTypes.add(eventType);
+    public void addTargetEventType(final ProvenanceEventType ... types) {
+        for (ProvenanceEventType type : types) {
+            eventTypes.add(type);
+        }
     }
 
     public void addTargetComponentId(final String componentId) {

@@ -1,9 +1,14 @@
 package org.apache.nifi.atlas.reporting;
 
+import org.apache.atlas.typesystem.Referenceable;
 import org.apache.nifi.annotation.behavior.Restricted;
 import org.apache.nifi.annotation.behavior.Stateful;
 import org.apache.nifi.annotation.lifecycle.OnScheduled;
 import org.apache.nifi.annotation.lifecycle.OnUnscheduled;
+import org.apache.nifi.atlas.provenance.ClusterResolver;
+import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzer;
+import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzerFactory;
+import org.apache.nifi.atlas.provenance.RegexClusterResolver;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.components.state.Scope;
 import org.apache.nifi.controller.ConfigurationContext;
@@ -16,6 +21,9 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.apache.nifi.provenance.ProvenanceEventType.FETCH;
+import static org.apache.nifi.provenance.ProvenanceEventType.RECEIVE;
+import static org.apache.nifi.provenance.ProvenanceEventType.SEND;
 import static org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer.BATCH_SIZE;
 import static org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer.START_POSITION;
 
@@ -25,6 +33,7 @@ import static org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer.
 public class AtlasNiFiProvenanve extends AbstractReportingTask {
 
     private volatile ProvenanceEventConsumer consumer;
+    private volatile ClusterResolver clusterResolver;
 
     @Override
     protected List<PropertyDescriptor> getSupportedPropertyDescriptors() {
@@ -37,11 +46,15 @@ public class AtlasNiFiProvenanve extends AbstractReportingTask {
     @OnScheduled
     public void onScheduled(final ConfigurationContext context) throws IOException {
         consumer = new ProvenanceEventConsumer();
-        // TODO: pass context to initialize consumer?
         consumer.setStartPositionValue(context.getProperty(START_POSITION).getValue());
         consumer.setBatchSize(context.getProperty(BATCH_SIZE).asInteger());
+        // TODO: Add CREATE for ListXXXX?
+        consumer.addTargetEventType(FETCH, RECEIVE, SEND);
         consumer.setLogger(getLogger());
         consumer.setScheduled(true);
+
+        // TODO: setup
+        clusterResolver = new RegexClusterResolver();
     }
 
     @OnUnscheduled
@@ -55,6 +68,9 @@ public class AtlasNiFiProvenanve extends AbstractReportingTask {
         consumer.consumeEvents(context.getEventAccess(), context.getStateManager(), events -> {
             for (ProvenanceEventRecord event : events) {
                 getLogger().warn("Received event: {}", new Object[]{event});
+                // TODO: get NiFiProvenanceEventAnalyzer
+                final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(event.getComponentType(), clusterResolver);
+                final Referenceable ref = analyzer.analyze(event);
             }
         });
     }

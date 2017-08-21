@@ -57,9 +57,11 @@ public class ITNiFiFlowAnalyzer {
         niFiFlow.dump();
 
         final List<NiFiFlowPath> niFiFlowPaths = flowAnalyzer.analyzePaths(niFiFlow);
-        niFiFlowPaths.forEach(path -> logger.info("{} -> {} -> {}",
+        logger.info("Paths:");
+        niFiFlowPaths.forEach(path -> logger.info("{} -> {} ({}) -> {}",
                 path.getIncomingPaths().size(),
                 niFiFlow.getProcessors().get(path.getId()).getName(),
+                path.getProcessorIds().size(),
                 path.getOutgoingPaths().size()));
     }
 
