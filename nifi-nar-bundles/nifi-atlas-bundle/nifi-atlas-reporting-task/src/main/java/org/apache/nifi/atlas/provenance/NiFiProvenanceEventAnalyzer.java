@@ -1,6 +1,6 @@
 package org.apache.nifi.atlas.provenance;
 
-import org.apache.atlas.typesystem.Referenceable;
+import org.apache.nifi.logging.ComponentLog;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
 
 import java.net.URI;
@@ -22,7 +22,7 @@ public interface NiFiProvenanceEventAnalyzer {
         }
     }
 
-    Referenceable analyze(ProvenanceEventRecord event);
+    DataSetRefs analyze(ProvenanceEventRecord event);
 
     void setClusterResolver(ClusterResolver clusterResolver);
 
@@ -42,5 +42,7 @@ public interface NiFiProvenanceEventAnalyzer {
     default String targetTransitUriPattern() {
         return null;
     }
+
+    void setLogger(ComponentLog logger);
 
 }

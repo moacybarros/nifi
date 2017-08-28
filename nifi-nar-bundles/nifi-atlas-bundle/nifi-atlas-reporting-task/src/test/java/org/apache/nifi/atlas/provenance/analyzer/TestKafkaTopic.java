@@ -1,12 +1,32 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.apache.nifi.atlas.provenance.analyzer;
 
 import org.apache.atlas.typesystem.Referenceable;
 import org.apache.nifi.atlas.provenance.ClusterResolver;
+import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzer;
 import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzerFactory;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
+import org.apache.nifi.provenance.ProvenanceEventType;
 import org.junit.Test;
 import org.mockito.Mockito;
+
+import java.util.Set;
 
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
@@ -18,22 +38,27 @@ import static org.mockito.Mockito.when;
 public class TestKafkaTopic {
 
     @Test
-    public void test() {
+    public void testPublishKafka() {
         final String processorName = "PublishKafka";
+        final String transitUri = "PLAINTEXT://kafka.example.com:6667/topicA";
         final ProvenanceEventRecord record = Mockito.mock(ProvenanceEventRecord.class);
         when(record.getComponentType()).thenReturn(processorName);
-        when(record.getTransitUri()).thenReturn("PLAINTEXT://kafka.example.com:6667/topicName");
+        when(record.getTransitUri()).thenReturn(transitUri);
+        when(record.getEventType()).thenReturn(ProvenanceEventType.SEND);
 
         final ClusterResolver clusterResolver = Mockito.mock(ClusterResolver.class);
-        when(clusterResolver.toClusterName(matches("kafka.example.com"))).thenReturn("clusterName");
+        when(clusterResolver.toClusterName(matches("kafka\\.example\\.com"))).thenReturn("cluster1");
 
-        final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(processorName, clusterResolver);
-
+        final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(processorName, transitUri);
         assertNotNull(analyzer);
 
-        final Referenceable ref = analyzer.analyze(record);
-        assertEquals("topicName", ref.get(ATTR_NAME));
-        assertEquals("topicName", ref.get("topic"));
-        assertEquals("topicName@clusterName", ref.get(ATTR_QUALIFIED_NAME));
+        analyzer.setClusterResolver(clusterResolver);
+        final DataSetRefs refs = analyzer.analyze(record);
+        assertEquals(0, refs.getInputs().size());
+        assertEquals(1, refs.getOutputs().size());
+        Referenceable ref = refs.getOutputs().iterator().next();
+        assertEquals("topicA", ref.get(ATTR_NAME));
+        assertEquals("topicA", ref.get("topic"));
+        assertEquals("topicA@cluster1", ref.get(ATTR_QUALIFIED_NAME));
     }
 }

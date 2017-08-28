@@ -3,9 +3,12 @@ package org.apache.nifi.atlas;
 import org.apache.atlas.hook.AtlasHook;
 import org.apache.atlas.notification.hook.HookNotification;
 import org.apache.atlas.typesystem.Referenceable;
+import org.apache.nifi.atlas.provenance.DataSetRefs;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_DESCRIPTION;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_INPUTS;
@@ -175,5 +178,34 @@ public class NiFIAtlasHook extends AtlasHook {
         messages.add(new HookNotification.EntityPartialUpdateRequest("nifi", TYPE_NIFI_FLOW_PATH, ATTR_QUALIFIED_NAME, "path5", path5));
         notifyEntities(messages);
 
+    }
+
+    private static final String NIFI_USER = "nifi";
+
+    private final List<HookNotification.HookNotificationMessage> messages = new ArrayList<>();
+
+    @SuppressWarnings("unchecked")
+    private void addDataSetRefs(Set<Referenceable> refs, Referenceable nifiFlowPath, String targetAttribute) {
+        if (refs != null && !refs.isEmpty()) {
+            for (Referenceable ref : refs) {
+                final HookNotification.EntityCreateRequest createDataSet = new HookNotification.EntityCreateRequest(NIFI_USER, ref);
+                messages.add(createDataSet);
+            }
+
+            Object updatedRef = nifiFlowPath.get(targetAttribute);
+            if (updatedRef == null) {
+                updatedRef = refs;
+            } else {
+                ((Collection<Referenceable>) updatedRef).addAll(refs);
+            }
+            nifiFlowPath.set(targetAttribute, updatedRef);
+        }
+    }
+
+    public void addDataSetRefs(DataSetRefs refs, Referenceable nifiFlowPath) {
+        addDataSetRefs(refs.getInputs(), nifiFlowPath, ATTR_INPUTS);
+        addDataSetRefs(refs.getOutputs(), nifiFlowPath, ATTR_OUTPUTS);
+        messages.add(new HookNotification.EntityPartialUpdateRequest(NIFI_USER, TYPE_NIFI_FLOW_PATH,
+                ATTR_QUALIFIED_NAME, (String) nifiFlowPath.get(ATTR_QUALIFIED_NAME), nifiFlowPath));
     }
 }

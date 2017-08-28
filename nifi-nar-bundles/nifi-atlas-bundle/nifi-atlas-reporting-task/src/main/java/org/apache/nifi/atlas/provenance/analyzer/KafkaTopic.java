@@ -2,6 +2,7 @@ package org.apache.nifi.atlas.provenance.analyzer;
 
 import org.apache.atlas.typesystem.Referenceable;
 import org.apache.nifi.atlas.provenance.AbstractNiFiProvenanceEventAnalyzer;
+import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
 
 import java.net.URI;
@@ -20,7 +21,7 @@ public class KafkaTopic extends AbstractNiFiProvenanceEventAnalyzer {
     private static final String ATTR_TOPIC = "topic";
 
     @Override
-    public Referenceable analyze(ProvenanceEventRecord event) {
+    public DataSetRefs analyze(ProvenanceEventRecord event) {
         final Referenceable ref = new Referenceable(TYPE);
         final URI uri = parseUri(event.getTransitUri());
         final String clusterName = clusterResolver.toClusterName(uri.getHost());
@@ -29,7 +30,8 @@ public class KafkaTopic extends AbstractNiFiProvenanceEventAnalyzer {
         ref.set(ATTR_NAME, topicName);
         ref.set(ATTR_TOPIC, topicName);
         ref.set(ATTR_QUALIFIED_NAME, toQualifiedName(clusterName, topicName));
-        return ref;
+
+        return singleDataSetRef(event.getEventType(), ref);
     }
 
     @Override
