@@ -16,6 +16,7 @@
  */
 package org.apache.nifi.atlas.provenance;
 
+import org.apache.nifi.atlas.resolver.RegexClusterResolver;
 import org.apache.nifi.components.ValidationContext;
 import org.apache.nifi.components.ValidationResult;
 import org.apache.nifi.context.PropertyContext;
@@ -54,7 +55,7 @@ public class TestRegexClusterResolver {
         assertEquals(0, validationResults.size());
         resolver.configure(context);
 
-        assertNull(resolver.toClusterName("example.com"));
+        assertNull(resolver.fromHostname("example.com"));
     }
 
     @Test
@@ -109,15 +110,15 @@ public class TestRegexClusterResolver {
 
         resolver.configure(context);
 
-        assertEquals("Cluster1", resolver.toClusterName("host1.example.com"));
+        assertEquals("Cluster1", resolver.fromHostname("host1.example.com"));
     }
 
     @Test
     public void testMultiplePatterns() {
         final Map<String, String> properties = new HashMap<>();
         final String propertyName = RegexClusterResolver.PATTERN_PROPERTY_PREFIX + "Cluster1";
-        // Hostname or local ip address
-        properties.put(propertyName, "^.*\\.example.com$ ^192.168.1.[\\d]+$");
+        // Hostname or local ip address, delimited with a whitespace
+        properties.put(propertyName, "^.*\\.example.com$\n^192.168.1.[\\d]+$");
         setupMock(properties);
         final RegexClusterResolver resolver = new RegexClusterResolver();
 
@@ -126,10 +127,10 @@ public class TestRegexClusterResolver {
 
         resolver.configure(context);
 
-        assertEquals("Cluster1", resolver.toClusterName("host1.example.com"));
-        assertEquals("Cluster1", resolver.toClusterName("192.168.1.10"));
-        assertEquals("Cluster1", resolver.toClusterName("192.168.1.22"));
-        assertNull(resolver.toClusterName("192.168.2.30"));
+        assertEquals("Cluster1", resolver.fromHostname("host1.example.com"));
+        assertEquals("Cluster1", resolver.fromHostname("192.168.1.10"));
+        assertEquals("Cluster1", resolver.fromHostname("192.168.1.22"));
+        assertNull(resolver.fromHostname("192.168.2.30"));
     }
 
     @Test
@@ -148,13 +149,13 @@ public class TestRegexClusterResolver {
 
         resolver.configure(context);
 
-        assertEquals("Cluster1", resolver.toClusterName("host1.c1.example.com"));
-        assertEquals("Cluster1", resolver.toClusterName("192.168.1.10"));
-        assertEquals("Cluster1", resolver.toClusterName("192.168.1.22"));
-        assertEquals("Cluster2", resolver.toClusterName("host2.c2.example.com"));
-        assertEquals("Cluster2", resolver.toClusterName("192.168.2.10"));
-        assertEquals("Cluster2", resolver.toClusterName("192.168.2.22"));
-        assertNull(resolver.toClusterName("192.168.3.30"));
+        assertEquals("Cluster1", resolver.fromHostname("host1.c1.example.com"));
+        assertEquals("Cluster1", resolver.fromHostname("192.168.1.10"));
+        assertEquals("Cluster1", resolver.fromHostname("192.168.1.22"));
+        assertEquals("Cluster2", resolver.fromHostname("host2.c2.example.com"));
+        assertEquals("Cluster2", resolver.fromHostname("192.168.2.10"));
+        assertEquals("Cluster2", resolver.fromHostname("192.168.2.22"));
+        assertNull(resolver.fromHostname("192.168.3.30"));
     }
 
 }

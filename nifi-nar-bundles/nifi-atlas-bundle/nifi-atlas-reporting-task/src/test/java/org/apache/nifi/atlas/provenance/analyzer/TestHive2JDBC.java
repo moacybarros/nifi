@@ -17,10 +17,10 @@
 package org.apache.nifi.atlas.provenance.analyzer;
 
 import org.apache.atlas.typesystem.Referenceable;
-import org.apache.nifi.atlas.provenance.ClusterResolver;
 import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzer;
 import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzerFactory;
+import org.apache.nifi.atlas.resolver.ClusterResolvers;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
 import org.apache.nifi.provenance.ProvenanceEventType;
 import org.apache.nifi.util.MockComponentLog;
@@ -53,13 +53,13 @@ public class TestHive2JDBC {
         when(record.getTransitUri()).thenReturn(transitUri);
         when(record.getEventType()).thenReturn(ProvenanceEventType.SEND);
 
-        final ClusterResolver clusterResolver = Mockito.mock(ClusterResolver.class);
-        when(clusterResolver.toClusterName(matches(".+\\.example\\.com"))).thenReturn("cluster1");
+        final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
+        when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
 
         final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(processorName, transitUri);
         assertNotNull(analyzer);
 
-        analyzer.setClusterResolver(clusterResolver);
+        analyzer.setClusterResolvers(clusterResolvers);
         analyzer.setLogger(new MockComponentLog("componentId", processorName));
 
         final DataSetRefs refs = analyzer.analyze(record);
@@ -86,13 +86,13 @@ public class TestHive2JDBC {
         when(record.getAttribute(Hive2JDBC.ATTR_INPUT_TABLES)).thenReturn("tableA1, tableA2");
         when(record.getAttribute(Hive2JDBC.ATTR_OUTPUT_TABLES)).thenReturn("databaseB.tableB1");
 
-        final ClusterResolver clusterResolver = Mockito.mock(ClusterResolver.class);
-        when(clusterResolver.toClusterName(matches(".+\\.example\\.com"))).thenReturn("cluster1");
+        final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
+        when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
 
         final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(processorName, transitUri);
         assertNotNull(analyzer);
 
-        analyzer.setClusterResolver(clusterResolver);
+        analyzer.setClusterResolvers(clusterResolvers);
         analyzer.setLogger(new MockComponentLog("componentId", processorName));
 
         final DataSetRefs refs = analyzer.analyze(record);

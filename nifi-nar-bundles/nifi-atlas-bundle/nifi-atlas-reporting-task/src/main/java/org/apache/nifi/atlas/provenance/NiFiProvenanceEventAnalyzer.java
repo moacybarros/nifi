@@ -1,5 +1,6 @@
 package org.apache.nifi.atlas.provenance;
 
+import org.apache.nifi.atlas.resolver.ClusterResolvers;
 import org.apache.nifi.logging.ComponentLog;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
 
@@ -24,7 +25,7 @@ public interface NiFiProvenanceEventAnalyzer {
 
     DataSetRefs analyze(ProvenanceEventRecord event);
 
-    void setClusterResolver(ClusterResolver clusterResolver);
+    void setClusterResolvers(ClusterResolvers clusterResolvers);
 
     /**
      * Returns target component type pattern that this Analyzer supports.

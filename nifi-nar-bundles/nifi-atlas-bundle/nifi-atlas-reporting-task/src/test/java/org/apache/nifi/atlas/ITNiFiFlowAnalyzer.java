@@ -35,7 +35,7 @@ public class ITNiFiFlowAnalyzer {
 
     @Before
     public void setup() throws Exception {
-        nifiClient = new NiFiApiClient("http://localhost:8080/");
+        nifiClient = new NiFiApiClient("http://0.hdpf.aws.mine:9990/");
 
         atlasClient = NiFiAtlasClient.getInstance();
         // Add your atlas server ip address into /etc/hosts as atlas.example.com
@@ -45,7 +45,6 @@ public class ITNiFiFlowAnalyzer {
         final Properties atlasProperties = new Properties();
         try (InputStream in = ITNiFiFlowAnalyzer.class.getResourceAsStream("/atlas-application.properties")) {
             atlasProperties.load(in);
-            atlasVariables.setAtlasProperties(atlasProperties);
         }
 
     }
@@ -56,7 +55,8 @@ public class ITNiFiFlowAnalyzer {
         final NiFiFlow niFiFlow = flowAnalyzer.analyzeProcessGroup(atlasVariables);
         niFiFlow.dump();
 
-        final List<NiFiFlowPath> niFiFlowPaths = flowAnalyzer.analyzePaths(niFiFlow);
+        flowAnalyzer.analyzePaths(niFiFlow);
+        final List<NiFiFlowPath> niFiFlowPaths = niFiFlow.getFlowPaths();
         logger.info("Paths:");
         niFiFlowPaths.forEach(path -> logger.info("{} -> {} ({}) -> {}",
                 path.getIncomingPaths().size(),
@@ -71,10 +71,11 @@ public class ITNiFiFlowAnalyzer {
         final NiFiFlow niFiFlow = flowAnalyzer.analyzeProcessGroup(atlasVariables);
         niFiFlow.dump();
 
-        final List<NiFiFlowPath> niFiFlowPaths = flowAnalyzer.analyzePaths(niFiFlow);
+        flowAnalyzer.analyzePaths(niFiFlow);
+        final List<NiFiFlowPath> niFiFlowPaths = niFiFlow.getFlowPaths();
         logger.info("nifiFlowPath={}", niFiFlowPaths);
 
-        atlasClient.registerNiFiFlow(niFiFlow, niFiFlowPaths);
+        atlasClient.registerNiFiFlow(niFiFlow);
     }
 
 }

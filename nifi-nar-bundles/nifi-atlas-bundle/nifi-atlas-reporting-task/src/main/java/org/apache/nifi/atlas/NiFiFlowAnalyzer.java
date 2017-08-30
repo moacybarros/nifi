@@ -19,14 +19,11 @@ package org.apache.nifi.atlas;
 import org.apache.atlas.model.instance.AtlasEntity;
 import org.apache.atlas.model.instance.AtlasObjectId;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.nifi.atlas.processors.Egress;
-import org.apache.nifi.atlas.processors.EgressProcessors;
-import org.apache.nifi.atlas.processors.Ingress;
-import org.apache.nifi.atlas.processors.IngressProcessors;
 import org.apache.nifi.web.api.dto.ConnectableDTO;
 import org.apache.nifi.web.api.dto.ConnectionDTO;
 import org.apache.nifi.web.api.dto.ProcessorDTO;
 import org.apache.nifi.web.api.dto.flow.FlowDTO;
+import org.apache.nifi.web.api.entity.ConnectionEntity;
 import org.apache.nifi.web.api.entity.PortEntity;
 import org.apache.nifi.web.api.entity.ProcessGroupEntity;
 import org.apache.nifi.web.api.entity.ProcessGroupFlowEntity;
@@ -46,7 +43,6 @@ import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
-import static org.apache.nifi.atlas.AtlasObjectIdUtils.validObjectId;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_DESCRIPTION;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NIFI_FLOW;
@@ -85,14 +81,14 @@ public class NiFiFlowAnalyzer {
             nifiFlow.setDescription(processGroupEntity.getComponent().getComments());
         }
 
-        analyzeProcessGroup(rootProcessGroup, nifiFlow, atlasVariables);
+        analyzeProcessGroup(rootProcessGroup, nifiFlow);
 
         analyzeRootGroupPorts(nifiFlow, rootProcessGroup);
 
         return nifiFlow;
     }
 
-    public void analyzeRootGroupPorts(NiFiFlow nifiFlow, FlowDTO rootProcessGroup) {
+    private void analyzeRootGroupPorts(NiFiFlow nifiFlow, FlowDTO rootProcessGroup) {
         BiConsumer<PortEntity, Boolean> portEntityCreator = (port, isInput) -> {
             final String typeName = isInput ? TYPE_NIFI_INPUT_PORT : TYPE_NIFI_OUTPUT_PORT;
 
@@ -186,9 +182,9 @@ public class NiFiFlowAnalyzer {
         return rootPortIds;
     }
 
-    public void analyzeProcessGroup(final FlowDTO flow, final NiFiFlow nifiFlow, final AtlasVariables atlasVariables) throws IOException {
+    public void analyzeProcessGroup(final FlowDTO flow, final NiFiFlow nifiFlow) throws IOException {
 
-        flow.getConnections().stream().map(c -> c.getComponent()).forEach(c -> nifiFlow.addConnection(c));
+        flow.getConnections().stream().map(ConnectionEntity::getComponent).forEach(c -> nifiFlow.addConnection(c));
 
         flow.getProcessors().forEach(p -> nifiFlow.addProcessor(p));
 
@@ -200,41 +196,23 @@ public class NiFiFlowAnalyzer {
             final ProcessorDTO processor = entry.getValue();
             final String pid = entry.getKey();
 
-            final Map<String, String> properties = processor.getConfig().getProperties();
-
-            final Ingress ingress = IngressProcessors.get(processor.getType());
-            final Egress egress = EgressProcessors.get(processor.getType());
-
-            final Consumer<AtlasObjectId> putInput = input -> nifiFlow.putInput(pid, input, ingress, properties);
-            final Consumer<AtlasObjectId> putOutput = output -> nifiFlow.putOutput(pid, output, egress, properties);
+            final Consumer<AtlasObjectId> putInput = input -> nifiFlow.putInput(pid, input);
+            final Consumer<AtlasObjectId> putOutput = output -> nifiFlow.putOutput(pid, output);
 
             extractRootGroupPorts(nifiFlow, true, nifiFlow.getIncomingRelationShips(pid)).forEach(putInput);
             extractRootGroupPorts(nifiFlow, false, nifiFlow.getOutgoingRelationShips(pid)).forEach(putOutput);
 
-            if (ingress != null) {
-                final Set<AtlasObjectId> inputs = ingress.getInputs(properties, atlasVariables);
-                if (inputs != null && inputs.size() > 0) {
-                    inputs.stream().filter(validObjectId).forEach(putInput);
-                }
-            } else {
-                // Even if it doesn't have ingress info registered, treat it as a unknown ingress if it doesn't have any incoming relationship.
-                final List<ConnectionDTO> ins = nifiFlow.getIncomingRelationShips(pid);
-                if (ins == null || ins.isEmpty()) {
-                    final AtlasEntity createdData = new AtlasEntity(TYPE_NIFI_DATA);
-                    createdData.setAttribute(ATTR_NIFI_FLOW, nifiFlow.getId());
-                    createdData.setAttribute(ATTR_QUALIFIED_NAME, pid);
-                    createdData.setAttribute(ATTR_NAME, processor.getName());
-                    final AtlasObjectId createdDataId = new AtlasObjectId(TYPE_NIFI_DATA, ATTR_QUALIFIED_NAME, pid);
-                    nifiFlow.getCreatedData().put(createdDataId, createdData);
-                    putInput.accept(createdDataId);
-                }
-            }
-
-            if (egress != null) {
-                final Set<AtlasObjectId> outputs = egress.getOutputs(properties, atlasVariables);
-                if (outputs != null && outputs.size() > 0) {
-                    outputs.stream().filter(validObjectId).forEach(putOutput);
-                }
+            // TODO: do we still need this?
+            // Even if it doesn't have ingress info registered, treat it as a unknown ingress if it doesn't have any incoming relationship.
+            final List<ConnectionDTO> ins = nifiFlow.getIncomingRelationShips(pid);
+            if (ins == null || ins.isEmpty()) {
+                final AtlasEntity createdData = new AtlasEntity(TYPE_NIFI_DATA);
+                createdData.setAttribute(ATTR_NIFI_FLOW, nifiFlow.getId());
+                createdData.setAttribute(ATTR_QUALIFIED_NAME, pid);
+                createdData.setAttribute(ATTR_NAME, processor.getName());
+                final AtlasObjectId createdDataId = new AtlasObjectId(TYPE_NIFI_DATA, ATTR_QUALIFIED_NAME, pid);
+                nifiFlow.getCreatedData().put(createdDataId, createdData);
+                putInput.accept(createdDataId);
             }
         }
 
@@ -247,7 +225,7 @@ public class NiFiFlowAnalyzer {
                 continue;
             }
 
-            analyzeProcessGroup(processGroupFlow.getProcessGroupFlow().getFlow(), nifiFlow, atlasVariables);
+            analyzeProcessGroup(processGroupFlow.getProcessGroupFlow().getFlow(), nifiFlow);
         }
 
     }
@@ -379,7 +357,8 @@ public class NiFiFlowAnalyzer {
         );
     }
 
-    public List<NiFiFlowPath> analyzePaths(NiFiFlow nifiFlow) {
+    // TODO: this can be private?
+    public void analyzePaths(NiFiFlow nifiFlow) {
         // Now let's break it into flow paths.
         final Set<String> headProcessors = nifiFlow.getProcessors().keySet().stream()
                 .filter(pid -> {
@@ -388,16 +367,14 @@ public class NiFiFlowAnalyzer {
                 })
                 .collect(Collectors.toSet());
 
-        List<NiFiFlowPath> paths = new ArrayList<>();
-
         headProcessors.forEach(startPid -> {
+            // TODO: merge it with existing path
             final NiFiFlowPath path = new NiFiFlowPath(startPid);
+            final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
             path.setName("p" + paths.size());
             paths.add(path);
             traverse(nifiFlow, paths, path, startPid);
         });
-
-        return paths;
     }
 
 }

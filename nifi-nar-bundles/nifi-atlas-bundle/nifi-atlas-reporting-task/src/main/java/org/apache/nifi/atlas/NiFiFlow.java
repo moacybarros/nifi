@@ -18,9 +18,6 @@ package org.apache.nifi.atlas;
 
 import org.apache.atlas.model.instance.AtlasEntity;
 import org.apache.atlas.model.instance.AtlasObjectId;
-import org.apache.nifi.atlas.processors.DataSetEntityCreator;
-import org.apache.nifi.atlas.processors.Egress;
-import org.apache.nifi.atlas.processors.Ingress;
 import org.apache.nifi.web.api.dto.ConnectionDTO;
 import org.apache.nifi.web.api.dto.ProcessorDTO;
 import org.apache.nifi.web.api.dto.RemoteProcessGroupDTO;
@@ -51,9 +48,9 @@ public class NiFiFlow implements AtlasProcess {
     private String description;
     private final Set<AtlasObjectId> inputs = new HashSet<>();
     private final Set<AtlasObjectId> outputs = new HashSet<>();
+    private final List<NiFiFlowPath> flowPaths = new ArrayList<>();
     private final Map<String, Set<AtlasObjectId>> processorInputs = new HashMap<>();
     private final Map<String, Set<AtlasObjectId>> processorOutputs = new HashMap<>();
-    private final Map<AtlasObjectId, EntityCreationInfo> entityCreators = new HashMap<>();
     private final Map<String, ProcessorDTO> processors = new HashMap<>();
     private final Map<String, RemoteProcessGroupDTO> remoteProcessGroups = new HashMap<>();
     private final Map<String, List<ConnectionDTO>> incomingRelationShips = new HashMap<>();
@@ -63,11 +60,6 @@ public class NiFiFlow implements AtlasProcess {
     private final Map<AtlasObjectId, AtlasEntity> queues = new HashMap<>();
     private final Map<AtlasObjectId, AtlasEntity> inputPorts = new HashMap<>();
     private final Map<AtlasObjectId, AtlasEntity> outputPorts = new HashMap<>();
-
-    private static class EntityCreationInfo {
-        private DataSetEntityCreator creator;
-        private Map<String, String> properties;
-    }
 
     public NiFiFlow(String flowName, String rootProcessGroupId, String url) {
         this.flowName = flowName;
@@ -100,29 +92,14 @@ public class NiFiFlow implements AtlasProcess {
         return outputs;
     }
 
-    public void putInput(String processorId, AtlasObjectId input, Ingress processor, Map<String, String> properties) {
+    public void putInput(String processorId, AtlasObjectId input) {
         final Set<AtlasObjectId> ids = processorInputs.computeIfAbsent(processorId, k -> new HashSet<>());
         ids.add(input);
-
-        if (processor instanceof DataSetEntityCreator) {
-            addEntityCreator(input, (DataSetEntityCreator) processor, properties);
-        }
     }
 
-    public void putOutput(String processorId, AtlasObjectId output, Egress processor, Map<String, String> properties) {
+    public void putOutput(String processorId, AtlasObjectId output) {
         final Set<AtlasObjectId> ids = processorOutputs.computeIfAbsent(processorId, k -> new HashSet<>());
         ids.add(output);
-
-        if (processor instanceof DataSetEntityCreator) {
-            addEntityCreator(output, (DataSetEntityCreator) processor, properties);
-        }
-    }
-
-    private void addEntityCreator(AtlasObjectId objectId, DataSetEntityCreator creator, Map<String, String> properties) {
-        final EntityCreationInfo info = new EntityCreationInfo();
-        info.creator =  creator;
-        info.properties = properties;
-        entityCreators.put(objectId, info);
     }
 
     public void addConnection(ConnectionDTO c) {
@@ -150,22 +127,6 @@ public class NiFiFlow implements AtlasProcess {
 
     public String getUrl() {
         return url;
-    }
-
-    public AtlasEntity createDataSetEntity(AtlasObjectId objectId) {
-
-        final String typeName = objectId.getTypeName();
-        switch (typeName) {
-            default: {
-                final EntityCreationInfo creationInfo = entityCreators.get(objectId);
-                if (creationInfo == null) {
-                    return null;
-                }
-
-                return creationInfo.creator.create(objectId, creationInfo.properties);
-            }
-        }
-
     }
 
     public List<ConnectionDTO> getIncomingRelationShips(String processorId) {
@@ -198,6 +159,19 @@ public class NiFiFlow implements AtlasProcess {
 
     public Map<AtlasObjectId, AtlasEntity> getCreatedData() {
         return createdData;
+    }
+
+    public List<NiFiFlowPath> getFlowPaths() {
+        return flowPaths;
+    }
+
+    public NiFiFlowPath findPath(String processorGuid) {
+        for (NiFiFlowPath path: flowPaths) {
+            if (path.getProcessorIds().contains(processorGuid)){
+                return path;
+            }
+        }
+        return null;
     }
 
     public void dump() {

@@ -24,4 +24,8 @@ public class DataSetRefs {
     public void setOutputs(Set<Referenceable> outputs) {
         this.outputs = outputs;
     }
+
+    public boolean isEmpty() {
+        return (inputs == null || inputs.isEmpty()) && (outputs == null || outputs.isEmpty());
+    }
 }

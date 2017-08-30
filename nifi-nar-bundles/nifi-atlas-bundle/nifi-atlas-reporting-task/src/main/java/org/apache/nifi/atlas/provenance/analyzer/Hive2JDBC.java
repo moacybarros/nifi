@@ -48,8 +48,8 @@ public class Hive2JDBC extends AbstractNiFiProvenanceEventAnalyzer {
         // Replace the colon so that the schema in the URI can be parsed correctly.
         final String transitUri = event.getTransitUri().replaceFirst("^jdbc:hive2", "jdbc-hive2");
         final URI uri = parseUri(transitUri);
-        final String clusterName = clusterResolver.toClusterName(uri.getHost());
-        // TODO: what if uri does not contain table name??
+        final String clusterName = clusterResolvers.fromHostname(uri.getHost());
+        // TODO: what if uri does not contain database name??
         // Remove the heading '/'
         final String connectedDatabaseName = uri.getPath().substring(1);
 

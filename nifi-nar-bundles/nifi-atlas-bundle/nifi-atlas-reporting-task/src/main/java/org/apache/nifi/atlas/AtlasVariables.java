@@ -16,12 +16,10 @@
  */
 package org.apache.nifi.atlas;
 
-import java.util.Properties;
-
+// TODO: Refactor this, merge nifiUrl to somewhere.
 public class AtlasVariables {
 
     private String nifiUrl;
-    private Properties atlasProperties;
 
     public String getNifiUrl() {
         return nifiUrl;
@@ -31,11 +29,4 @@ public class AtlasVariables {
         this.nifiUrl = nifiUrl;
     }
 
-    public String getAtlasClusterName() {
-        return atlasProperties != null ? atlasProperties.getProperty("atlas.cluster.name") : "";
-    }
-
-    public void setAtlasProperties(Properties atlasProperties) {
-        this.atlasProperties = atlasProperties;
-    }
 }

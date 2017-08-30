@@ -20,6 +20,10 @@ import static org.apache.nifi.atlas.NiFiTypes.ATTR_URL;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW_PATH;
 
+/**
+ * This class is not thread-safe as it holds uncommitted notification messages within instance.
+ * {@link #addDataSetRefs(DataSetRefs, Referenceable)} and {@link #commitMessages()} should be used serially from a single thread.
+ */
 public class NiFIAtlasHook extends AtlasHook {
 
     private static final String CONF_PREFIX = "atlas.hook.nifi.";
@@ -207,5 +211,13 @@ public class NiFIAtlasHook extends AtlasHook {
         addDataSetRefs(refs.getOutputs(), nifiFlowPath, ATTR_OUTPUTS);
         messages.add(new HookNotification.EntityPartialUpdateRequest(NIFI_USER, TYPE_NIFI_FLOW_PATH,
                 ATTR_QUALIFIED_NAME, (String) nifiFlowPath.get(ATTR_QUALIFIED_NAME), nifiFlowPath));
+    }
+
+    public void commitMessages() {
+        try {
+            notifyEntities(messages);
+        } finally {
+            messages.clear();
+        }
     }
 }

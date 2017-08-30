@@ -1,6 +1,7 @@
 package org.apache.nifi.atlas.provenance;
 
 import org.apache.atlas.typesystem.Referenceable;
+import org.apache.nifi.atlas.resolver.ClusterResolvers;
 import org.apache.nifi.logging.ComponentLog;
 import org.apache.nifi.provenance.ProvenanceEventType;
 
@@ -9,11 +10,11 @@ import java.util.Collections;
 public abstract class AbstractNiFiProvenanceEventAnalyzer implements NiFiProvenanceEventAnalyzer {
 
     protected ComponentLog logger;
-    protected ClusterResolver clusterResolver;
+    protected ClusterResolvers clusterResolvers;
 
     @Override
-    public void setClusterResolver(ClusterResolver clusterResolver) {
-        this.clusterResolver = clusterResolver;
+    public void setClusterResolvers(ClusterResolvers clusterResolvers) {
+        this.clusterResolvers = clusterResolvers;
     }
 
     @Override
@@ -28,10 +29,10 @@ public abstract class AbstractNiFiProvenanceEventAnalyzer implements NiFiProvena
     protected DataSetRefs singleDataSetRef(ProvenanceEventType eventType, Referenceable ref) {
         final DataSetRefs refs = new DataSetRefs();
         switch (eventType) {
-            case FETCH:
             case SEND:
                 refs.setOutputs(Collections.singleton(ref));
                 break;
+            case FETCH:
             case RECEIVE:
                 refs.setInputs(Collections.singleton(ref));
                 break;

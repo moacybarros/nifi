@@ -17,6 +17,7 @@
 package org.apache.nifi.atlas.provenance.analyzer;
 
 import org.apache.atlas.typesystem.Referenceable;
+import org.apache.nifi.atlas.resolver.ClusterResolver;
 import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzer;
 import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzerFactory;
@@ -33,16 +34,17 @@ import static org.junit.Assert.assertNotNull;
 import static org.mockito.Matchers.matches;
 import static org.mockito.Mockito.when;
 
-public class TestKafkaTopic {
+public class TestHBaseTable {
 
     @Test
-    public void testPublishKafka() {
-        final String processorName = "PublishKafka";
-        final String transitUri = "PLAINTEXT://0.example.com:6667/topicA";
+    public void testHBaseTable() {
+        final String processorName = "FetchHBaseRow";
+        // TODO: Even if there are multiple hosts, processor should use only one of them to make it a valid URI?
+        final String transitUri = "hbase://0.example.com/tableA";
         final ProvenanceEventRecord record = Mockito.mock(ProvenanceEventRecord.class);
         when(record.getComponentType()).thenReturn(processorName);
         when(record.getTransitUri()).thenReturn(transitUri);
-        when(record.getEventType()).thenReturn(ProvenanceEventType.SEND);
+        when(record.getEventType()).thenReturn(ProvenanceEventType.FETCH);
 
         final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
         when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
@@ -52,37 +54,10 @@ public class TestKafkaTopic {
 
         analyzer.setClusterResolvers(clusterResolvers);
         final DataSetRefs refs = analyzer.analyze(record);
-        assertEquals(0, refs.getInputs().size());
-        assertEquals(1, refs.getOutputs().size());
-        Referenceable ref = refs.getOutputs().iterator().next();
-        assertEquals("topicA", ref.get(ATTR_NAME));
-        assertEquals("topicA", ref.get("topic"));
-        assertEquals("topicA@cluster1", ref.get(ATTR_QUALIFIED_NAME));
+        assertEquals(1, refs.getInputs().size());
+        assertEquals(0, refs.getOutputs().size());
+        Referenceable ref = refs.getInputs().iterator().next();
+        assertEquals("tableA", ref.get(ATTR_NAME));
+        assertEquals("tableA@cluster1", ref.get(ATTR_QUALIFIED_NAME));
     }
-
-    @Test
-    public void testPublishKafkaMultipleBrokers() {
-        final String processorName = "PublishKafka";
-        final String transitUri = "PLAINTEXT://0.example.com:6667,1.example.com:6667/topicA";
-        final ProvenanceEventRecord record = Mockito.mock(ProvenanceEventRecord.class);
-        when(record.getComponentType()).thenReturn(processorName);
-        when(record.getTransitUri()).thenReturn(transitUri);
-        when(record.getEventType()).thenReturn(ProvenanceEventType.SEND);
-
-        final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
-        when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
-
-        final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(processorName, transitUri);
-        assertNotNull(analyzer);
-
-        analyzer.setClusterResolvers(clusterResolvers);
-        final DataSetRefs refs = analyzer.analyze(record);
-        assertEquals(0, refs.getInputs().size());
-        assertEquals(1, refs.getOutputs().size());
-        Referenceable ref = refs.getOutputs().iterator().next();
-        assertEquals("topicA", ref.get(ATTR_NAME));
-        assertEquals("topicA", ref.get("topic"));
-        assertEquals("topicA@cluster1", ref.get(ATTR_QUALIFIED_NAME));
-    }
-
 }

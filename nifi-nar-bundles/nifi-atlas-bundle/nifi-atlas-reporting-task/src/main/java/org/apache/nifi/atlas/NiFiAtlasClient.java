@@ -42,7 +42,6 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_CREATED_BY_NIFI_FLOW;
@@ -196,9 +195,10 @@ public class NiFiAtlasClient {
         return typeDefs;
     }
 
-    public void registerNiFiFlow(NiFiFlow nifiFlow, List<NiFiFlowPath> paths) throws AtlasServiceException {
+    public void registerNiFiFlow(NiFiFlow nifiFlow) throws AtlasServiceException {
         final String nifiFlowName = nifiFlow.getFlowName();
         final String url = nifiFlow.getUrl();
+        final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
         final Map<AtlasObjectId, AtlasEntity> inputPorts = nifiFlow.getInputPorts();
         final Map<AtlasObjectId, AtlasEntity> outputPorts = nifiFlow.getOutputPorts();
@@ -221,6 +221,7 @@ public class NiFiAtlasClient {
         flowEntity.setAttribute(ATTR_DESCRIPTION, nifiFlow.getDescription());
 
         // Create nifi_flow entity to make nifiFlowId available for other entities.
+        // TODO: why does it keep using the same atlasEntities list??
         EntityMutationResponse mutationResponse = atlasClient.createEntities(atlasEntities);
         logger.debug("mutation response={}", mutationResponse);
 
@@ -259,12 +260,11 @@ public class NiFiAtlasClient {
             pathEntity.setAttribute(ATTR_QUALIFIED_NAME, path.getId());
             pathEntity.setAttribute(ATTR_URL, url);
 
-            // At this point, nifi_flow is already created, so DataSet can have a pointer to nifi_flow.
-            registerDataSetIO(path, nifiFlow, pathEntity);
         }
 
+        // TODO: What does this do??
         // Setup links from nifiFlow.
-        registerDataSetIO(nifiFlow, nifiFlow, flowEntity);
+        registerDataSetIO(nifiFlow, flowEntity);
 
         // Create entities without relationships, Atlas doesn't allow storing ObjectId that doesn't exist.
         mutationResponse = atlasClient.createEntities(atlasEntities);
@@ -322,7 +322,7 @@ public class NiFiAtlasClient {
         return new AtlasObjectId(TYPE_NIFI_FLOW_PATH, ATTR_QUALIFIED_NAME, path.getId());
     }
 
-    private void registerDataSetIO(AtlasProcess process, NiFiFlow nifiFlow, AtlasEntity entity) throws AtlasServiceException {
+    private void registerDataSetIO(AtlasProcess process, AtlasEntity entity) throws AtlasServiceException {
         final Set<AtlasObjectId> inputs = process.getInputs();
         final Set<AtlasObjectId> outputs = process.getOutputs();
 
@@ -333,38 +333,8 @@ public class NiFiAtlasClient {
             }
         }
 
-        Function<Set<AtlasObjectId>, Set<AtlasObjectId>> onlyAvailableIds = atlasObjectIds -> atlasObjectIds.stream()
-                .filter(id -> {
-                    try {
-                        searchEntityDef(id);
-                        return true;
-                    } catch (AtlasServiceException e) {
-                        // try to create one.
-                        final AtlasEntity dataSetEntity = nifiFlow.createDataSetEntity(id);
-                        if (dataSetEntity != null) {
-                            try {
-                                registerEntity(dataSetEntity);
-                                return true;
-                            } catch (AtlasServiceException createE) {
-                                logger.warn("Failed to create DataSet entity for {} in Atlas due to {}. Skipping.", id, createE);
-                                return false;
-                            }
-                        }
-
-                        logger.warn("Failed to get DataSet entity for {} from Atlas. Skipping.", id);
-                        return false;
-                    }
-                }).collect(Collectors.toSet());
-
-
-        entity.setAttribute(ATTR_INPUTS, onlyAvailableIds.apply(inputs));
-        entity.setAttribute(ATTR_OUTPUTS, onlyAvailableIds.apply(outputs));
-    }
-
-    private void registerEntity(AtlasEntity entity) throws AtlasServiceException {
-        final AtlasEntity.AtlasEntityWithExtInfo entityEx = new AtlasEntity.AtlasEntityWithExtInfo(entity);
-        final EntityMutationResponse mutationResponse = atlasClient.createEntity(entityEx);
-        logger.info("mutation response={}", mutationResponse);
+        entity.setAttribute(ATTR_INPUTS, inputs);
+        entity.setAttribute(ATTR_OUTPUTS, outputs);
     }
 
     public AtlasEntity.AtlasEntityWithExtInfo searchEntityDef(AtlasObjectId id) throws AtlasServiceException {

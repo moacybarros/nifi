@@ -38,12 +38,9 @@ import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mockito;
 
-import java.io.InputStream;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
@@ -62,11 +59,6 @@ public class TestNiFiFlowAnalyzer {
     public void before() throws Exception {
         componentId = 0;
         atlasVariables = new AtlasVariables();
-        final Properties atlasProperties = new Properties();
-        try (InputStream in = ITNiFiFlowAnalyzer.class.getResourceAsStream("/atlas-application.properties")) {
-            atlasProperties.load(in);
-            atlasVariables.setAtlasProperties(atlasProperties);
-        }
     }
 
     private ProcessGroupFlowEntity createEmptyProcessGroupFlowEntity() {
@@ -176,7 +168,7 @@ public class TestNiFiFlowAnalyzer {
 
         ProcessGroupFlowEntity rootPGEntity = createEmptyProcessGroupFlowEntity();
 
-        final ProcessorEntity processor = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.GenerateFlowFile");
+        final ProcessorEntity pr0 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.GenerateFlowFile");
 
         when(nifiApiClient.getProcessGroupFlow()).thenReturn(rootPGEntity);
 
@@ -186,13 +178,18 @@ public class TestNiFiFlowAnalyzer {
 
         assertEquals(1, nifiFlow.getProcessors().size());
 
-        final List<NiFiFlowPath> paths = analyzer.analyzePaths(nifiFlow);
+        analyzer.analyzePaths(nifiFlow);
+        final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
         assertEquals(1, paths.size());
 
         final NiFiFlowPath path0 = paths.get(0);
         assertEquals("p0", path0.getName());
         assertEquals(path0.getId(), path0.getProcessorIds().get(0));
+
+        // Should be able to find a path from a given processor GUID.
+        final NiFiFlowPath pathForPr0 = nifiFlow.findPath(pr0.getId());
+        assertEquals(path0, pathForPr0);
     }
 
 
@@ -202,13 +199,9 @@ public class TestNiFiFlowAnalyzer {
         NiFiApiClient nifiApiClient = Mockito.mock(NiFiApiClient.class);
 
         ProcessGroupFlowEntity rootPGEntity = createEmptyProcessGroupFlowEntity();
-        final FlowDTO flow = rootPGEntity.getProcessGroupFlow().getFlow();
-        final Set<ProcessorEntity> processors = flow.getProcessors();
 
         final ProcessorEntity pr0 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.GenerateFlowFile");
         final ProcessorEntity pr1 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.UpdateAttribute");
-        processors.add(pr0);
-        processors.add(pr1);
 
         connect(rootPGEntity, pr0, pr1);
 
@@ -220,10 +213,17 @@ public class TestNiFiFlowAnalyzer {
 
         assertEquals(2, nifiFlow.getProcessors().size());
 
-        final List<NiFiFlowPath> paths = analyzer.analyzePaths(nifiFlow);
+        analyzer.analyzePaths(nifiFlow);
+        final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
         assertEquals(1, paths.size());
 
+        // Should be able to find a path from a given processor GUID.
+        final NiFiFlowPath pathForPr0 = nifiFlow.findPath(pr0.getId());
+        final NiFiFlowPath pathForPr1 = nifiFlow.findPath(pr1.getId());
+        final NiFiFlowPath path0 = paths.get(0);
+        assertEquals(path0, pathForPr0);
+        assertEquals(path0, pathForPr1);
     }
 
     @Test
@@ -249,7 +249,8 @@ public class TestNiFiFlowAnalyzer {
 
         assertEquals(4, nifiFlow.getProcessors().size());
 
-        final List<NiFiFlowPath> paths = analyzer.analyzePaths(nifiFlow);
+        analyzer.analyzePaths(nifiFlow);
+        final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
         assertEquals(2, paths.size());
 
@@ -259,6 +260,16 @@ public class TestNiFiFlowAnalyzer {
         final NiFiFlowPath pathB = pathMap.get(pr2.getId());
         assertEquals(2, pathA.getProcessorIds().size());
         assertEquals(2, pathB.getProcessorIds().size());
+
+        // Should be able to find a path from a given processor GUID.
+        final NiFiFlowPath pathForPr0 = nifiFlow.findPath(pr0.getId());
+        final NiFiFlowPath pathForPr1 = nifiFlow.findPath(pr1.getId());
+        final NiFiFlowPath pathForPr2 = nifiFlow.findPath(pr2.getId());
+        final NiFiFlowPath pathForPr3 = nifiFlow.findPath(pr3.getId());
+        assertEquals(pathA, pathForPr0);
+        assertEquals(pathA, pathForPr1);
+        assertEquals(pathB, pathForPr2);
+        assertEquals(pathB, pathForPr3);
     }
 
     @Test
@@ -273,6 +284,10 @@ public class TestNiFiFlowAnalyzer {
         final ProcessorEntity pr2 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.ListenTCP");
         final ProcessorEntity pr3 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.LogAttribute");
 
+        // Result should be as follows:
+        // pathA = 0 -> 1 (-> 3)
+        // pathB = 2 (-> 3)
+        // pathC = 3
         connect(rootPGEntity, pr0, pr1);
         connect(rootPGEntity, pr1, pr3);
         connect(rootPGEntity, pr2, pr3);
@@ -285,7 +300,8 @@ public class TestNiFiFlowAnalyzer {
 
         assertEquals(4, nifiFlow.getProcessors().size());
 
-        final List<NiFiFlowPath> paths = analyzer.analyzePaths(nifiFlow);
+        analyzer.analyzePaths(nifiFlow);
+        final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
         assertEquals(3, paths.size());
 
@@ -304,6 +320,15 @@ public class TestNiFiFlowAnalyzer {
         assertEquals(TYPE_NIFI_QUEUE, queue.getTypeName());
         assertEquals(pathC.getId(), queue.getUniqueAttributes().get(ATTR_QUALIFIED_NAME));
 
+        // Should be able to find a path from a given processor GUID.
+        final NiFiFlowPath pathForPr0 = nifiFlow.findPath(pr0.getId());
+        final NiFiFlowPath pathForPr1 = nifiFlow.findPath(pr1.getId());
+        final NiFiFlowPath pathForPr2 = nifiFlow.findPath(pr2.getId());
+        final NiFiFlowPath pathForPr3 = nifiFlow.findPath(pr3.getId());
+        assertEquals(pathA, pathForPr0);
+        assertEquals(pathA, pathForPr1);
+        assertEquals(pathB, pathForPr2);
+        assertEquals(pathC, pathForPr3);
     }
 
     @Test
@@ -333,7 +358,8 @@ public class TestNiFiFlowAnalyzer {
 
         assertEquals(3, nifiFlow.getProcessors().size());
 
-        final List<NiFiFlowPath> paths = analyzer.analyzePaths(nifiFlow);
+        analyzer.analyzePaths(nifiFlow);
+        final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
         assertEquals(2, paths.size());
         final Map<String, NiFiFlowPath> pathMap = paths.stream().collect(Collectors.toMap(p -> p.getId(), p -> p));
@@ -431,7 +457,8 @@ public class TestNiFiFlowAnalyzer {
 
         assertEquals(3, nifiFlow.getProcessors().size());
 
-        final List<NiFiFlowPath> paths = analyzer.analyzePaths(nifiFlow);
+        analyzer.analyzePaths(nifiFlow);
+        final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
         assertEquals(2, paths.size());
         final Map<String, NiFiFlowPath> pathMap = paths.stream().collect(Collectors.toMap(p -> p.getId(), p -> p));
@@ -449,77 +476,6 @@ public class TestNiFiFlowAnalyzer {
         final AtlasObjectId input1 = pathB.getInputs().iterator().next();
         assertEquals("nifi_input_port", input1.getTypeName());
         assertEquals(inputPort1.getId(), input1.getUniqueAttributes().get(ATTR_QUALIFIED_NAME));
-
-    }
-
-    @Test
-    public void testIngressProcessor() throws Exception {
-
-        NiFiApiClient nifiApiClient = Mockito.mock(NiFiApiClient.class);
-
-        ProcessGroupFlowEntity rootPGEntity = createEmptyProcessGroupFlowEntity();
-
-        final ProcessorEntity pr0 = createProcessor(rootPGEntity, "org.apache.nifi.processors.kafka.pubsub.ConsumeKafka");
-        final ProcessorEntity pr1 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.UpdateAttribute");
-
-        Map<String, String> properties = new HashMap<>();
-        properties.put("topic", "topic_name");
-        pr0.getComponent().getConfig().setProperties(properties);
-
-        connect(rootPGEntity, pr0, pr1);
-
-        when(nifiApiClient.getProcessGroupFlow()).thenReturn(rootPGEntity);
-
-        final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer(nifiApiClient);
-
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables);
-
-        assertEquals(2, nifiFlow.getProcessors().size());
-
-        final List<NiFiFlowPath> paths = analyzer.analyzePaths(nifiFlow);
-
-        assertEquals(1, paths.size());
-        final NiFiFlowPath path = paths.get(0);
-        assertEquals(1, path.getInputs().size());
-        final AtlasObjectId input = path.getInputs().iterator().next();
-        assertEquals("kafka_topic", input.getTypeName());
-        assertEquals("topic_name", input.getUniqueAttributes().get("topic"));
-
-    }
-
-    @Test
-    public void testEgressProcessor() throws Exception {
-
-        NiFiApiClient nifiApiClient = Mockito.mock(NiFiApiClient.class);
-
-        ProcessGroupFlowEntity rootPGEntity = createEmptyProcessGroupFlowEntity();
-
-        final ProcessorEntity pr0 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.ListenTCP");
-        final ProcessorEntity pr1 = createProcessor(rootPGEntity, "org.apache.nifi.processors.hive.PutHiveStreaming");
-
-        Map<String, String> properties = new HashMap<>();
-        properties.put("hive-stream-database-name", "database_name");
-        properties.put("hive-stream-table-name", "table_name");
-        pr1.getComponent().getConfig().setProperties(properties);
-
-        connect(rootPGEntity, pr0, pr1);
-
-        when(nifiApiClient.getProcessGroupFlow()).thenReturn(rootPGEntity);
-
-        final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer(nifiApiClient);
-
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables);
-
-        assertEquals(2, nifiFlow.getProcessors().size());
-
-        final List<NiFiFlowPath> paths = analyzer.analyzePaths(nifiFlow);
-
-        assertEquals(1, paths.size());
-        final NiFiFlowPath path = paths.get(0);
-        assertEquals(1, path.getOutputs().size());
-        final AtlasObjectId output = path.getOutputs().iterator().next();
-        assertEquals("hive_table", output.getTypeName());
-        assertEquals("database_name.table_name@AtlasCluster", output.getUniqueAttributes().get(ATTR_QUALIFIED_NAME));
 
     }
 

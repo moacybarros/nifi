@@ -1,4 +1,4 @@
-package org.apache.nifi.atlas.provenance;
+package org.apache.nifi.atlas.resolver;
 
 import org.apache.nifi.components.ValidationContext;
 import org.apache.nifi.components.ValidationResult;
@@ -17,7 +17,7 @@ import java.util.stream.Collectors;
 
 public class RegexClusterResolver implements ClusterResolver {
 
-    public static final String PATTERN_PROPERTY_PREFIX = "clusterNamePattern.";
+    public static final String PATTERN_PROPERTY_PREFIX = "hostnamePattern.";
     private Map<String, Set<Pattern>> clusterNamePatterns;
 
     @Override
@@ -86,7 +86,7 @@ public class RegexClusterResolver implements ClusterResolver {
     }
 
     @Override
-    public String toClusterName(String hostname) {
+    public String fromHostname(String hostname) {
         for (Map.Entry<String, Set<Pattern>> entry : clusterNamePatterns.entrySet()) {
             for (Pattern pattern : entry.getValue()) {
                 if (pattern.matcher(hostname).matches()) {

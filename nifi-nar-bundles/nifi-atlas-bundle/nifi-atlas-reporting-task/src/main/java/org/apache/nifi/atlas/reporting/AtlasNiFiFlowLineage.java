@@ -63,6 +63,7 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
     static final PropertyDescriptor ATLAS_URLS = new PropertyDescriptor.Builder()
             .name("atlas-urls")
             .displayName("Atlas URLs")
+            // TODO: Update doc to describe multiple URLs are for HA.
             .description("Comma separated URLs of the Atlas Server (e.g. http://atlas-server-hostname:21000).")
             .required(true)
             .expressionLanguageSupported(true)
@@ -281,15 +282,14 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         try {
             final AtlasVariables atlasVariables = new AtlasVariables();
             atlasVariables.setNifiUrl(context.getProperty(ATLAS_NIFI_URL).evaluateAttributeExpressions().getValue());
-            atlasVariables.setAtlasProperties(atlasProperties);
             niFiFlow = flowAnalyzer.analyzeProcessGroup(atlasVariables);
         } catch (IOException e) {
             throw new RuntimeException("Failed to analyze NiFi flow. " + e, e);
         }
 
         try {
-            final List<NiFiFlowPath> niFiFlowPaths = flowAnalyzer.analyzePaths(niFiFlow);
-            atlasClient.registerNiFiFlow(niFiFlow, niFiFlowPaths);
+            flowAnalyzer.analyzePaths(niFiFlow);
+            atlasClient.registerNiFiFlow(niFiFlow);
         } catch (AtlasServiceException e) {
             throw new RuntimeException("Failed to register NiFI flow. " + e, e);
         }
