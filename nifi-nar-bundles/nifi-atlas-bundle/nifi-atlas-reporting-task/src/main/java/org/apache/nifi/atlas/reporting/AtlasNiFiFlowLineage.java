@@ -17,24 +17,38 @@
 package org.apache.nifi.atlas.reporting;
 
 import org.apache.atlas.AtlasServiceException;
+import org.apache.atlas.typesystem.Referenceable;
+import org.apache.nifi.annotation.behavior.DynamicProperty;
+import org.apache.nifi.annotation.behavior.Stateful;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
 import org.apache.nifi.annotation.documentation.Tags;
 import org.apache.nifi.annotation.lifecycle.OnScheduled;
+import org.apache.nifi.annotation.lifecycle.OnUnscheduled;
 import org.apache.nifi.atlas.AtlasVariables;
+import org.apache.nifi.atlas.NiFIAtlasHook;
 import org.apache.nifi.atlas.NiFiApiClient;
 import org.apache.nifi.atlas.NiFiAtlasClient;
 import org.apache.nifi.atlas.NiFiFlow;
 import org.apache.nifi.atlas.NiFiFlowAnalyzer;
 import org.apache.nifi.atlas.NiFiFlowPath;
+import org.apache.nifi.atlas.provenance.DataSetRefs;
+import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzer;
+import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzerFactory;
+import org.apache.nifi.atlas.resolver.ClusterResolver;
+import org.apache.nifi.atlas.resolver.ClusterResolvers;
+import org.apache.nifi.atlas.resolver.RegexClusterResolver;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.components.PropertyValue;
 import org.apache.nifi.components.ValidationContext;
 import org.apache.nifi.components.ValidationResult;
+import org.apache.nifi.components.state.Scope;
 import org.apache.nifi.controller.ConfigurationContext;
 import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.processor.util.StandardValidators;
+import org.apache.nifi.provenance.ProvenanceEventRecord;
 import org.apache.nifi.reporting.AbstractReportingTask;
 import org.apache.nifi.reporting.ReportingContext;
+import org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer;
 import org.apache.nifi.ssl.SSLContextService;
 import org.apache.nifi.web.api.entity.ClusterEntity;
 
@@ -47,17 +61,34 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Properties;
+import java.util.ServiceLoader;
+import java.util.Set;
 import java.util.function.Consumer;
 
 import static org.apache.commons.lang3.StringUtils.isEmpty;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_NIFI_FLOW;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_URL;
+import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW;
+import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW_PATH;
+import static org.apache.nifi.provenance.ProvenanceEventType.FETCH;
+import static org.apache.nifi.provenance.ProvenanceEventType.RECEIVE;
+import static org.apache.nifi.provenance.ProvenanceEventType.SEND;
+import static org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer.PROVENANCE_BATCH_SIZE;
+import static org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer.PROVENANCE_START_POSITION;
 
 @Tags({"atlas", "lineage"})
 @CapabilityDescription("Publishes NiFi flow data set level lineage to Apache Atlas." +
         " By reporting flow information to Atlas, an end-to-end Process and DataSet lineage such as across NiFi environments and other systems" +
         " connected by technologies, for example NiFi Site-to-Site, Kafka topic or Hive tables." +
         " There are limitations and required configurations for both NiFi and Atlas. See 'Additional Details' for further description.")
+@Stateful(scopes = Scope.LOCAL, description = "Stores the Reporting Task's last event Id so that on restart the task knows where it left off.")
+@DynamicProperty(name = "hostnamePattern.<ClusterName>", value = "hostname Regex patterns", description = RegexClusterResolver.PATTERN_PROPERTY_PREFIX_DESC)
 public class AtlasNiFiFlowLineage extends AbstractReportingTask {
 
     static final PropertyDescriptor ATLAS_URLS = new PropertyDescriptor.Builder()
@@ -149,9 +180,14 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             .build();
 
     private static final String ATLAS_PROPERTIES_FILENAME = "atlas-application.properties";
+    private final ServiceLoader<ClusterResolver> clusterResolverLoader = ServiceLoader.load(ClusterResolver.class);
     private volatile NiFiAtlasClient atlasClient;
     private volatile Properties atlasProperties;
     private volatile boolean isTypeDefCreated = false;
+
+    private volatile ProvenanceEventConsumer consumer;
+    private volatile ClusterResolvers clusterResolvers;
+    private volatile NiFIAtlasHook nifiAtlasHook;
 
     @Override
     protected List<PropertyDescriptor> getSupportedPropertyDescriptors() {
@@ -165,7 +201,20 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         properties.add(NIFI_API_PORT);
         properties.add(NIFI_API_SECURE);
         properties.add(SSL_CONTEXT);
+        properties.add(PROVENANCE_START_POSITION);
+        properties.add(PROVENANCE_BATCH_SIZE);
         return properties;
+    }
+
+    @Override
+    protected PropertyDescriptor getSupportedDynamicPropertyDescriptor(String propertyDescriptorName) {
+        for (ClusterResolver resolver : clusterResolverLoader) {
+            final PropertyDescriptor propertyDescriptor = resolver.getSupportedDynamicPropertyDescriptor(propertyDescriptorName);
+            if(propertyDescriptor != null) {
+                return propertyDescriptor;
+            }
+        }
+        return null;
     }
 
     private void parseAtlasUrls(final PropertyValue atlasUrlsProp, final Consumer<String> urlStrConsumer) {
@@ -187,15 +236,24 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
                 new URL(input);
                 results.add(builder.explanation("Valid URI").valid(true).build());
             } catch (Exception e) {
-                results.add(builder.explanation("Contains invalid URI").valid(false).build());
+                results.add(builder.explanation("Contains invalid URI: " + e).valid(false).build());
             }
         });
+
+        clusterResolverLoader.forEach(resolver -> results.addAll(resolver.validate(validationContext)));
 
         return results;
     }
 
     @OnScheduled
-    public void initAtlasClient(ConfigurationContext context) throws IOException {
+    public void setup(ConfigurationContext context) throws IOException {
+        // initAtlasClient has to be done first as it loads AtlasProperty.
+        initAtlasClient(context);
+        initProvenanceConsumer(context);
+    }
+
+
+    private void initAtlasClient(ConfigurationContext context) throws IOException {
         List<String> urls = new ArrayList<>();
         parseAtlasUrls(context.getProperty(ATLAS_URLS), url -> urls.add(url));
 
@@ -215,6 +273,9 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             final String fileInClasspath = "/" + ATLAS_PROPERTIES_FILENAME;
             try (InputStream in = AtlasNiFiFlowLineage.class.getResourceAsStream(fileInClasspath)) {
                 getLogger().info("Loading {} from classpath", new Object[]{fileInClasspath});
+                if (in == null) {
+                    throw new ProcessException(String.format("Could not find %s from classpath.", fileInClasspath));
+                }
                 atlasProperties.load(in);
             }
         }
@@ -228,6 +289,31 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
                     " or under root classpath if not specified.", e, ATLAS_CONF_DIR.getDisplayName()), e);
         }
 
+    }
+
+    private void initProvenanceConsumer(final ConfigurationContext context) throws IOException {
+        consumer = new ProvenanceEventConsumer();
+        consumer.setStartPositionValue(context.getProperty(PROVENANCE_START_POSITION).getValue());
+        consumer.setBatchSize(context.getProperty(PROVENANCE_BATCH_SIZE).asInteger());
+        consumer.addTargetEventType(FETCH, RECEIVE, SEND);
+        consumer.setLogger(getLogger());
+        consumer.setScheduled(true);
+
+        final Set<ClusterResolver> loadedClusterResolvers = new LinkedHashSet<>();
+        clusterResolverLoader.forEach(resolver -> {
+            resolver.configure(context);
+            loadedClusterResolvers.add(resolver);
+        });
+        clusterResolvers = new ClusterResolvers(Collections.unmodifiableSet(loadedClusterResolvers), null);
+
+        nifiAtlasHook = new NiFIAtlasHook();
+    }
+
+    @OnUnscheduled
+    public void onUnscheduled() {
+        if (consumer != null) {
+            consumer.setScheduled(false);
+        }
     }
 
     @Override
@@ -293,6 +379,55 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         } catch (AtlasServiceException e) {
             throw new RuntimeException("Failed to register NiFI flow. " + e, e);
         }
+
+        consumeNiFiProvenanceEvents(context, niFiFlow);
+
+    }
+
+    private void consumeNiFiProvenanceEvents(ReportingContext context, NiFiFlow niFiFlow) {
+        consumer.consumeEvents(context.getEventAccess(), context.getStateManager(), events -> {
+            for (ProvenanceEventRecord event : events) {
+                try {
+                    final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(event.getComponentType(), event.getTransitUri());
+                    if (getLogger().isDebugEnabled()) {
+                        getLogger().debug("Analyzer {} is found for event: {}", new Object[]{analyzer, event});
+                    }
+                    if (analyzer == null) {
+                        continue;
+                    }
+                    analyzer.setLogger(getLogger());
+                    analyzer.setClusterResolvers(clusterResolvers);
+                    final DataSetRefs refs = analyzer.analyze(event);
+                    if (refs == null || (refs.isEmpty())) {
+                        continue;
+                    }
+
+                    // create reference to NiFi flow path.
+                    final NiFiFlowPath flowPath = niFiFlow.findPath(event.getComponentId());
+                    if (flowPath == null) {
+                        getLogger().warn("FlowPath for {} was not found.", new Object[]{event.getComponentId()});
+                        continue;
+                    }
+
+                    final Referenceable flowRef = new Referenceable(TYPE_NIFI_FLOW);
+                    flowRef.set(ATTR_NAME, niFiFlow.getFlowName());
+                    flowRef.set(ATTR_QUALIFIED_NAME, niFiFlow.getId().getUniqueAttributes().get(ATTR_QUALIFIED_NAME));
+                    flowRef.set(ATTR_URL, niFiFlow.getUrl());
+
+                    final Referenceable flowPathRef = new Referenceable(TYPE_NIFI_FLOW_PATH);
+                    flowPathRef.set(ATTR_NAME, flowPath.getName());
+                    flowPathRef.set(ATTR_QUALIFIED_NAME, flowPath.getId());
+                    flowPathRef.set(ATTR_NIFI_FLOW, flowRef);
+                    flowPathRef.set(ATTR_URL, niFiFlow.getUrl());
+
+                    nifiAtlasHook.addDataSetRefs(refs, flowPathRef);
+                } catch (Exception e) {
+                    // If something went wrong, log it and continue with other records.
+                    getLogger().error("Skipping failed analyzing event {} due to {}.", new Object[]{event, e}, e);
+                }
+            }
+            nifiAtlasHook.commitMessages();
+        });
     }
 
 

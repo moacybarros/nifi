@@ -244,27 +244,32 @@ public class NiFiAtlasClient {
             pathEntity.setAttribute(ATTR_NIFI_FLOW, nifiFlow.getId());
             pathEntity.setVersion(1L);
 
+            final StringBuilder name = new StringBuilder();
             final StringBuilder description = new StringBuilder();
             path.getProcessorIds().forEach(pid -> {
                 final ProcessorDTO processor = nifiFlow.getProcessors().get(pid);
-                if (description.length() > 0) {
+                if (name.length() > 0) {
+                    name.append(", ");
                     description.append(", ");
                 }
+                name.append(String.format("%s", processor.getName()));
                 description.append(String.format("%s::%s", processor.getName(), pid));
             });
 
-            pathEntity.setAttribute(ATTR_NAME, path.getName());
+            path.setName(name.toString());
+            pathEntity.setAttribute(ATTR_NAME, name.toString());
             pathEntity.setAttribute(ATTR_DESCRIPTION, description.toString());
 
             // Use first processor's id as qualifiedName.
             pathEntity.setAttribute(ATTR_QUALIFIED_NAME, path.getId());
             pathEntity.setAttribute(ATTR_URL, url);
 
+            // At this point, nifi_flow is already created, so DataSet can have a pointer to nifi_flow.
+            activateDataSetIOLinks(path, pathEntity);
         }
 
-        // TODO: What does this do??
         // Setup links from nifiFlow.
-        registerDataSetIO(nifiFlow, flowEntity);
+        activateDataSetIOLinks(nifiFlow, flowEntity);
 
         // Create entities without relationships, Atlas doesn't allow storing ObjectId that doesn't exist.
         mutationResponse = atlasClient.createEntities(atlasEntities);
@@ -322,7 +327,7 @@ public class NiFiAtlasClient {
         return new AtlasObjectId(TYPE_NIFI_FLOW_PATH, ATTR_QUALIFIED_NAME, path.getId());
     }
 
-    private void registerDataSetIO(AtlasProcess process, AtlasEntity entity) throws AtlasServiceException {
+    private void activateDataSetIOLinks(AtlasProcess process, AtlasEntity entity) throws AtlasServiceException {
         final Set<AtlasObjectId> inputs = process.getInputs();
         final Set<AtlasObjectId> outputs = process.getOutputs();
 

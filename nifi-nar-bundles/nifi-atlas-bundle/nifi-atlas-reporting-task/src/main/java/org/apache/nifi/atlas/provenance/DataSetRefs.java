@@ -3,6 +3,7 @@ package org.apache.nifi.atlas.provenance;
 import org.apache.atlas.typesystem.Referenceable;
 
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.Set;
 
 public class DataSetRefs {
@@ -11,6 +12,13 @@ public class DataSetRefs {
 
     public Set<Referenceable> getInputs() {
         return inputs != null ? inputs : Collections.emptySet();
+    }
+
+    public void addInput(Referenceable input) {
+        if (inputs == null) {
+            inputs = new LinkedHashSet<>();
+        }
+        inputs.add(input);
     }
 
     public void setInputs(Set<Referenceable> inputs) {
@@ -23,6 +31,13 @@ public class DataSetRefs {
 
     public void setOutputs(Set<Referenceable> outputs) {
         this.outputs = outputs;
+    }
+
+    public void addOutput(Referenceable output) {
+        if (outputs == null) {
+            outputs = new LinkedHashSet<>();
+        }
+        outputs.add(output);
     }
 
     public boolean isEmpty() {

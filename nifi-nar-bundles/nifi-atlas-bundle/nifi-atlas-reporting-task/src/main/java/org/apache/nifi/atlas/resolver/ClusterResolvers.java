@@ -1,5 +1,6 @@
 package org.apache.nifi.atlas.resolver;
 
+import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.components.ValidationContext;
 import org.apache.nifi.components.ValidationResult;
 import org.apache.nifi.context.PropertyContext;
@@ -17,6 +18,17 @@ public class ClusterResolvers implements ClusterResolver {
     public ClusterResolvers(Set<ClusterResolver> resolvers, String defaultClusterName) {
         this.resolvers = resolvers;
         this.defaultClusterName = defaultClusterName;
+    }
+
+    @Override
+    public PropertyDescriptor getSupportedDynamicPropertyDescriptor(String propertyDescriptorName) {
+        for (ClusterResolver resolver : resolvers) {
+            final PropertyDescriptor descriptor = resolver.getSupportedDynamicPropertyDescriptor(propertyDescriptorName);
+            if (descriptor != null) {
+                return descriptor;
+            }
+        }
+        return null;
     }
 
     @Override

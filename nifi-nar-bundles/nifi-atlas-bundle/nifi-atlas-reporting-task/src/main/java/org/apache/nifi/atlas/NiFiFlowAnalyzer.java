@@ -307,7 +307,6 @@ public class NiFiFlowAnalyzer {
 
                 } else {
                     // Add jointPoint only if it doesn't exist, to avoid adding the same jointPoint again.
-                    jointPoint.setName("p" + paths.size());
                     paths.add(jointPoint);
 
                     // Create an input queue DataSet because Atlas doesn't show lineage if it doesn't have in and out.
@@ -318,7 +317,7 @@ public class NiFiFlowAnalyzer {
                     queue.setAttribute(ATTR_NIFI_FLOW, nifiFlow.getId());
                     queue.setAttribute(ATTR_QUALIFIED_NAME, destPid);
                     queue.setAttribute(ATTR_NAME, "queue");
-                    queue.setAttribute(ATTR_DESCRIPTION, "Input queue for " + jointPoint.getName());
+                    queue.setAttribute(ATTR_DESCRIPTION, "Input queue for " + destPid);
 
                     nifiFlow.getQueues().put(queueId, queue);
                     newJointPoint.getInputs().add(queueId);
@@ -368,10 +367,11 @@ public class NiFiFlowAnalyzer {
                 .collect(Collectors.toSet());
 
         headProcessors.forEach(startPid -> {
-            // TODO: merge it with existing path
+            // TODO: Can we improve this a bit, if new processor is inserted, then entity id will be changed, and existing lineage to DataSet will be lost. But that may be OK.
+            // By using the startPid as its qualifiedName, it's guaranteed that
+            // the same path will end up being the same Atlas entity.
             final NiFiFlowPath path = new NiFiFlowPath(startPid);
             final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
-            path.setName("p" + paths.size());
             paths.add(path);
             traverse(nifiFlow, paths, path, startPid);
         });

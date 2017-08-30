@@ -85,4 +85,54 @@ public class TestKafkaTopic {
         assertEquals("topicA@cluster1", ref.get(ATTR_QUALIFIED_NAME));
     }
 
+    @Test
+    public void testConsumeKafka() {
+        final String processorName = "ConsumeKafka";
+        final String transitUri = "PLAINTEXT://0.example.com:6667/topicA";
+        final ProvenanceEventRecord record = Mockito.mock(ProvenanceEventRecord.class);
+        when(record.getComponentType()).thenReturn(processorName);
+        when(record.getTransitUri()).thenReturn(transitUri);
+        when(record.getEventType()).thenReturn(ProvenanceEventType.RECEIVE);
+
+        final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
+        when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
+
+        final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(processorName, transitUri);
+        assertNotNull(analyzer);
+
+        analyzer.setClusterResolvers(clusterResolvers);
+        final DataSetRefs refs = analyzer.analyze(record);
+        assertEquals(1, refs.getInputs().size());
+        assertEquals(0, refs.getOutputs().size());
+        Referenceable ref = refs.getInputs().iterator().next();
+        assertEquals("topicA", ref.get(ATTR_NAME));
+        assertEquals("topicA", ref.get("topic"));
+        assertEquals("topicA@cluster1", ref.get(ATTR_QUALIFIED_NAME));
+    }
+
+    @Test
+    public void testConsumeKafkaRecord_0_10() {
+        final String processorName = "ConsumeKafkaRecord_0_10";
+        final String transitUri = "PLAINTEXT://0.example.com:6667/topicA";
+        final ProvenanceEventRecord record = Mockito.mock(ProvenanceEventRecord.class);
+        when(record.getComponentType()).thenReturn(processorName);
+        when(record.getTransitUri()).thenReturn(transitUri);
+        when(record.getEventType()).thenReturn(ProvenanceEventType.RECEIVE);
+
+        final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
+        when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
+
+        final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(processorName, transitUri);
+        assertNotNull(analyzer);
+
+        analyzer.setClusterResolvers(clusterResolvers);
+        final DataSetRefs refs = analyzer.analyze(record);
+        assertEquals(1, refs.getInputs().size());
+        assertEquals(0, refs.getOutputs().size());
+        Referenceable ref = refs.getInputs().iterator().next();
+        assertEquals("topicA", ref.get(ATTR_NAME));
+        assertEquals("topicA", ref.get("topic"));
+        assertEquals("topicA@cluster1", ref.get(ATTR_QUALIFIED_NAME));
+    }
+
 }

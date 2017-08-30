@@ -5,12 +5,12 @@ import org.apache.nifi.atlas.provenance.AbstractNiFiProvenanceEventAnalyzer;
 import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
 
-import java.net.URI;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_URI;
 
 /**
  * Analyze a transit URI as a Kafka topic.
@@ -29,9 +29,10 @@ public class KafkaTopic extends AbstractNiFiProvenanceEventAnalyzer {
     public DataSetRefs analyze(ProvenanceEventRecord event) {
         final Referenceable ref = new Referenceable(TYPE);
 
-        final Matcher uriMatcher = URI_PATTERN.matcher(event.getTransitUri());
+        final String transitUri = event.getTransitUri();
+        final Matcher uriMatcher = URI_PATTERN.matcher(transitUri);
         if (!uriMatcher.matches()) {
-            logger.warn("Unexpected transit URI: {}", new Object[]{event.getTransitUri()});
+            logger.warn("Unexpected transit URI: {}", new Object[]{transitUri});
             return null;
         }
 
@@ -48,12 +49,14 @@ public class KafkaTopic extends AbstractNiFiProvenanceEventAnalyzer {
         ref.set(ATTR_NAME, topicName);
         ref.set(ATTR_TOPIC, topicName);
         ref.set(ATTR_QUALIFIED_NAME, toQualifiedName(clusterName, topicName));
+        // TODO: uri is a mandatory attribute, what value should we use?
+        ref.set(ATTR_URI, transitUri);
 
         return singleDataSetRef(event.getEventType(), ref);
     }
 
     @Override
     public String targetComponentTypePattern() {
-        return "^PublishKafka$";
+        return "^(Publish|Consume)Kafka.*$";
     }
 }

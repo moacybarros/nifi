@@ -1,5 +1,6 @@
 package org.apache.nifi.atlas.resolver;
 
+import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.components.ValidationContext;
 import org.apache.nifi.components.ValidationResult;
 import org.apache.nifi.context.PropertyContext;
@@ -13,6 +14,8 @@ public interface ClusterResolver {
     default Collection<ValidationResult> validate(final ValidationContext validationContext) {
         return Collections.emptySet();
     }
+
+    PropertyDescriptor getSupportedDynamicPropertyDescriptor(final String propertyDescriptorName);
 
     /**
      * Implementation should be clear previous configurations if when this method is called again.

@@ -1,8 +1,10 @@
 package org.apache.nifi.atlas.resolver;
 
+import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.components.ValidationContext;
 import org.apache.nifi.components.ValidationResult;
 import org.apache.nifi.context.PropertyContext;
+import org.apache.nifi.processor.util.StandardValidators;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -18,7 +20,23 @@ import java.util.stream.Collectors;
 public class RegexClusterResolver implements ClusterResolver {
 
     public static final String PATTERN_PROPERTY_PREFIX = "hostnamePattern.";
+    public static final String PATTERN_PROPERTY_PREFIX_DESC = "White space delimited (including new line) Regular Expressions to resolve a 'Cluster Name' from a hostname or IP address of a transit URI of NiFi provenance record.";
     private Map<String, Set<Pattern>> clusterNamePatterns;
+
+    @Override
+    public PropertyDescriptor getSupportedDynamicPropertyDescriptor(String propertyDescriptorName) {
+        if (propertyDescriptorName.startsWith(PATTERN_PROPERTY_PREFIX)) {
+            return new PropertyDescriptor
+                    .Builder().name(propertyDescriptorName)
+                    .description(PATTERN_PROPERTY_PREFIX_DESC)
+                    .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
+                    .expressionLanguageSupported(true)
+                    .dynamic(true)
+                    .sensitive(false)
+                    .build();
+        }
+        return null;
+    }
 
     @Override
     public Collection<ValidationResult> validate(ValidationContext validationContext) {
@@ -86,7 +104,9 @@ public class RegexClusterResolver implements ClusterResolver {
     }
 
     @Override
-    public String fromHostname(String hostname) {
+    public String fromHostname(String _hostname) {
+        // Avoid NullPointerException when matching.
+        final String hostname = _hostname == null ? "" : _hostname;
         for (Map.Entry<String, Set<Pattern>> entry : clusterNamePatterns.entrySet()) {
             for (Pattern pattern : entry.getValue()) {
                 if (pattern.matcher(hostname).matches()) {

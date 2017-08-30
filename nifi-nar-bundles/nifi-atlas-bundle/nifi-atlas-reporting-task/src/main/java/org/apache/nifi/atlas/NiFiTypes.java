@@ -42,6 +42,7 @@ public class NiFiTypes {
     public static final String ATTR_INPUTS = "inputs";
     public static final String ATTR_OUTPUTS = "outputs";
     public static final String ATTR_URL = "url";
+    public static final String ATTR_URI = "uri";
     public static final String ATTR_QUALIFIED_NAME = "qualifiedName";
     public static final String ATTR_NIFI_FLOW = "nifiFlow";
     public static final String ATTR_FLOW_PATHS = "flowPaths";
@@ -69,7 +70,7 @@ public class NiFiTypes {
 
         final AtlasAttributeDef flowPaths = new AtlasAttributeDef(ATTR_FLOW_PATHS, arrayOf(TYPE_NIFI_FLOW_PATH));
         flowPaths.setIsOptional(true);
-        // Set ownedRef so that chile flowPaths entities can be deleted.
+        // Set ownedRef so that child flowPaths entities those no longer exist can be deleted when a NiFi is updated.
         final AtlasConstraintDef ownedRef = new AtlasConstraintDef("ownedRef");
         flowPaths.addConstraint(ownedRef);
 
@@ -113,12 +114,15 @@ public class NiFiTypes {
         superTypes.add(TYPE_PROCESS);
         superTypes.add(TYPE_NIFI_COMPONENT);
 
+        final AtlasAttributeDef url = new AtlasAttributeDef(ATTR_URL, "string");
+
         final AtlasAttributeDef incomingPaths = new AtlasAttributeDef(ATTR_INCOMING_FLOW_PATHS, arrayOf(TYPE_NIFI_FLOW_PATH));
         incomingPaths.setIsOptional(true);
 
         final AtlasAttributeDef outgoingPaths = new AtlasAttributeDef(ATTR_OUTGOING_FLOW_PATHS, arrayOf(TYPE_NIFI_FLOW_PATH));
         outgoingPaths.setIsOptional(true);
 
+        attributes.add(url);
         attributes.add(incomingPaths);
         attributes.add(outgoingPaths);
     };

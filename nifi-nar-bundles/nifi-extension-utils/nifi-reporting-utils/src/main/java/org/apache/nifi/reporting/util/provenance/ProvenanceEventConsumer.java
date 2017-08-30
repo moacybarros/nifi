@@ -28,17 +28,19 @@ public class ProvenanceEventConsumer {
             "Start reading provenance Events from the beginning of the stream (the oldest event first)");
     public static final AllowableValue END_OF_STREAM = new AllowableValue("end-of-stream", "End of Stream",
             "Start reading provenance Events from the end of the stream, ignoring old events");
-    public static final PropertyDescriptor START_POSITION = new PropertyDescriptor.Builder()
-            .name("start-position")
-            .displayName("Start Position")
+    public static final PropertyDescriptor PROVENANCE_START_POSITION = new PropertyDescriptor.Builder()
+            // TODO: SiteToSiteProvenanceReportingTask should use its own property for backward compatibility
+            .name("provenance-start-position")
+            .displayName("Provenance Record Start Position")
             .description("If the Reporting Task has never been run, or if its state has been reset by a user, specifies where in the stream of Provenance Events the Reporting Task should start")
             .allowableValues(BEGINNING_OF_STREAM, END_OF_STREAM)
             .defaultValue(BEGINNING_OF_STREAM.getValue())
             .required(true)
             .build();
-    public static final PropertyDescriptor BATCH_SIZE = new PropertyDescriptor.Builder()
-            .name("Batch Size")
-            .displayName("Batch Size")
+    public static final PropertyDescriptor PROVENANCE_BATCH_SIZE = new PropertyDescriptor.Builder()
+            // TODO: SiteToSiteProvenanceReportingTask should use its own property for backward compatibility
+            .name("provenance-batch-size")
+            .displayName("Provenance Record Batch Size")
             .description("Specifies how many records to send in a single batch, at most.")
             .required(true)
             .defaultValue("1000")
@@ -46,11 +48,11 @@ public class ProvenanceEventConsumer {
             .build();
 
 
-    private String startPositionValue = START_POSITION.getDefaultValue();
+    private String startPositionValue = PROVENANCE_START_POSITION.getDefaultValue();
     private Pattern componentTypeRegex;
     private List<ProvenanceEventType> eventTypes = new ArrayList<ProvenanceEventType>();
     private List<String> componentIds = new ArrayList<String>();
-    private int batchSize = Integer.parseInt(BATCH_SIZE.getDefaultValue());
+    private int batchSize = Integer.parseInt(PROVENANCE_BATCH_SIZE.getDefaultValue());
 
     private volatile long firstEventId = -1L;
     private volatile boolean scheduled = false;

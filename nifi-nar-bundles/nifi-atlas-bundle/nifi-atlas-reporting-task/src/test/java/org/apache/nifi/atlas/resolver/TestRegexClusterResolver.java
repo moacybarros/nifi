@@ -14,12 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.nifi.atlas.provenance;
+package org.apache.nifi.atlas.resolver;
 
 import org.apache.nifi.atlas.resolver.RegexClusterResolver;
 import org.apache.nifi.components.ValidationContext;
 import org.apache.nifi.components.ValidationResult;
 import org.apache.nifi.context.PropertyContext;
+import org.junit.Assert;
 import org.junit.Test;
 import org.mockito.Mockito;
 
@@ -52,10 +53,10 @@ public class TestRegexClusterResolver {
 
         // It should be valid
         final Collection<ValidationResult> validationResults = resolver.validate(validationContext);
-        assertEquals(0, validationResults.size());
+        Assert.assertEquals(0, validationResults.size());
         resolver.configure(context);
 
-        assertNull(resolver.fromHostname("example.com"));
+        Assert.assertNull(resolver.fromHostname("example.com"));
     }
 
     @Test
@@ -66,13 +67,13 @@ public class TestRegexClusterResolver {
         final RegexClusterResolver resolver = new RegexClusterResolver();
 
         final Collection<ValidationResult> validationResults = resolver.validate(validationContext);
-        assertEquals(1, validationResults.size());
+        Assert.assertEquals(1, validationResults.size());
         final ValidationResult validationResult = validationResults.iterator().next();
-        assertEquals(RegexClusterResolver.PATTERN_PROPERTY_PREFIX, validationResult.getSubject());
+        Assert.assertEquals(RegexClusterResolver.PATTERN_PROPERTY_PREFIX, validationResult.getSubject());
 
         try {
             resolver.configure(context);
-            fail("Configure method should fail, too");
+            Assert.fail("Configure method should fail, too");
         } catch (IllegalArgumentException e) {
         }
     }
@@ -86,13 +87,13 @@ public class TestRegexClusterResolver {
         final RegexClusterResolver resolver = new RegexClusterResolver();
 
         final Collection<ValidationResult> validationResults = resolver.validate(validationContext);
-        assertEquals(1, validationResults.size());
+        Assert.assertEquals(1, validationResults.size());
         final ValidationResult validationResult = validationResults.iterator().next();
-        assertEquals(propertyName, validationResult.getSubject());
+        Assert.assertEquals(propertyName, validationResult.getSubject());
 
         try {
             resolver.configure(context);
-            fail("Configure method should fail, too");
+            Assert.fail("Configure method should fail, too");
         } catch (IllegalArgumentException e) {
         }
     }
@@ -106,11 +107,11 @@ public class TestRegexClusterResolver {
         final RegexClusterResolver resolver = new RegexClusterResolver();
 
         final Collection<ValidationResult> validationResults = resolver.validate(validationContext);
-        assertEquals(0, validationResults.size());
+        Assert.assertEquals(0, validationResults.size());
 
         resolver.configure(context);
 
-        assertEquals("Cluster1", resolver.fromHostname("host1.example.com"));
+        Assert.assertEquals("Cluster1", resolver.fromHostname("host1.example.com"));
     }
 
     @Test
@@ -123,14 +124,14 @@ public class TestRegexClusterResolver {
         final RegexClusterResolver resolver = new RegexClusterResolver();
 
         final Collection<ValidationResult> validationResults = resolver.validate(validationContext);
-        assertEquals(0, validationResults.size());
+        Assert.assertEquals(0, validationResults.size());
 
         resolver.configure(context);
 
-        assertEquals("Cluster1", resolver.fromHostname("host1.example.com"));
-        assertEquals("Cluster1", resolver.fromHostname("192.168.1.10"));
-        assertEquals("Cluster1", resolver.fromHostname("192.168.1.22"));
-        assertNull(resolver.fromHostname("192.168.2.30"));
+        Assert.assertEquals("Cluster1", resolver.fromHostname("host1.example.com"));
+        Assert.assertEquals("Cluster1", resolver.fromHostname("192.168.1.10"));
+        Assert.assertEquals("Cluster1", resolver.fromHostname("192.168.1.22"));
+        Assert.assertNull(resolver.fromHostname("192.168.2.30"));
     }
 
     @Test
@@ -145,17 +146,17 @@ public class TestRegexClusterResolver {
         final RegexClusterResolver resolver = new RegexClusterResolver();
 
         final Collection<ValidationResult> validationResults = resolver.validate(validationContext);
-        assertEquals(0, validationResults.size());
+        Assert.assertEquals(0, validationResults.size());
 
         resolver.configure(context);
 
-        assertEquals("Cluster1", resolver.fromHostname("host1.c1.example.com"));
-        assertEquals("Cluster1", resolver.fromHostname("192.168.1.10"));
-        assertEquals("Cluster1", resolver.fromHostname("192.168.1.22"));
-        assertEquals("Cluster2", resolver.fromHostname("host2.c2.example.com"));
-        assertEquals("Cluster2", resolver.fromHostname("192.168.2.10"));
-        assertEquals("Cluster2", resolver.fromHostname("192.168.2.22"));
-        assertNull(resolver.fromHostname("192.168.3.30"));
+        Assert.assertEquals("Cluster1", resolver.fromHostname("host1.c1.example.com"));
+        Assert.assertEquals("Cluster1", resolver.fromHostname("192.168.1.10"));
+        Assert.assertEquals("Cluster1", resolver.fromHostname("192.168.1.22"));
+        Assert.assertEquals("Cluster2", resolver.fromHostname("host2.c2.example.com"));
+        Assert.assertEquals("Cluster2", resolver.fromHostname("192.168.2.10"));
+        Assert.assertEquals("Cluster2", resolver.fromHostname("192.168.2.22"));
+        Assert.assertNull(resolver.fromHostname("192.168.3.30"));
     }
 
 }

@@ -189,28 +189,30 @@ public class NiFIAtlasHook extends AtlasHook {
     private final List<HookNotification.HookNotificationMessage> messages = new ArrayList<>();
 
     @SuppressWarnings("unchecked")
-    private void addDataSetRefs(Set<Referenceable> refs, Referenceable nifiFlowPath, String targetAttribute) {
-        if (refs != null && !refs.isEmpty()) {
-            for (Referenceable ref : refs) {
-                final HookNotification.EntityCreateRequest createDataSet = new HookNotification.EntityCreateRequest(NIFI_USER, ref);
+    private void addDataSetRefs(Set<Referenceable> dataSetRefs, Referenceable nifiFlowPath, String targetAttribute) {
+        if (dataSetRefs != null && !dataSetRefs.isEmpty()) {
+            for (Referenceable dataSetRef : dataSetRefs) {
+                final HookNotification.EntityCreateRequest createDataSet = new HookNotification.EntityCreateRequest(NIFI_USER, dataSetRef);
                 messages.add(createDataSet);
             }
 
             Object updatedRef = nifiFlowPath.get(targetAttribute);
             if (updatedRef == null) {
-                updatedRef = refs;
+                updatedRef = new ArrayList(dataSetRefs);
             } else {
-                ((Collection<Referenceable>) updatedRef).addAll(refs);
+                ((Collection<Referenceable>) updatedRef).addAll(dataSetRefs);
             }
             nifiFlowPath.set(targetAttribute, updatedRef);
         }
     }
 
-    public void addDataSetRefs(DataSetRefs refs, Referenceable nifiFlowPath) {
-        addDataSetRefs(refs.getInputs(), nifiFlowPath, ATTR_INPUTS);
-        addDataSetRefs(refs.getOutputs(), nifiFlowPath, ATTR_OUTPUTS);
+    public void addDataSetRefs(DataSetRefs dataSetRefs, Referenceable flowPathRef) {
+        addDataSetRefs(dataSetRefs.getInputs(), flowPathRef, ATTR_INPUTS);
+        addDataSetRefs(dataSetRefs.getOutputs(), flowPathRef, ATTR_OUTPUTS);
+        // Here, EntityPartialUpdateRequest adds Process's inputs or outputs elements who does not exists in
+        // the current nifi_flow_path entity stored in Atlas.
         messages.add(new HookNotification.EntityPartialUpdateRequest(NIFI_USER, TYPE_NIFI_FLOW_PATH,
-                ATTR_QUALIFIED_NAME, (String) nifiFlowPath.get(ATTR_QUALIFIED_NAME), nifiFlowPath));
+                ATTR_QUALIFIED_NAME, (String) flowPathRef.get(ATTR_QUALIFIED_NAME), flowPathRef));
     }
 
     public void commitMessages() {
