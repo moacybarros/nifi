@@ -362,13 +362,13 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             }
         }
 
-        final NiFiFlowAnalyzer flowAnalyzer = new NiFiFlowAnalyzer(nifiClient);
+        final NiFiFlowAnalyzer flowAnalyzer = new NiFiFlowAnalyzer();
 
         final NiFiFlow niFiFlow;
         try {
             final AtlasVariables atlasVariables = new AtlasVariables();
             atlasVariables.setNifiUrl(context.getProperty(ATLAS_NIFI_URL).evaluateAttributeExpressions().getValue());
-            niFiFlow = flowAnalyzer.analyzeProcessGroup(atlasVariables);
+            niFiFlow = flowAnalyzer.analyzeProcessGroup(atlasVariables, context);
         } catch (IOException e) {
             throw new RuntimeException("Failed to analyze NiFi flow. " + e, e);
         }

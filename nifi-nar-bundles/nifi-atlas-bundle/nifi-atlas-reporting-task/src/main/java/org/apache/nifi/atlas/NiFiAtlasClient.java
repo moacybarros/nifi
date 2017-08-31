@@ -28,7 +28,7 @@ import org.apache.atlas.model.instance.EntityMutationResponse;
 import org.apache.atlas.model.typedef.AtlasEntityDef;
 import org.apache.atlas.model.typedef.AtlasStructDef.AtlasAttributeDef;
 import org.apache.atlas.model.typedef.AtlasTypesDef;
-import org.apache.nifi.web.api.dto.ProcessorDTO;
+import org.apache.nifi.controller.status.ProcessorStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -200,8 +200,8 @@ public class NiFiAtlasClient {
         final String url = nifiFlow.getUrl();
         final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
-        final Map<AtlasObjectId, AtlasEntity> inputPorts = nifiFlow.getInputPorts();
-        final Map<AtlasObjectId, AtlasEntity> outputPorts = nifiFlow.getOutputPorts();
+        final Map<AtlasObjectId, AtlasEntity> inputPorts = nifiFlow.getRootInputPortEntities();
+        final Map<AtlasObjectId, AtlasEntity> outputPorts = nifiFlow.getRootOutputPortEntities();
         final Map<AtlasObjectId, AtlasEntity> queues = nifiFlow.getQueues();
         final Map<AtlasObjectId, AtlasEntity> createdData = nifiFlow.getCreatedData();
 
@@ -247,7 +247,7 @@ public class NiFiAtlasClient {
             final StringBuilder name = new StringBuilder();
             final StringBuilder description = new StringBuilder();
             path.getProcessorIds().forEach(pid -> {
-                final ProcessorDTO processor = nifiFlow.getProcessors().get(pid);
+                final ProcessorStatus processor = nifiFlow.getProcessors().get(pid);
                 if (name.length() > 0) {
                     name.append(", ");
                     description.append(", ");

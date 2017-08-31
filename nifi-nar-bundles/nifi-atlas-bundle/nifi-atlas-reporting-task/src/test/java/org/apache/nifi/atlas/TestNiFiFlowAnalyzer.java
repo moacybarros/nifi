@@ -17,37 +17,29 @@
 package org.apache.nifi.atlas;
 
 import org.apache.atlas.model.instance.AtlasObjectId;
-import org.apache.nifi.web.api.dto.ConnectableDTO;
-import org.apache.nifi.web.api.dto.ConnectionDTO;
-import org.apache.nifi.web.api.dto.PermissionsDTO;
-import org.apache.nifi.web.api.dto.PortDTO;
+import org.apache.nifi.controller.status.ConnectionStatus;
+import org.apache.nifi.controller.status.PortStatus;
+import org.apache.nifi.controller.status.ProcessGroupStatus;
+import org.apache.nifi.controller.status.ProcessorStatus;
+import org.apache.nifi.reporting.EventAccess;
+import org.apache.nifi.reporting.ReportingContext;
+import org.apache.nifi.util.Tuple;
 import org.apache.nifi.web.api.dto.ProcessGroupDTO;
-import org.apache.nifi.web.api.dto.ProcessorConfigDTO;
-import org.apache.nifi.web.api.dto.ProcessorDTO;
-import org.apache.nifi.web.api.dto.flow.FlowBreadcrumbDTO;
-import org.apache.nifi.web.api.dto.flow.FlowDTO;
-import org.apache.nifi.web.api.dto.flow.ProcessGroupFlowDTO;
-import org.apache.nifi.web.api.entity.ComponentEntity;
-import org.apache.nifi.web.api.entity.ConnectionEntity;
-import org.apache.nifi.web.api.entity.FlowBreadcrumbEntity;
-import org.apache.nifi.web.api.entity.PortEntity;
 import org.apache.nifi.web.api.entity.ProcessGroupEntity;
-import org.apache.nifi.web.api.entity.ProcessGroupFlowEntity;
-import org.apache.nifi.web.api.entity.ProcessorEntity;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mockito;
 
-import java.util.HashMap;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_QUEUE;
 import static org.junit.Assert.assertEquals;
-import static org.mockito.Matchers.anyString;
-import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Matchers.matches;
 import static org.mockito.Mockito.when;
 
 public class TestNiFiFlowAnalyzer {
@@ -61,24 +53,13 @@ public class TestNiFiFlowAnalyzer {
         atlasVariables = new AtlasVariables();
     }
 
-    private ProcessGroupFlowEntity createEmptyProcessGroupFlowEntity() {
-        ProcessGroupFlowEntity pgEntity = new ProcessGroupFlowEntity();
-        final PermissionsDTO permissions = new PermissionsDTO();
-        permissions.setCanRead(true);
-        pgEntity.setPermissions(permissions);
+    private ProcessGroupStatus createEmptyProcessGroupStatus() {
+        final ProcessGroupStatus processGroupStatus = new ProcessGroupStatus();
 
-        ProcessGroupFlowDTO pgFlow = new ProcessGroupFlowDTO();
-        pgFlow.setId(nextComponentId());
-        FlowBreadcrumbEntity breadcrumb = new FlowBreadcrumbEntity();
-        FlowBreadcrumbDTO breadcrumbDTO = new FlowBreadcrumbDTO();
-        breadcrumbDTO.setName("Flow name");
-        breadcrumb.setBreadcrumb(breadcrumbDTO);
-        pgFlow.setBreadcrumb(breadcrumb);
-        pgEntity.setProcessGroupFlow(pgFlow);
+        processGroupStatus.setId(nextComponentId());
+        processGroupStatus.setName("Flow name");
 
-        FlowDTO flow = new FlowDTO();
-        pgFlow.setFlow(flow);
-        return pgEntity;
+        return processGroupStatus;
     }
 
     private ProcessGroupEntity createProcessGroupEntity() {
@@ -91,32 +72,29 @@ public class TestNiFiFlowAnalyzer {
 
     @Test
     public void testEmptyFlow() throws Exception {
-        NiFiApiClient nifiApiClient = Mockito.mock(NiFiApiClient.class);
 
-        ProcessGroupFlowEntity rootPGEntity = createEmptyProcessGroupFlowEntity();
+        ReportingContext reportingContext = Mockito.mock(ReportingContext.class);
+        EventAccess eventAccess = Mockito.mock(EventAccess.class);
 
-        when(nifiApiClient.getProcessGroupFlow()).thenReturn(rootPGEntity);
-        when(nifiApiClient.getProcessGroupEntity()).thenReturn(createProcessGroupEntity());
+        ProcessGroupStatus rootPG = createEmptyProcessGroupStatus();
 
-        final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer(nifiApiClient);
+        when(reportingContext.getEventAccess()).thenReturn(eventAccess);
+        when(eventAccess.getGroupStatus(matches("root"))).thenReturn(rootPG);
 
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables);
+        final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
+
+        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables, reportingContext);
 
         assertEquals("Flow name", nifiFlow.getFlowName());
-        assertEquals("Flow comment", nifiFlow.getDescription());
+//        assertEquals("Flow comment", nifiFlow.getDescription());
     }
 
-    private ProcessorEntity createProcessor(ProcessGroupFlowEntity pgEntity, String type) {
-        final ProcessorEntity processor = new ProcessorEntity();
-        pgEntity.getProcessGroupFlow().getFlow().getProcessors().add(processor);
+    private ProcessorStatus createProcessor(ProcessGroupStatus pgStatus, String type) {
+        final ProcessorStatus processor = new ProcessorStatus();
+        processor.setName(type);
         processor.setId(nextComponentId());
+        pgStatus.getProcessorStatus().add(processor);
 
-        ProcessorDTO processorDTO =  new ProcessorDTO();
-        processor.setComponent(processorDTO);
-        processorDTO.setId(processor.getId());
-        processorDTO.setType(type);
-        ProcessorConfigDTO config = new ProcessorConfigDTO();
-        processorDTO.setConfig(config);
         return  processor;
     }
 
@@ -124,57 +102,54 @@ public class TestNiFiFlowAnalyzer {
         return String.format("1234-5678-0000-%04d", componentId++);
     }
 
-    private String getConnectionType(ComponentEntity o) {
-        if (o instanceof ProcessorEntity) {
-            return "PROCESSOR";
-        } else if (o instanceof PortEntity) {
-            return ((PortEntity) o).getPortType();
-        } else {
-            throw new IllegalArgumentException("Not supported.");
-        }
+    private void connect(ProcessGroupStatus pg0, Object o0, Object o1) {
+        Function<Object, Tuple<String, String>> toTupple = o -> {
+            Tuple<String, String> comp;
+            if (o instanceof ProcessorStatus) {
+                ProcessorStatus p = (ProcessorStatus) o;
+                comp = new Tuple<>(p.getId(), p.getName());
+            } else if (o instanceof PortStatus) {
+                PortStatus p = (PortStatus) o;
+                comp = new Tuple<>(p.getId(), p.getName());
+            } else {
+                throw new IllegalArgumentException("Not supported");
+            }
+            return comp;
+        };
+        connect(pg0, toTupple.apply(o0), toTupple.apply(o1));
     }
 
-    private void connect(ProcessGroupFlowEntity rootPGEntity, ComponentEntity pr0, ComponentEntity pr1) {
-        connect(rootPGEntity, pr0, rootPGEntity, pr1);
-    }
-
-    private void connect(ProcessGroupFlowEntity pg0, ComponentEntity pr0, ProcessGroupFlowEntity pg1, ComponentEntity pr1) {
-        ConnectionEntity conn = new ConnectionEntity();
+    private void connect(ProcessGroupStatus pg0, Tuple<String, String> comp0, Tuple<String, String> comp1) {
+        ConnectionStatus conn = new ConnectionStatus();
         conn.setId(nextComponentId());
-        pg0.getProcessGroupFlow().getFlow().getConnections().add(conn);
-        pg1.getProcessGroupFlow().getFlow().getConnections().add(conn);
+        conn.setGroupId(pg0.getId());
 
-        ConnectionDTO connDTO = new ConnectionDTO();
-        conn.setComponent(connDTO);
-        connDTO.setId(conn.getId());
+        conn.setSourceId(comp0.getKey());
+        conn.setSourceName(comp0.getValue());
 
-        ConnectableDTO source = new ConnectableDTO();
-        source.setId(pr0.getId());
-        source.setType(getConnectionType(pr0));
-        source.setGroupId(pg0.getProcessGroupFlow().getId());
-        connDTO.setSource(source);
+        conn.setDestinationId(comp1.getKey());
+        conn.setDestinationName(comp1.getValue());
 
-        ConnectableDTO dest = new ConnectableDTO();
-        dest.setId(pr1.getId());
-        dest.setType(getConnectionType(pr1));
-        dest.setGroupId(pg1.getProcessGroupFlow().getId());
-        connDTO.setDestination(dest);
+        pg0.getConnectionStatus().add(conn);
     }
 
     @Test
     public void testSingleProcessor() throws Exception {
 
-        NiFiApiClient nifiApiClient = Mockito.mock(NiFiApiClient.class);
+        ReportingContext reportingContext = Mockito.mock(ReportingContext.class);
+        EventAccess eventAccess = Mockito.mock(EventAccess.class);
 
-        ProcessGroupFlowEntity rootPGEntity = createEmptyProcessGroupFlowEntity();
+        ProcessGroupStatus rootPG = createEmptyProcessGroupStatus();
 
-        final ProcessorEntity pr0 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.GenerateFlowFile");
+        when(reportingContext.getEventAccess()).thenReturn(eventAccess);
+        when(eventAccess.getGroupStatus(matches("root"))).thenReturn(rootPG);
 
-        when(nifiApiClient.getProcessGroupFlow()).thenReturn(rootPGEntity);
+        final ProcessorStatus pr0 = createProcessor(rootPG, "GenerateFlowFile");
 
-        final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer(nifiApiClient);
 
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables);
+        final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
+
+        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables, reportingContext);
 
         assertEquals(1, nifiFlow.getProcessors().size());
 
@@ -184,7 +159,6 @@ public class TestNiFiFlowAnalyzer {
         assertEquals(1, paths.size());
 
         final NiFiFlowPath path0 = paths.get(0);
-        assertEquals("p0", path0.getName());
         assertEquals(path0.getId(), path0.getProcessorIds().get(0));
 
         // Should be able to find a path from a given processor GUID.
@@ -196,20 +170,22 @@ public class TestNiFiFlowAnalyzer {
     @Test
     public void testProcessorsWithinSinglePath() throws Exception {
 
-        NiFiApiClient nifiApiClient = Mockito.mock(NiFiApiClient.class);
+        ReportingContext reportingContext = Mockito.mock(ReportingContext.class);
+        EventAccess eventAccess = Mockito.mock(EventAccess.class);
 
-        ProcessGroupFlowEntity rootPGEntity = createEmptyProcessGroupFlowEntity();
+        ProcessGroupStatus rootPG = createEmptyProcessGroupStatus();
 
-        final ProcessorEntity pr0 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.GenerateFlowFile");
-        final ProcessorEntity pr1 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.UpdateAttribute");
+        when(reportingContext.getEventAccess()).thenReturn(eventAccess);
+        when(eventAccess.getGroupStatus(matches("root"))).thenReturn(rootPG);
 
-        connect(rootPGEntity, pr0, pr1);
+        final ProcessorStatus pr0 = createProcessor(rootPG, "GenerateFlowFile");
+        final ProcessorStatus pr1 = createProcessor(rootPG, "UpdateAttribute");
 
-        when(nifiApiClient.getProcessGroupFlow()).thenReturn(rootPGEntity);
+        connect(rootPG, pr0, pr1);
 
-        final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer(nifiApiClient);
+        final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables);
+        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables, reportingContext);
 
         assertEquals(2, nifiFlow.getProcessors().size());
 
@@ -229,23 +205,26 @@ public class TestNiFiFlowAnalyzer {
     @Test
     public void testMultiPaths() throws Exception {
 
-        NiFiApiClient nifiApiClient = Mockito.mock(NiFiApiClient.class);
+        ReportingContext reportingContext = Mockito.mock(ReportingContext.class);
+        EventAccess eventAccess = Mockito.mock(EventAccess.class);
 
-        ProcessGroupFlowEntity rootPGEntity = createEmptyProcessGroupFlowEntity();
+        ProcessGroupStatus rootPG = createEmptyProcessGroupStatus();
 
-        final ProcessorEntity pr0 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.GenerateFlowFile");
-        final ProcessorEntity pr1 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.UpdateAttribute");
-        final ProcessorEntity pr2 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.ListenTCP");
-        final ProcessorEntity pr3 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.LogAttribute");
+        when(reportingContext.getEventAccess()).thenReturn(eventAccess);
+        when(eventAccess.getGroupStatus(matches("root"))).thenReturn(rootPG);
 
-        connect(rootPGEntity, pr0, pr1);
-        connect(rootPGEntity, pr2, pr3);
 
-        when(nifiApiClient.getProcessGroupFlow()).thenReturn(rootPGEntity);
+        final ProcessorStatus pr0 = createProcessor(rootPG, "GenerateFlowFile");
+        final ProcessorStatus pr1 = createProcessor(rootPG, "UpdateAttribute");
+        final ProcessorStatus pr2 = createProcessor(rootPG, "ListenTCP");
+        final ProcessorStatus pr3 = createProcessor(rootPG, "LogAttribute");
 
-        final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer(nifiApiClient);
+        connect(rootPG, pr0, pr1);
+        connect(rootPG, pr2, pr3);
 
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables);
+        final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
+
+        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables, reportingContext);
 
         assertEquals(4, nifiFlow.getProcessors().size());
 
@@ -275,28 +254,30 @@ public class TestNiFiFlowAnalyzer {
     @Test
     public void testMultiPathsJoint() throws Exception {
 
-        NiFiApiClient nifiApiClient = Mockito.mock(NiFiApiClient.class);
+        ReportingContext reportingContext = Mockito.mock(ReportingContext.class);
+        EventAccess eventAccess = Mockito.mock(EventAccess.class);
 
-        ProcessGroupFlowEntity rootPGEntity = createEmptyProcessGroupFlowEntity();
+        ProcessGroupStatus rootPG = createEmptyProcessGroupStatus();
 
-        final ProcessorEntity pr0 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.GenerateFlowFile");
-        final ProcessorEntity pr1 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.UpdateAttribute");
-        final ProcessorEntity pr2 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.ListenTCP");
-        final ProcessorEntity pr3 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.LogAttribute");
+        when(reportingContext.getEventAccess()).thenReturn(eventAccess);
+        when(eventAccess.getGroupStatus(matches("root"))).thenReturn(rootPG);
+
+        final ProcessorStatus pr0 = createProcessor(rootPG, "org.apache.nifi.processors.standard.GenerateFlowFile");
+        final ProcessorStatus pr1 = createProcessor(rootPG, "org.apache.nifi.processors.standard.UpdateAttribute");
+        final ProcessorStatus pr2 = createProcessor(rootPG, "org.apache.nifi.processors.standard.ListenTCP");
+        final ProcessorStatus pr3 = createProcessor(rootPG, "org.apache.nifi.processors.standard.LogAttribute");
 
         // Result should be as follows:
         // pathA = 0 -> 1 (-> 3)
         // pathB = 2 (-> 3)
         // pathC = 3
-        connect(rootPGEntity, pr0, pr1);
-        connect(rootPGEntity, pr1, pr3);
-        connect(rootPGEntity, pr2, pr3);
+        connect(rootPG, pr0, pr1);
+        connect(rootPG, pr1, pr3);
+        connect(rootPG, pr2, pr3);
 
-        when(nifiApiClient.getProcessGroupFlow()).thenReturn(rootPGEntity);
+        final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer(nifiApiClient);
-
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables);
+        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables, reportingContext);
 
         assertEquals(4, nifiFlow.getProcessors().size());
 
@@ -334,27 +315,28 @@ public class TestNiFiFlowAnalyzer {
     @Test
     public void testRootGroupPorts() throws Exception {
 
-        NiFiApiClient nifiApiClient = Mockito.mock(NiFiApiClient.class);
+        ReportingContext reportingContext = Mockito.mock(ReportingContext.class);
+        EventAccess eventAccess = Mockito.mock(EventAccess.class);
 
-        ProcessGroupFlowEntity rootPGEntity = createEmptyProcessGroupFlowEntity();
-        final FlowDTO flow = rootPGEntity.getProcessGroupFlow().getFlow();
+        ProcessGroupStatus rootPG = createEmptyProcessGroupStatus();
 
-        final ProcessorEntity pr0 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.GenerateFlowFile");
-        final ProcessorEntity pr1 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.UpdateAttribute");
-        final ProcessorEntity pr2 = createProcessor(rootPGEntity, "org.apache.nifi.processors.standard.LogAttribute");
+        when(reportingContext.getEventAccess()).thenReturn(eventAccess);
+        when(eventAccess.getGroupStatus(matches("root"))).thenReturn(rootPG);
 
-        PortEntity inputPort1 = createInputPortEntity(flow, "input-1");
-        PortEntity outputPort1 = createOutputPortEntity(flow, "output-1");
+        final ProcessorStatus pr0 = createProcessor(rootPG, "org.apache.nifi.processors.standard.GenerateFlowFile");
+        final ProcessorStatus pr1 = createProcessor(rootPG, "org.apache.nifi.processors.standard.UpdateAttribute");
+        final ProcessorStatus pr2 = createProcessor(rootPG, "org.apache.nifi.processors.standard.LogAttribute");
 
-        connect(rootPGEntity, pr0, outputPort1);
-        connect(rootPGEntity, inputPort1, pr1);
-        connect(rootPGEntity, pr1, pr2);
+        PortStatus inputPort1 = createInputPortStatus(rootPG, "input-1");
+        PortStatus outputPort1 = createOutputPortStatus(rootPG, "output-1");
 
-        when(nifiApiClient.getProcessGroupFlow()).thenReturn(rootPGEntity);
+        connect(rootPG, pr0, outputPort1);
+        connect(rootPG, inputPort1, pr1);
+        connect(rootPG, pr1, pr2);
 
-        final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer(nifiApiClient);
+        final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables);
+        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables, reportingContext);
 
         assertEquals(3, nifiFlow.getProcessors().size());
 
@@ -367,6 +349,7 @@ public class TestNiFiFlowAnalyzer {
         final NiFiFlowPath pathB = pathMap.get(pr1.getId());
 
         assertEquals(1, pathA.getInputs().size()); // Obscure Ingress
+        // TODO: is this a remote output port?
         assertEquals(1, pathA.getOutputs().size());
         final AtlasObjectId output1 = pathA.getOutputs().iterator().next();
         assertEquals("nifi_output_port", output1.getTypeName());
@@ -380,79 +363,69 @@ public class TestNiFiFlowAnalyzer {
 
     }
 
-    private PortEntity createOutputPortEntity(FlowDTO flow, String name) {
-        return createPortEntity(flow, name, "OUTPUT_PORT");
+    private PortStatus createOutputPortStatus(ProcessGroupStatus pg, String name) {
+        return createPortStatus(pg, name, false);
     }
 
-    private PortEntity createInputPortEntity(FlowDTO flow, String name) {
-        return createPortEntity(flow, name, "INPUT_PORT");
+    private PortStatus createInputPortStatus(ProcessGroupStatus pg, String name) {
+        return createPortStatus(pg, name, true);
     }
 
-    private PortEntity createPortEntity(FlowDTO flow, String name, String portType) {
-        PortEntity port = new PortEntity();
-        flow.getOutputPorts().add(port);
+    private PortStatus createPortStatus(ProcessGroupStatus pg, String name, boolean isInputPort) {
+        final PortStatus port = new PortStatus();
+        if (isInputPort) {
+            pg.getInputPortStatus().add(port);
+        } else {
+            pg.getOutputPortStatus().add(port);
+        }
 
         port.setId(nextComponentId());
-        port.setPortType(portType);
+        port.setName(name);
 
-        PortDTO portDTO = new PortDTO();
-        port.setComponent(portDTO);
-
-        portDTO.setId(port.getId());
-        portDTO.setName(name);
-        portDTO.setComments(name + "-comment");
         return port;
     }
 
     @Test
     public void testRootGroupPortsAndChildProcessGroup() throws Exception {
 
-        NiFiApiClient nifiApiClient = Mockito.mock(NiFiApiClient.class);
+        ReportingContext reportingContext = Mockito.mock(ReportingContext.class);
+        EventAccess eventAccess = Mockito.mock(EventAccess.class);
 
-        ProcessGroupFlowEntity rootPGEntity = createEmptyProcessGroupFlowEntity();
-        ProcessGroupFlowEntity childPG1 = createEmptyProcessGroupFlowEntity();
-        ProcessGroupFlowEntity childPG2 = createEmptyProcessGroupFlowEntity();
+        ProcessGroupStatus rootPG = createEmptyProcessGroupStatus();
+        ProcessGroupStatus childPG1 = createEmptyProcessGroupStatus();
+        ProcessGroupStatus childPG2 = createEmptyProcessGroupStatus();
 
-        final FlowDTO flow = rootPGEntity.getProcessGroupFlow().getFlow();
-        final ProcessGroupEntity childPG1Entity = new ProcessGroupEntity();
-        childPG1Entity.setId(childPG1.getProcessGroupFlow().getId());
-        final ProcessGroupEntity childPG2Entity = new ProcessGroupEntity();
-        childPG2Entity.setId(childPG2.getProcessGroupFlow().getId());
+        when(reportingContext.getEventAccess()).thenReturn(eventAccess);
+        when(eventAccess.getGroupStatus(matches("root"))).thenReturn(rootPG);
 
-        flow.getProcessGroups().add(childPG1Entity);
-        flow.getProcessGroups().add(childPG2Entity);
+        final Collection<ProcessGroupStatus> childPGs = rootPG.getProcessGroupStatus();
+        childPGs.add(childPG1);
+        childPGs.add(childPG2);
 
-        final ProcessorEntity pr0 = createProcessor(childPG1, "org.apache.nifi.processors.standard.GenerateFlowFile");
-        final ProcessorEntity pr1 = createProcessor(childPG2, "org.apache.nifi.processors.standard.UpdateAttribute");
-        final ProcessorEntity pr2 = createProcessor(childPG2, "org.apache.nifi.processors.standard.LogAttribute");
 
-        PortEntity inputPort1 = createInputPortEntity(flow, "input-1");
-        PortEntity outputPort1 = createOutputPortEntity(flow, "output-1");
+        final ProcessorStatus pr0 = createProcessor(childPG1, "GenerateFlowFile");
+        final ProcessorStatus pr1 = createProcessor(childPG2, "UpdateAttribute");
+        final ProcessorStatus pr2 = createProcessor(childPG2, "LogAttribute");
 
-        final PortEntity childOutput = createOutputPortEntity(childPG1.getProcessGroupFlow().getFlow(), "child-output");
-        final PortEntity childInput = createOutputPortEntity(childPG2.getProcessGroupFlow().getFlow(), "child-input");
+        PortStatus inputPort1 = createInputPortStatus(rootPG, "input-1");
+        PortStatus outputPort1 = createOutputPortStatus(rootPG, "output-1");
 
-        // From GenerateFlowFile in a child pg to a root group output port.
+        final PortStatus childOutput = createOutputPortStatus(childPG1, "child-output");
+        final PortStatus childInput = createOutputPortStatus(childPG2, "child-input");
+
+        // TODO: check if this is correct.
+        // From GenerateFlowFile in a child pg to a root group input port.
         connect(childPG1, pr0, childOutput);
-        connect(childPG1, childOutput, rootPGEntity, outputPort1);
+        connect(childPG1, childOutput, inputPort1);
 
         // From a root group input port to an input port within a child port then connects to processor.
-        connect(rootPGEntity, inputPort1, childPG2, childInput);
+        connect(rootPG, inputPort1, childInput);
         connect(childPG2, childInput, pr1);
         connect(childPG2, pr1, pr2);
 
-        final Map<String, ProcessGroupFlowEntity> processGroups = new HashMap<>();
-        processGroups.put(rootPGEntity.getProcessGroupFlow().getId(), rootPGEntity);
-        processGroups.put(childPG1.getProcessGroupFlow().getId(), childPG1);
-        processGroups.put(childPG2.getProcessGroupFlow().getId(), childPG2);
+        final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        when(nifiApiClient.getProcessGroupFlow()).thenReturn(rootPGEntity);
-        doAnswer(invocation -> processGroups.get(invocation.getArgumentAt(0, String.class)))
-                .when(nifiApiClient).getProcessGroupFlow(anyString());
-
-        final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer(nifiApiClient);
-
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables);
+        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables, reportingContext);
         nifiFlow.dump();
 
         assertEquals(3, nifiFlow.getProcessors().size());

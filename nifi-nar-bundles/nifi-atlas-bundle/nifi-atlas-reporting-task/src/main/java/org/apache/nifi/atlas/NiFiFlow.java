@@ -18,6 +18,10 @@ package org.apache.nifi.atlas;
 
 import org.apache.atlas.model.instance.AtlasEntity;
 import org.apache.atlas.model.instance.AtlasObjectId;
+import org.apache.nifi.controller.status.ConnectionStatus;
+import org.apache.nifi.controller.status.PortStatus;
+import org.apache.nifi.controller.status.ProcessorStatus;
+import org.apache.nifi.controller.status.RemoteProcessGroupStatus;
 import org.apache.nifi.web.api.dto.ConnectionDTO;
 import org.apache.nifi.web.api.dto.ProcessorDTO;
 import org.apache.nifi.web.api.dto.RemoteProcessGroupDTO;
@@ -51,15 +55,22 @@ public class NiFiFlow implements AtlasProcess {
     private final List<NiFiFlowPath> flowPaths = new ArrayList<>();
     private final Map<String, Set<AtlasObjectId>> processorInputs = new HashMap<>();
     private final Map<String, Set<AtlasObjectId>> processorOutputs = new HashMap<>();
-    private final Map<String, ProcessorDTO> processors = new HashMap<>();
-    private final Map<String, RemoteProcessGroupDTO> remoteProcessGroups = new HashMap<>();
-    private final Map<String, List<ConnectionDTO>> incomingRelationShips = new HashMap<>();
-    private final Map<String, List<ConnectionDTO>> outGoingRelationShips = new HashMap<>();
+    private final Map<String, ProcessorStatus> processors = new HashMap<>();
+    private final Map<String, RemoteProcessGroupStatus> remoteProcessGroups = new HashMap<>();
+    private final Map<String, List<ConnectionStatus>> incomingRelationShips = new HashMap<>();
+    private final Map<String, List<ConnectionStatus>> outGoingRelationShips = new HashMap<>();
 
     private final Map<AtlasObjectId, AtlasEntity> createdData = new HashMap<>();
     private final Map<AtlasObjectId, AtlasEntity> queues = new HashMap<>();
-    private final Map<AtlasObjectId, AtlasEntity> inputPorts = new HashMap<>();
-    private final Map<AtlasObjectId, AtlasEntity> outputPorts = new HashMap<>();
+    // Any Ports.
+    private final Map<String, PortStatus> inputPorts = new HashMap<>();
+    private final Map<String, PortStatus> outputPorts = new HashMap<>();
+    // Root Group Ports.
+    private final Map<String, PortStatus> rootInputPorts = new HashMap<>();
+    private final Map<String, PortStatus> rootOutputPorts = new HashMap<>();
+    // Root Group Ports Entity.
+    private final Map<AtlasObjectId, AtlasEntity> rootInputPortEntities = new HashMap<>();
+    private final Map<AtlasObjectId, AtlasEntity> rootOutputPortEntities = new HashMap<>();
 
     public NiFiFlow(String flowName, String rootProcessGroupId, String url) {
         this.flowName = flowName;
@@ -102,23 +113,21 @@ public class NiFiFlow implements AtlasProcess {
         ids.add(output);
     }
 
-    public void addConnection(ConnectionDTO c) {
-        final String sourceId = c.getSource().getId();
-        final String destId = c.getDestination().getId();
-        outGoingRelationShips.computeIfAbsent(sourceId, k -> new ArrayList<>()).add(c);
-        incomingRelationShips.computeIfAbsent(destId, k -> new ArrayList<>()).add(c);
+    public void addConnection(ConnectionStatus c) {
+        outGoingRelationShips.computeIfAbsent(c.getSourceId(), k -> new ArrayList<>()).add(c);
+        incomingRelationShips.computeIfAbsent(c.getDestinationId(), k -> new ArrayList<>()).add(c);
     }
 
-    public void addProcessor(ProcessorEntity p) {
-        processors.put(p.getId(), p.getComponent());
+    public void addProcessor(ProcessorStatus p) {
+        processors.put(p.getId(), p);
     }
 
-    public Map<String, ProcessorDTO> getProcessors() {
+    public Map<String, ProcessorStatus> getProcessors() {
         return processors;
     }
 
-    public void addRemoteProcessGroup(RemoteProcessGroupEntity r) {
-        remoteProcessGroups.put(r.getId(), r.getComponent());
+    public void addRemoteProcessGroup(RemoteProcessGroupStatus r) {
+        remoteProcessGroups.put(r.getId(), r);
     }
 
     public String getFlowName() {
@@ -129,12 +138,12 @@ public class NiFiFlow implements AtlasProcess {
         return url;
     }
 
-    public List<ConnectionDTO> getIncomingRelationShips(String processorId) {
-        return incomingRelationShips.get(processorId);
+    public List<ConnectionStatus> getIncomingRelationShips(String componentId) {
+        return incomingRelationShips.get(componentId);
     }
 
-    public List<ConnectionDTO> getOutgoingRelationShips(String processorId) {
-        return outGoingRelationShips.get(processorId);
+    public List<ConnectionStatus> getOutgoingRelationShips(String componentId) {
+        return outGoingRelationShips.get(componentId);
     }
 
     public Set<AtlasObjectId> getInputs(String processorId) {
@@ -145,12 +154,44 @@ public class NiFiFlow implements AtlasProcess {
         return processorOutputs.get(processorId);
     }
 
-    public Map<AtlasObjectId, AtlasEntity> getInputPorts() {
+    public void addInputPort(PortStatus port) {
+        inputPorts.put(port.getId(), port);
+    }
+
+    public Map<String, PortStatus> getInputPorts() {
         return inputPorts;
     }
 
-    public Map<AtlasObjectId, AtlasEntity> getOutputPorts() {
+    public void addOutputPort(PortStatus port) {
+        outputPorts.put(port.getId(), port);
+    }
+
+    public Map<String, PortStatus> getOutputPorts() {
         return outputPorts;
+    }
+
+    public void addRootInputPort(PortStatus port) {
+        rootInputPorts.put(port.getId(), port);
+    }
+
+    public Map<String, PortStatus> getRootInputPorts() {
+        return rootInputPorts;
+    }
+
+    public void addRootOutputPort(PortStatus port) {
+        rootOutputPorts.put(port.getId(), port);
+    }
+
+    public Map<String, PortStatus> getRootOutputPorts() {
+        return rootOutputPorts;
+    }
+
+    public Map<AtlasObjectId, AtlasEntity> getRootInputPortEntities() {
+        return rootInputPortEntities;
+    }
+
+    public Map<AtlasObjectId, AtlasEntity> getRootOutputPortEntities() {
+        return rootOutputPortEntities;
     }
 
     public Map<AtlasObjectId, AtlasEntity> getQueues() {
@@ -172,6 +213,26 @@ public class NiFiFlow implements AtlasProcess {
             }
         }
         return null;
+    }
+
+    public boolean isProcessor(String componentId) {
+        return processors.containsKey(componentId);
+    }
+
+    public boolean isInputPort(String componentId) {
+        return inputPorts.containsKey(componentId);
+    }
+
+    public boolean isOutputPort(String componentId) {
+        return outputPorts.containsKey(componentId);
+    }
+
+    public boolean isRootInputPort(String componentId) {
+        return rootInputPorts.containsKey(componentId);
+    }
+
+    public boolean isRootOutputPort(String componentId) {
+        return rootOutputPorts.containsKey(componentId);
     }
 
     public void dump() {
