@@ -27,6 +27,8 @@ import java.util.Set;
 
 public class NiFiTypes {
 
+    public static final String TYPE_ASSET = "Asset";
+    public static final String TYPE_REFERENCEABLE = "Referenceable";
     public static final String TYPE_PROCESS = "Process";
     public static final String TYPE_DATASET = "DataSet";
     public static final String TYPE_NIFI_COMPONENT = "nifi_component";
@@ -64,7 +66,8 @@ public class NiFiTypes {
 
     private static EntityDefinition NIFI_FLOW = (entity, superTypes, attributes) -> {
         entity.setVersion(1L);
-        superTypes.add(TYPE_PROCESS);
+        superTypes.add(TYPE_REFERENCEABLE);
+        superTypes.add(TYPE_ASSET);
 
         final AtlasAttributeDef url = new AtlasAttributeDef(ATTR_URL, "string");
 
@@ -86,6 +89,7 @@ public class NiFiTypes {
         outputPorts.setIsOptional(true);
         outputPorts.addConstraint(ownedRef);
 
+        // TODO: We no longer need this.
         // This contains duplicated entries with 'outputs' but it's important to put those here, too.
         // In order to delete when nifi_flow is deleted.
         final AtlasAttributeDef generatedData = new AtlasAttributeDef(ATTR_CREATED_BY_NIFI_FLOW, arrayOf(TYPE_NIFI_DATA));

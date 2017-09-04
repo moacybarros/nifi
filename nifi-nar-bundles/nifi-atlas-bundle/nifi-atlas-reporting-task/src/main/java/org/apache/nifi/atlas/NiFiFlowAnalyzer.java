@@ -28,14 +28,11 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
@@ -99,86 +96,7 @@ public class NiFiFlowAnalyzer {
         rootProcessGroup.getOutputPortStatus().forEach(port -> portEntityCreator.accept(port, false));
     }
 
-    private List<AtlasObjectId> extractRootGroupPorts(NiFiFlow nifiFlow, boolean isExtractingInputPorts, List<ConnectionStatus> connections) {
-        if (connections == null || connections.isEmpty()) {
-            return Collections.emptyList();
-        }
-
-        // The direction keyword becomes opposite for remote ports. A processor receives data from REMOTE_OUTPUT_PORT>
-        final String targetRemoteType = isExtractingInputPorts ? "REMOTE_OUTPUT_PORT" : "REMOTE_INPUT_PORT";
-        final Map<Boolean, List<String>> connectedPortsAndOthers = connections.stream()
-                .map(c -> isExtractingInputPorts ? c.getSourceId() : c.getDestinationId())
-                // The other end is not a processor.
-                .filter(otherEndId -> !nifiFlow.isProcessor(otherEndId))
-                // Group by whether the other end is the target type.
-                .collect(Collectors.groupingBy(otherEndId -> {
-                    if (isExtractingInputPorts) {
-                        return nifiFlow.isInputPort(otherEndId);
-                    } else {
-                        return nifiFlow.isOutputPort(otherEndId);
-                    }
-                }));
-
-        final List<AtlasObjectId> rootPortIds = new ArrayList<>();
-        final List<String> connectedOthers = new ArrayList<>();
-
-        connectedPortsAndOthers.entrySet().forEach(po -> {
-            if (po.getKey()) {
-                // Connected to target port type, otherEndId is an id of InputPort or OutputPort
-//                final Map<Boolean, List<String>> rootPortAndOthers =  po.getValue().stream().collect(Collectors
-//                        // If it connects to remote input/output port, or it connects to one in the root process group.
-//                        // TODO: how can we know if target is remote group port? Provenance event SEND/RECEIVE knows remote group port GUID.
-//                        .groupingBy(otherEndId -> targetRemoteType.equals(otherEnd.getType())
-//                                                    || otherEnd.getGroupId().equals(nifiFlow.getRootProcessGroupId())));
-//
-//                rootPortAndOthers.entrySet().forEach(ro -> {
-//                    if (ro.getKey()) {
-//                        // Connected root group ports
-//                        ro.getValue().forEach(rootPort -> {
-//                            // If type matched with remote, then use opposite port type.
-//                            // If it is a remote port, Atlas entity should be created by the remote NiFi, only AtlasObjectId link is necessary here.
-//                            // If it is a local root group port, Atlas entity will be created at later code from this NiFi.
-//                            final boolean isRemote = targetRemoteType.equals(rootPort.getType());
-//                            final boolean toInputPort = isRemote ? !isExtractingInputPorts : isExtractingInputPorts;
-//                            final AtlasObjectId rootGroupPortId = new AtlasObjectId(toInputPort
-//                                    ? TYPE_NIFI_INPUT_PORT : TYPE_NIFI_OUTPUT_PORT,
-//                                    ATTR_QUALIFIED_NAME, rootPort.getId());
-//                            rootPortIds.add(rootGroupPortId);
-//                        });
-//                    } else {
-//                        // Connected ports but not in the root group
-//                        connectedOthers.addAll(ro.getValue());
-//                    }
-//                });
-
-            } else {
-                // Connected others
-                connectedOthers.addAll(po.getValue());
-            }
-        });
-
-        // If those are not root group ports, let's dig one level deeper.
-        final List<ConnectionStatus> nextLevel = connectedOthers.stream()
-                .map(otherEndId -> isExtractingInputPorts
-                        ? nifiFlow.getIncomingRelationShips(otherEndId)
-                        : nifiFlow.getOutgoingRelationShips(otherEndId))
-                .filter(Objects::nonNull)
-                .flatMap(Collection::stream).collect(Collectors.toList());
-
-        if (nextLevel == null || nextLevel.isEmpty()) {
-            // There's no more next level. Return those are found so far.
-            return rootPortIds;
-        }
-
-        // Those are found at one level deeper.
-        final List<AtlasObjectId> found = extractRootGroupPorts(nifiFlow, isExtractingInputPorts, nextLevel);
-
-        rootPortIds.addAll(found);
-
-        return rootPortIds;
-    }
-
-    public void analyzeProcessGroup(final ProcessGroupStatus processGroupStatus, final NiFiFlow nifiFlow) throws IOException {
+    private void analyzeProcessGroup(final ProcessGroupStatus processGroupStatus, final NiFiFlow nifiFlow) throws IOException {
 
         processGroupStatus.getConnectionStatus().forEach(c -> nifiFlow.addConnection(c));
         processGroupStatus.getProcessorStatus().forEach(p -> nifiFlow.addProcessor(p));
@@ -191,12 +109,6 @@ public class NiFiFlowAnalyzer {
 
             final String pid = entry.getKey();
 
-            final Consumer<AtlasObjectId> putInput = input -> nifiFlow.putInput(pid, input);
-            final Consumer<AtlasObjectId> putOutput = output -> nifiFlow.putOutput(pid, output);
-
-            extractRootGroupPorts(nifiFlow, true, nifiFlow.getIncomingRelationShips(pid)).forEach(putInput);
-            extractRootGroupPorts(nifiFlow, false, nifiFlow.getOutgoingRelationShips(pid)).forEach(putOutput);
-
             // TODO: do we still need this? Yes, but we need to do it differently, by Provenance CREATE event.
             // Even if it doesn't have ingress info registered, treat it as a unknown ingress if it doesn't have any incoming relationship.
             final List<ConnectionStatus> ins = nifiFlow.getIncomingRelationShips(pid);
@@ -207,7 +119,7 @@ public class NiFiFlowAnalyzer {
                 createdData.setAttribute(ATTR_NAME, nifiFlow.getProcessors().get(pid).getName());
                 final AtlasObjectId createdDataId = new AtlasObjectId(TYPE_NIFI_DATA, ATTR_QUALIFIED_NAME, pid);
                 nifiFlow.getCreatedData().put(createdDataId, createdData);
-                putInput.accept(createdDataId);
+//                putInput.accept(createdDataId);
             }
         }
 

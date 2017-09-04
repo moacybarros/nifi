@@ -18,16 +18,10 @@ package org.apache.nifi.atlas;
 
 import org.apache.atlas.model.instance.AtlasEntity;
 import org.apache.atlas.model.instance.AtlasObjectId;
-import org.apache.nifi.atlas.provenance.AnalysisContext;
 import org.apache.nifi.controller.status.ConnectionStatus;
 import org.apache.nifi.controller.status.PortStatus;
 import org.apache.nifi.controller.status.ProcessorStatus;
 import org.apache.nifi.controller.status.RemoteProcessGroupStatus;
-import org.apache.nifi.web.api.dto.ConnectionDTO;
-import org.apache.nifi.web.api.dto.ProcessorDTO;
-import org.apache.nifi.web.api.dto.RemoteProcessGroupDTO;
-import org.apache.nifi.web.api.entity.ProcessorEntity;
-import org.apache.nifi.web.api.entity.RemoteProcessGroupEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,7 +36,7 @@ import java.util.function.Function;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW;
 
-public class NiFiFlow implements AtlasProcess {
+public class NiFiFlow {
 
     private static final Logger logger = LoggerFactory.getLogger(NiFiFlow.class);
 
@@ -94,24 +88,6 @@ public class NiFiFlow implements AtlasProcess {
 
     public void setDescription(String description) {
         this.description = description;
-    }
-
-    public Set<AtlasObjectId> getInputs() {
-        return inputs;
-    }
-
-    public Set<AtlasObjectId> getOutputs() {
-        return outputs;
-    }
-
-    public void putInput(String processorId, AtlasObjectId input) {
-        final Set<AtlasObjectId> ids = processorInputs.computeIfAbsent(processorId, k -> new HashSet<>());
-        ids.add(input);
-    }
-
-    public void putOutput(String processorId, AtlasObjectId output) {
-        final Set<AtlasObjectId> ids = processorOutputs.computeIfAbsent(processorId, k -> new HashSet<>());
-        ids.add(output);
     }
 
     public void addConnection(ConnectionStatus c) {

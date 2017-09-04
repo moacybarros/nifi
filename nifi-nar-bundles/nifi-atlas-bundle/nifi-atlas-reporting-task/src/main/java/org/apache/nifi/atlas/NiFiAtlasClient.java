@@ -268,9 +268,6 @@ public class NiFiAtlasClient {
             activateDataSetIOLinks(path, pathEntity);
         }
 
-        // Setup links from nifiFlow.
-        activateDataSetIOLinks(nifiFlow, flowEntity);
-
         // Create entities without relationships, Atlas doesn't allow storing ObjectId that doesn't exist.
         mutationResponse = atlasClient.createEntities(atlasEntities);
         logger.debug("mutation response={}", mutationResponse);

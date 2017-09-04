@@ -343,11 +343,14 @@ public class TestNiFiFlowAnalyzer {
         analyzer.analyzePaths(nifiFlow);
         final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
+        // pathA: GenerateFlowFile(pr0) -> output-1
+        // pathB: input-1 -> UpdateAttribute(pr1) -> LogAttribute
         assertEquals(2, paths.size());
         final Map<String, NiFiFlowPath> pathMap = paths.stream().collect(Collectors.toMap(p -> p.getId(), p -> p));
         final NiFiFlowPath pathA = pathMap.get(pr0.getId());
         final NiFiFlowPath pathB = pathMap.get(pr1.getId());
 
+        // TODO: This part should be created via lineage.
         assertEquals(1, pathA.getInputs().size()); // Obscure Ingress
         // TODO: is this a remote output port?
         assertEquals(1, pathA.getOutputs().size());
@@ -433,11 +436,15 @@ public class TestNiFiFlowAnalyzer {
         analyzer.analyzePaths(nifiFlow);
         final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
+        // input-1 -> child-input
+        // pathA: GenerateFlowFile(pr0) -> child-output-1 -> input-1
+        // pathB: child-input -> UpdateAttribute(pr1) -> LogAttribute(pr2)
         assertEquals(2, paths.size());
         final Map<String, NiFiFlowPath> pathMap = paths.stream().collect(Collectors.toMap(p -> p.getId(), p -> p));
         final NiFiFlowPath pathA = pathMap.get(pr0.getId());
         final NiFiFlowPath pathB = pathMap.get(pr1.getId());
 
+        // TODO: This part should be done by provenance.
         assertEquals(1, pathA.getInputs().size()); // Obscure Ingress
         assertEquals(1, pathA.getOutputs().size());
         final AtlasObjectId output1 = pathA.getOutputs().iterator().next();
