@@ -12,8 +12,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+# By component type:
+org.apache.nifi.atlas.provenance.analyzer.NiFiRemotePort
 org.apache.nifi.atlas.provenance.analyzer.KafkaTopic
+
+# By transit URI:
 org.apache.nifi.atlas.provenance.analyzer.Hive2JDBC
 org.apache.nifi.atlas.provenance.analyzer.HDFSPath
 org.apache.nifi.atlas.provenance.analyzer.HBaseTable
-org.apache.nifi.atlas.provenance.analyzer.NiFiRemotePort
+
+# By event type, if none of above analyzers matches"
+org.apache.nifi.atlas.provenance.analyzer.CreateObscureInputDataSet

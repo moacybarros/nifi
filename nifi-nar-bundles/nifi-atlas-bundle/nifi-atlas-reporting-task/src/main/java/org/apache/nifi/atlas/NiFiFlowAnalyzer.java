@@ -21,7 +21,6 @@ import org.apache.atlas.model.instance.AtlasObjectId;
 import org.apache.nifi.controller.status.ConnectionStatus;
 import org.apache.nifi.controller.status.PortStatus;
 import org.apache.nifi.controller.status.ProcessGroupStatus;
-import org.apache.nifi.controller.status.ProcessorStatus;
 import org.apache.nifi.reporting.ReportingContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,7 +39,6 @@ import static org.apache.nifi.atlas.NiFiTypes.ATTR_DESCRIPTION;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NIFI_FLOW;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
-import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_DATA;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_INPUT_PORT;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_OUTPUT_PORT;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_QUEUE;
@@ -103,25 +101,6 @@ public class NiFiFlowAnalyzer {
         processGroupStatus.getRemoteProcessGroupStatus().forEach(r -> nifiFlow.addRemoteProcessGroup(r));
         processGroupStatus.getInputPortStatus().forEach(p -> nifiFlow.addInputPort(p));
         processGroupStatus.getOutputPortStatus().forEach(p -> nifiFlow.addOutputPort(p));
-
-        // Analyze each processor.
-        for (Map.Entry<String, ProcessorStatus> entry : nifiFlow.getProcessors().entrySet()) {
-
-            final String pid = entry.getKey();
-
-            // TODO: do we still need this? Yes, but we need to do it differently, by Provenance CREATE event.
-            // Even if it doesn't have ingress info registered, treat it as a unknown ingress if it doesn't have any incoming relationship.
-            final List<ConnectionStatus> ins = nifiFlow.getIncomingRelationShips(pid);
-            if (ins == null || ins.isEmpty()) {
-                final AtlasEntity createdData = new AtlasEntity(TYPE_NIFI_DATA);
-                createdData.setAttribute(ATTR_NIFI_FLOW, nifiFlow.getId());
-                createdData.setAttribute(ATTR_QUALIFIED_NAME, pid);
-                createdData.setAttribute(ATTR_NAME, nifiFlow.getProcessors().get(pid).getName());
-                final AtlasObjectId createdDataId = new AtlasObjectId(TYPE_NIFI_DATA, ATTR_QUALIFIED_NAME, pid);
-                nifiFlow.getCreatedData().put(createdDataId, createdData);
-//                putInput.accept(createdDataId);
-            }
-        }
 
         // Analyze child ProcessGroups recursively.
         for (ProcessGroupStatus child : processGroupStatus.getProcessGroupStatus()) {
@@ -258,9 +237,9 @@ public class NiFiFlowAnalyzer {
         );
     }
 
-    // TODO: this can be private?
     public void analyzePaths(NiFiFlow nifiFlow) {
         // Now let's break it into flow paths.
+        // TODO: add tests that confirms various situations, Remote Ports, Funnel, Root Group Ports ... etc.
         final Set<String> headProcessors = nifiFlow.getProcessors().keySet().stream()
                 .filter(pid -> {
                     final List<ConnectionStatus> ins = nifiFlow.getIncomingRelationShips(pid);

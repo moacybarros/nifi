@@ -1,6 +1,7 @@
 package org.apache.nifi.atlas.provenance;
 
 import org.apache.nifi.provenance.ProvenanceEventRecord;
+import org.apache.nifi.provenance.ProvenanceEventType;
 
 /**
  * Responsible for analyzing NiFi provenance event data to generate Atlas DataSet reference.
@@ -24,6 +25,14 @@ public interface NiFiProvenanceEventAnalyzer {
      * @return A RegularExpression to match with a transit URI of a provenance event.
      */
     default String targetTransitUriPattern() {
+        return null;
+    }
+
+    /**
+     * Returns target provenance event type that this Analyzer supports.
+     * @return A Provenance event type
+     */
+    default ProvenanceEventType targetProvenanceEventType() {
         return null;
     }
 

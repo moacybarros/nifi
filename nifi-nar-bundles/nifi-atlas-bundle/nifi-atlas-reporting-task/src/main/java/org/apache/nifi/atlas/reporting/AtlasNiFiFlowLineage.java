@@ -82,6 +82,7 @@ import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_URL;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW_PATH;
+import static org.apache.nifi.provenance.ProvenanceEventType.CREATE;
 import static org.apache.nifi.provenance.ProvenanceEventType.FETCH;
 import static org.apache.nifi.provenance.ProvenanceEventType.RECEIVE;
 import static org.apache.nifi.provenance.ProvenanceEventType.SEND;
@@ -301,7 +302,7 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         consumer = new ProvenanceEventConsumer();
         consumer.setStartPositionValue(context.getProperty(PROVENANCE_START_POSITION).getValue());
         consumer.setBatchSize(context.getProperty(PROVENANCE_BATCH_SIZE).asInteger());
-        consumer.addTargetEventType(FETCH, RECEIVE, SEND);
+        consumer.addTargetEventType(CREATE, FETCH, RECEIVE, SEND);
         consumer.setLogger(getLogger());
         consumer.setScheduled(true);
 
@@ -398,7 +399,7 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         consumer.consumeEvents(eventAccess, context.getStateManager(), events -> {
             for (ProvenanceEventRecord event : events) {
                 try {
-                    final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(event.getComponentType(), event.getTransitUri());
+                    final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(event.getComponentType(), event.getTransitUri(), event.getEventType());
                     if (getLogger().isDebugEnabled()) {
                         getLogger().debug("Analyzer {} is found for event: {}", new Object[]{analyzer, event});
                     }

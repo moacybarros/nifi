@@ -45,7 +45,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Matchers.eq;
-import static org.mockito.Matchers.longThat;
 import static org.mockito.Matchers.matches;
 import static org.mockito.Mockito.when;
 
@@ -94,7 +93,7 @@ public class TestNiFiRemotePort {
         edges.add(createLineageEdge(flowFileNode, sendEventNode));
         when(lineage.getEdges()).thenReturn(edges);
 
-        final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(componentType, transitUri);
+        final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(componentType, transitUri, sendEvent.getEventType());
         assertNotNull(analyzer);
 
         final DataSetRefs refs = analyzer.analyze(context, sendEvent);
@@ -148,7 +147,7 @@ public class TestNiFiRemotePort {
         when(context.getClusterResolver()).thenReturn(clusterResolvers);
         when(context.findConnectionFrom(matches("port-guid"))).thenReturn(connections);
 
-        final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(componentType, transitUri);
+        final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(componentType, transitUri, record.getEventType());
         assertNotNull(analyzer);
 
         final DataSetRefs refs = analyzer.analyze(context, record);

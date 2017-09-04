@@ -18,51 +18,84 @@ package org.apache.nifi.atlas.provenance.analyzer;
 
 import org.apache.atlas.typesystem.Referenceable;
 import org.apache.nifi.atlas.provenance.AnalysisContext;
-import org.apache.nifi.atlas.provenance.StandardAnalysisContext;
-import org.apache.nifi.atlas.resolver.ClusterResolver;
 import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzer;
 import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzerFactory;
 import org.apache.nifi.atlas.resolver.ClusterResolvers;
+import org.apache.nifi.controller.status.ConnectionStatus;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
 import org.apache.nifi.provenance.ProvenanceEventType;
 import org.junit.Test;
 import org.mockito.Mockito;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.mockito.Matchers.matches;
 import static org.mockito.Mockito.when;
 
-public class TestHBaseTable {
+public class TestCreateObscureInputDataSet {
 
     @Test
-    public void testHBaseTable() {
-        final String processorName = "FetchHBaseRow";
-        // TODO: Even if there are multiple hosts, processor should use only one of them to make it a valid URI?
-        final String transitUri = "hbase://0.example.com/tableA";
+    public void testGenerateFlowFile() {
+        final String processorName = "GenerateFlowFile";
+        final String processorId = "processor-1234";
         final ProvenanceEventRecord record = Mockito.mock(ProvenanceEventRecord.class);
         when(record.getComponentType()).thenReturn(processorName);
-        when(record.getTransitUri()).thenReturn(transitUri);
-        when(record.getEventType()).thenReturn(ProvenanceEventType.FETCH);
+        when(record.getComponentId()).thenReturn(processorId);
+        when(record.getEventType()).thenReturn(ProvenanceEventType.CREATE);
 
         final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
         when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
 
+        final List<ConnectionStatus> connections = new ArrayList<>();
+
         final AnalysisContext context = Mockito.mock(AnalysisContext.class);
         when(context.getClusterResolver()).thenReturn(clusterResolvers);
+        when(context.findConnectionTo(processorId)).thenReturn(connections);
 
-        final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(processorName, transitUri, record.getEventType());
+        final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(processorName, null, record.getEventType());
         assertNotNull(analyzer);
 
         final DataSetRefs refs = analyzer.analyze(context, record);
         assertEquals(1, refs.getInputs().size());
         assertEquals(0, refs.getOutputs().size());
         Referenceable ref = refs.getInputs().iterator().next();
-        assertEquals("hbase_table", ref.getTypeName());
-        assertEquals("tableA", ref.get(ATTR_NAME));
-        assertEquals("tableA@cluster1", ref.get(ATTR_QUALIFIED_NAME));
+        assertEquals("nifi_data", ref.getTypeName());
+        assertEquals("GenerateFlowFile", ref.get(ATTR_NAME));
+        assertEquals("processor-1234", ref.get(ATTR_QUALIFIED_NAME));
     }
+
+    @Test
+    public void testSomethingHavingIncomingConnection() {
+        final String processorName = "SomeProcessor";
+        final String processorId = "processor-1234";
+        final ProvenanceEventRecord record = Mockito.mock(ProvenanceEventRecord.class);
+        when(record.getComponentType()).thenReturn(processorName);
+        when(record.getComponentId()).thenReturn(processorId);
+        when(record.getEventType()).thenReturn(ProvenanceEventType.CREATE);
+
+        final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
+        when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
+
+        final List<ConnectionStatus> connections = new ArrayList<>();
+        // The content of connection is not important, just create an empty status.
+        connections.add(new ConnectionStatus());
+
+        final AnalysisContext context = Mockito.mock(AnalysisContext.class);
+        when(context.getClusterResolver()).thenReturn(clusterResolvers);
+        when(context.findConnectionTo(processorId)).thenReturn(connections);
+
+        final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(processorName, null, record.getEventType());
+        assertNotNull(analyzer);
+
+        final DataSetRefs refs = analyzer.analyze(context, record);
+        assertNull("If the processor has incoming connections, no refs should be created", refs);
+    }
+
 }
