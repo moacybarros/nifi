@@ -1,32 +1,49 @@
 package org.apache.nifi.processors.hive;
 
-import org.antlr.runtime.ANTLRStringStream;
-import org.antlr.runtime.CommonTokenStream;
-import org.antlr.runtime.RecognitionException;
-import org.antlr.runtime.TokenStream;
-import org.antlr.runtime.tree.CommonTree;
-import org.apache.hadoop.hive.ql.parse.HiveLexer;
-import org.apache.hadoop.hive.ql.parse.HiveParser;
+import org.apache.nifi.processor.ProcessContext;
+import org.apache.nifi.processor.ProcessSessionFactory;
+import org.apache.nifi.processor.exception.ProcessException;
 import org.junit.Test;
 
-import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-public class TestHiveParser {
+public class TestHiveParser extends AbstractHiveQLProcessor {
+
+    @Override
+    public void onTrigger(ProcessContext context, ProcessSessionFactory sessionFactory) throws ProcessException {
+
+    }
 
     @Test
     public void parseSelect() throws Exception {
-        String query = "select a.empid, to_something_awesome(b.saraly) from " +
+        String query = "select a.empid, to_something(b.saraly) from " +
                 "company.emp a inner join default.salary b where a.empid = b.empid";
-        final HashSet<TableName> tableNames = findTableNames(query);
+        final Set<TableName> tableNames = findTableNames(query);
         System.out.printf("tableNames=%s\n", tableNames);
         assertEquals(2, tableNames.size());
         assertTrue(tableNames.contains(new TableName("COMPANY", "EMP")));
         assertTrue(tableNames.contains(new TableName("DEFAULT", "SALARY")));
+        for (TableName tableName : tableNames) {
+            assertTrue(tableName.isInput());
+        }
     }
+
+    @Test
+    public void parseSelectPrepared() throws Exception {
+        String query = "select empid from company.emp a where a.firstName = ?";
+        final Set<TableName> tableNames = findTableNames(query);
+        System.out.printf("tableNames=%s\n", tableNames);
+        assertEquals(1, tableNames.size());
+        assertTrue(tableNames.contains(new TableName("COMPANY", "EMP")));
+        for (TableName tableName : tableNames) {
+            assertTrue(tableName.isInput());
+        }
+    }
+
 
     @Test
     public void parseLongSelect() throws Exception {
@@ -114,35 +131,77 @@ public class TestHiveParser {
                 "\n" +
                 "limit 100";
 
-        final HashSet<TableName> tableNames = findTableNames(query);
+        final Set<TableName> tableNames = findTableNames(query);
         System.out.printf("tableNames=%s\n", tableNames);
         assertEquals(6, tableNames.size());
-        assertTrue(tableNames.contains(new TableName(null, "STORE_SALES")));
-        assertTrue(tableNames.contains(new TableName(null, "STORE_RETURNS")));
-        assertTrue(tableNames.contains(new TableName(null, "CATALOG_SALES")));
-        assertTrue(tableNames.contains(new TableName(null, "DATE_DIM")));
-        assertTrue(tableNames.contains(new TableName(null, "STORE")));
-        assertTrue(tableNames.contains(new TableName(null, "ITEM")));
+        AtomicInteger cnt = new AtomicInteger(0);
+        for (TableName tableName : tableNames) {
+            if (tableName.equals(new TableName(null, "STORE_SALES"))) {
+                assertTrue(tableName.isInput());
+                cnt.incrementAndGet();
+            } else if (tableName.equals(new TableName(null, "STORE_RETURNS"))) {
+                assertTrue(tableName.isInput());
+                cnt.incrementAndGet();
+            } else if (tableName.equals(new TableName(null, "CATALOG_SALES"))) {
+                assertTrue(tableName.isInput());
+                cnt.incrementAndGet();
+            } else if (tableName.equals(new TableName(null, "DATE_DIM"))) {
+                assertTrue(tableName.isInput());
+                cnt.incrementAndGet();
+            } else if (tableName.equals(new TableName(null, "STORE"))) {
+                assertTrue(tableName.isInput());
+                cnt.incrementAndGet();
+            } else if (tableName.equals(new TableName(null, "ITEM"))) {
+                assertTrue(tableName.isInput());
+                cnt.incrementAndGet();
+            }
+        }
+        assertEquals(6, cnt.get());
+    }
+
+    @Test
+    public void parseInsert() throws Exception {
+        String query = "insert into databaseB.tableB1 select something from tableA1 a1 inner join tableA2 a2 where a1.id = a2.id";
+
+        final Set<TableName> tableNames = findTableNames(query);
+        System.out.printf("tableNames=%s\n", tableNames);
+        assertEquals(3, tableNames.size());
+        AtomicInteger cnt = new AtomicInteger(0);
+        tableNames.forEach(tableName -> {
+            if (tableName.equals(new TableName("DATABASEB", "TABLEB1"))) {
+                assertTrue(!tableName.isInput());
+                cnt.incrementAndGet();
+            } else if (tableName.equals(new TableName(null, "TABLEA1"))) {
+                assertTrue(tableName.isInput());
+                cnt.incrementAndGet();
+            } else if (tableName.equals(new TableName(null, "TABLEA2"))) {
+                assertTrue(tableName.isInput());
+                cnt.incrementAndGet();
+            }
+        });
+        assertEquals(3, cnt.get());
     }
 
     @Test
     public void parseUpdate() throws Exception {
         String query = "update table_a set y = 'updated' where x > 100";
 
-        final HashSet<TableName> tableNames = findTableNames(query);
+        final Set<TableName> tableNames = findTableNames(query);
         System.out.printf("tableNames=%s\n", tableNames);
         assertEquals(1, tableNames.size());
         assertTrue(tableNames.contains(new TableName(null, "TABLE_A")));
+        assertTrue(!tableNames.iterator().next().isInput());
     }
 
     @Test
     public void parseDelete() throws Exception {
         String query = "delete from table_a where x > 100";
 
-        final HashSet<TableName> tableNames = findTableNames(query);
+        final Set<TableName> tableNames = findTableNames(query);
         System.out.printf("tableNames=%s\n", tableNames);
         assertEquals(1, tableNames.size());
         assertTrue(tableNames.contains(new TableName(null, "TABLE_A")));
+        assertTrue(!tableNames.iterator().next().isInput());
     }
 
     @Test
@@ -154,86 +213,12 @@ public class TestHiveParser {
                 "STORED AS ORC";
 
 
-        final HashSet<TableName> tableNames = findTableNames(query);
+        final Set<TableName> tableNames = findTableNames(query);
         System.out.printf("tableNames=%s\n", tableNames);
         assertEquals(1, tableNames.size());
         assertTrue(tableNames.contains(new TableName(null, "EMPLOYEES")));
+        assertTrue(!tableNames.iterator().next().isInput());
     }
 
-    private HiveParser createParser(String query) {
-        final ANTLRStringStream input = new ANTLRStringStream(query.toUpperCase());
-        HiveLexer lexer = new HiveLexer(input);
-        TokenStream tokens = new CommonTokenStream(lexer);
-        return new HiveParser(tokens);
-    }
-
-    private static class TableName {
-        private final String database;
-        private final String table;
-
-        public TableName(String database, String table) {
-            this.database = database;
-            this.table = table;
-        }
-
-        @Override
-        public String toString() {
-            return "TableName{" +
-                    "database='" + database + '\'' +
-                    ", table='" + table + '\'' +
-                    '}';
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-
-            TableName tableName = (TableName) o;
-
-            if (database != null ? !database.equals(tableName.database) : tableName.database != null) return false;
-            return table.equals(tableName.table);
-        }
-
-        @Override
-        public int hashCode() {
-            int result = database != null ? database.hashCode() : 0;
-            result = 31 * result + table.hashCode();
-            return result;
-        }
-    }
-
-    private HashSet<TableName> findTableNames(final String query) throws RecognitionException {
-        final HiveParser parser = createParser(query);
-        final HiveParser.statement_return statement = parser.statement();
-        final Object treeObj = statement.getTree();
-        final HashSet<TableName> tableNames = new HashSet<>();
-        findTableNames(treeObj, tableNames);
-        return tableNames;
-    }
-
-    private void findTableNames(final Object obj, final Set<TableName> tableNames) {
-        if (!(obj instanceof CommonTree)) {
-            return;
-        }
-        final CommonTree tree = (CommonTree) obj;
-        final int childCount = tree.getChildCount();
-        if ("TOK_TABNAME".equals(tree.getText())) {
-            switch (childCount) {
-                case 1 :
-                    tableNames.add(new TableName(null, tree.getChild(0).getText()));
-                    break;
-                case 2:
-                    tableNames.add(new TableName(tree.getChild(0).getText(), tree.getChild(1).getText()));
-                    break;
-                default:
-                    throw new IllegalStateException("TOK_TABNAME does not have expected children, childCount=" + childCount);
-            }
-            return;
-        }
-        for (int i = 0; i < childCount; i++) {
-            findTableNames(tree.getChild(i), tableNames);
-        }
-    }
 
 }

@@ -24,13 +24,16 @@ import java.sql.Statement;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.antlr.runtime.RecognitionException;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.nifi.annotation.behavior.EventDriven;
@@ -84,6 +87,7 @@ import static org.apache.nifi.util.hive.HiveJdbcCommon.NORMALIZE_NAMES_FOR_AVRO;
                 + "outgoing FlowFiles that were all derived from the same result set FlowFile. This can be "
                 + "used in conjunction with the fragment.identifier attribute to know which FlowFiles originated from the same query result set and in what order  "
                 + "FlowFiles were produced")
+        @WritesAttribute(attribute = "query.input.tables", description = "Contains input table names in comma delimited 'databaseName.tableName' format."),
 })
 public class SelectHiveQL extends AbstractHiveQLProcessor {
 
@@ -317,6 +321,7 @@ public class SelectHiveQL extends AbstractHiveQLProcessor {
                 }
             }
 
+<<<<<<< HEAD
             final List<FlowFile> resultSetFlowFiles = new ArrayList<>();
             try {
                 logger.debug("Executing query {}", new Object[]{selectQuery});
@@ -374,22 +379,33 @@ public class SelectHiveQL extends AbstractHiveQLProcessor {
                     }
 
                     if (nrOfRows.get() > 0 || resultSetFlowFiles.isEmpty()) {
+                        final Map<String, String> attributes = new HashMap<>();
                         // Set attribute for how many rows were selected
-                        flowfile = session.putAttribute(flowfile, RESULT_ROW_COUNT, String.valueOf(nrOfRows.get()));
+                        attributes.put(RESULT_ROW_COUNT, String.valueOf(nrOfRows.get()));
+
+                        try {
+                            // Set input/output table names by parsing the query
+                            attributes.putAll(toQueryTableAttributes(findTableNames(selectQuery)));
+                        } catch (Exception e) {
+                            // If failed to parse the query, just log a warning message, but continue.
+                            getLogger().warn("Failed to parse query: {} due to {}", new Object[]{selectQuery, e}, e);
+                        }
 
                         // Set MIME type on output document and add extension to filename
                         if (AVRO.equals(outputFormat)) {
-                            flowfile = session.putAttribute(flowfile, CoreAttributes.MIME_TYPE.key(), MIME_TYPE_AVRO_BINARY);
-                            flowfile = session.putAttribute(flowfile, CoreAttributes.FILENAME.key(), baseFilename + "." + fragmentIndex + ".avro");
+                            attributes.put(CoreAttributes.MIME_TYPE.key(), MIME_TYPE_AVRO_BINARY);
+                            attributes.put(CoreAttributes.FILENAME.key(), baseFilename + "." + fragmentIndex + ".avro");
                         } else if (CSV.equals(outputFormat)) {
-                            flowfile = session.putAttribute(flowfile, CoreAttributes.MIME_TYPE.key(), CSV_MIME_TYPE);
-                            flowfile = session.putAttribute(flowfile, CoreAttributes.FILENAME.key(), baseFilename + "." + fragmentIndex + ".csv");
+                            attributes.put(CoreAttributes.MIME_TYPE.key(), CSV_MIME_TYPE);
+                            attributes.put(CoreAttributes.FILENAME.key(), baseFilename + "." + fragmentIndex + ".csv");
                         }
 
                         if (maxRowsPerFlowFile > 0) {
-                            flowfile = session.putAttribute(flowfile, "fragment.identifier", fragmentIdentifier);
-                            flowfile = session.putAttribute(flowfile, "fragment.index", String.valueOf(fragmentIndex));
+                            attributes.put("fragment.identifier", fragmentIdentifier);
+                            attributes.put("fragment.index", String.valueOf(fragmentIndex));
                         }
+
+                        flowfile = session.putAllAttributes(flowfile, attributes);
 
                         logger.info("{} contains {} Avro records; transferring to 'success'",
                                 new Object[]{flowfile, nrOfRows.get()});

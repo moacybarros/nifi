@@ -40,20 +40,17 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.Matchers.matches;
 import static org.mockito.Mockito.when;
 
-public class TestHive2JDBC {
+public class TestPutHiveStreaming {
 
-    /**
-     * If the provenance event does not have table name attributes,
-     * then a database lineage should be created.
-     */
     @Test
-    public void testDatabaseLineage() {
-        final String processorName = "PutHiveQL";
-        final String transitUri = "jdbc:hive2://0.example.com:10000/databaseA";
+    public void testTableLineage() {
+        final String processorName = "PutHiveStreaming";
+        final String transitUri = "thrift://0.example.com:9083";
         final ProvenanceEventRecord record = Mockito.mock(ProvenanceEventRecord.class);
         when(record.getComponentType()).thenReturn(processorName);
         when(record.getTransitUri()).thenReturn(transitUri);
         when(record.getEventType()).thenReturn(ProvenanceEventType.SEND);
+        when(record.getAttribute(ATTR_OUTPUT_TABLES)).thenReturn("databaseA.tableA");
 
         final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
         when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
@@ -68,52 +65,8 @@ public class TestHive2JDBC {
         assertEquals(0, refs.getInputs().size());
         assertEquals(1, refs.getOutputs().size());
         Referenceable ref = refs.getOutputs().iterator().next();
-        assertEquals("hive_db", ref.getTypeName());
-        assertEquals("databaseA", ref.get(ATTR_NAME));
-        assertEquals("databaseA@cluster1", ref.get(ATTR_QUALIFIED_NAME));
-    }
-
-    /**
-     * If the provenance event has table name attributes,
-     * then table lineages can be created.
-     */
-    @Test
-    public void testTableLineage() {
-        final String processorName = "PutHiveQL";
-        final String transitUri = "jdbc:hive2://0.example.com:10000/databaseA";
-        final ProvenanceEventRecord record = Mockito.mock(ProvenanceEventRecord.class);
-        when(record.getComponentType()).thenReturn(processorName);
-        when(record.getTransitUri()).thenReturn(transitUri);
-        when(record.getEventType()).thenReturn(ProvenanceEventType.SEND);
-        // E.g. insert into databaseB.tableB1 select something from tableA1 a1 inner join tableA2 a2 where a1.id = a2.id
-        when(record.getAttribute(ATTR_INPUT_TABLES)).thenReturn("tableA1, tableA2");
-        when(record.getAttribute(ATTR_OUTPUT_TABLES)).thenReturn("databaseB.tableB1");
-
-        final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
-        when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
-
-        final AnalysisContext context = Mockito.mock(AnalysisContext.class);
-        when(context.getClusterResolver()).thenReturn(clusterResolvers);
-
-        final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(processorName, transitUri, record.getEventType());
-        assertNotNull(analyzer);
-
-        final DataSetRefs refs = analyzer.analyze(context, record);
-        assertEquals(2, refs.getInputs().size());
-        // QualifiedName : Name
-        final Map<String, String> expectedInputRefs = new HashMap<>();
-        expectedInputRefs.put("databaseA.tableA1@cluster1", "tableA1");
-        expectedInputRefs.put("databaseA.tableA2@cluster1", "tableA2");
-        for (Referenceable ref : refs.getInputs()) {
-            final String qName = (String) ref.get(ATTR_QUALIFIED_NAME);
-            assertTrue(expectedInputRefs.containsKey(qName));
-            assertEquals(expectedInputRefs.get(qName), ref.get(ATTR_NAME));
-        }
-
-        assertEquals(1, refs.getOutputs().size());
-        Referenceable ref = refs.getOutputs().iterator().next();
         assertEquals("hive_table", ref.getTypeName());
-        assertEquals("tableB1", ref.get(ATTR_NAME));
-        assertEquals("databaseB.tableB1@cluster1", ref.get(ATTR_QUALIFIED_NAME));
+        assertEquals("tableA", ref.get(ATTR_NAME));
+        assertEquals("databaseA.tableA@cluster1", ref.get(ATTR_QUALIFIED_NAME));
     }
 }
