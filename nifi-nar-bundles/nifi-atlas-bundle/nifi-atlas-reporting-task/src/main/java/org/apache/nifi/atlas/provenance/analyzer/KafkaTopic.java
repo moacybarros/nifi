@@ -54,7 +54,6 @@ public class KafkaTopic extends AbstractNiFiProvenanceEventAnalyzer {
         ref.set(ATTR_NAME, topicName);
         ref.set(ATTR_TOPIC, topicName);
         ref.set(ATTR_QUALIFIED_NAME, toQualifiedName(clusterName, topicName));
-        // TODO: uri is a mandatory attribute, what value should we use?
         ref.set(ATTR_URI, transitUri);
 
         return singleDataSetRef(event.getComponentId(), event.getEventType(), ref);
