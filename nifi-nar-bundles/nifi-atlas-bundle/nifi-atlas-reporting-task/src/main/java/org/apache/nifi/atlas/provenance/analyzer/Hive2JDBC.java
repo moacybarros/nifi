@@ -2,14 +2,16 @@ package org.apache.nifi.atlas.provenance.analyzer;
 
 import org.apache.atlas.typesystem.Referenceable;
 import org.apache.nifi.atlas.provenance.AbstractNiFiProvenanceEventAnalyzer;
+import org.apache.nifi.atlas.provenance.AnalysisContext;
 import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
 import org.apache.nifi.provenance.ProvenanceEventType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.URI;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -24,6 +26,8 @@ import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
  * <li>dbName (example: default)
  */
 public class Hive2JDBC extends AbstractNiFiProvenanceEventAnalyzer {
+
+    private static final Logger logger = LoggerFactory.getLogger(Hive2JDBC.class);
 
     private static final String TYPE_DATABASE = "hive_db";
     private static final String TYPE_TABLE = "hive_table";
@@ -40,7 +44,7 @@ public class Hive2JDBC extends AbstractNiFiProvenanceEventAnalyzer {
     }
 
     @Override
-    public DataSetRefs analyze(ProvenanceEventRecord event) {
+    public DataSetRefs analyze(AnalysisContext context, ProvenanceEventRecord event) {
 
         final Set<String> inputTables = parseTableNames(event.getAttribute(ATTR_INPUT_TABLES));
         final Set<String> outputTables = parseTableNames(event.getAttribute(ATTR_OUTPUT_TABLES));
@@ -48,45 +52,52 @@ public class Hive2JDBC extends AbstractNiFiProvenanceEventAnalyzer {
         // Replace the colon so that the schema in the URI can be parsed correctly.
         final String transitUri = event.getTransitUri().replaceFirst("^jdbc:hive2", "jdbc-hive2");
         final URI uri = parseUri(transitUri);
-        final String clusterName = clusterResolvers.fromHostname(uri.getHost());
+        final String clusterName = context.getClusterResolver().fromHostname(uri.getHost());
         // TODO: what if uri does not contain database name??
         // Remove the heading '/'
         final String connectedDatabaseName = uri.getPath().substring(1);
 
         if (inputTables.isEmpty() && outputTables.isEmpty()) {
             // If input/output tables are unknown, create database level lineage.
-            return getDatabaseRef(event.getEventType(), clusterName, connectedDatabaseName);
+            return getDatabaseRef(event.getComponentId(), event.getEventType(),
+                    clusterName, connectedDatabaseName);
         }
 
-        final DataSetRefs refs = new DataSetRefs();
-        refs.setInputs(toRefs(event, clusterName, connectedDatabaseName, inputTables));
-        refs.setOutputs(toRefs(event, clusterName, connectedDatabaseName, outputTables));
+        final DataSetRefs refs = new DataSetRefs(event.getComponentId());
+        addRefs(refs, true, event, clusterName, connectedDatabaseName, inputTables);
+        addRefs(refs, false, event, clusterName, connectedDatabaseName, outputTables);
         return refs;
     }
 
-    private DataSetRefs getDatabaseRef(ProvenanceEventType eventType, String clusterName, String databaseName) {
+    private DataSetRefs getDatabaseRef(String componentId, ProvenanceEventType eventType,
+                                       String clusterName, String databaseName) {
         final Referenceable ref = new Referenceable(TYPE_DATABASE);
         ref.set(ATTR_NAME, databaseName);
         ref.set(ATTR_QUALIFIED_NAME, toQualifiedName(clusterName, databaseName));
 
-        return singleDataSetRef(eventType, ref);
+        return singleDataSetRef(componentId, eventType, ref);
     }
 
-    private Set<Referenceable> toRefs(ProvenanceEventRecord event, String clusterName,
-                                      String connectedDatabaseName, Set<String> tableNames) {
-        return tableNames.stream().map(tableNameStr -> {
+    private void addRefs(DataSetRefs refs, boolean isInput,
+                                       ProvenanceEventRecord event, String clusterName,
+                                       String connectedDatabaseName, Set<String> tableNames) {
+        tableNames.forEach(tableNameStr -> {
             final String[] tableNameSplit = tableNameStr.split("\\.");
             if (tableNameSplit.length != 1 && tableNameSplit.length != 2) {
                 logger.warn("Unexpected table name format: {} in {}", new Object[]{tableNameStr, event});
-                return null;
+                return;
             }
             final String databaseName = tableNameSplit.length == 2 ? tableNameSplit[0] : connectedDatabaseName;
             final String tableName = tableNameSplit.length == 2 ? tableNameSplit[1] : tableNameSplit[0];
             final Referenceable ref = new Referenceable(TYPE_TABLE);
             ref.set(ATTR_NAME, tableName);
             ref.set(ATTR_QUALIFIED_NAME, toQualifiedName(clusterName, String.format("%s.%s", databaseName, tableName)));
-            return ref;
-        }).filter(Objects::nonNull).collect(Collectors.toSet());
+            if (isInput) {
+                refs.addInput(ref);
+            } else {
+                refs.addOutput(ref);
+            }
+        });
     }
 
     @Override

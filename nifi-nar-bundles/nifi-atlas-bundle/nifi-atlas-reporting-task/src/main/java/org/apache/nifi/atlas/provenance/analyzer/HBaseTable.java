@@ -2,6 +2,7 @@ package org.apache.nifi.atlas.provenance.analyzer;
 
 import org.apache.atlas.typesystem.Referenceable;
 import org.apache.nifi.atlas.provenance.AbstractNiFiProvenanceEventAnalyzer;
+import org.apache.nifi.atlas.provenance.AnalysisContext;
 import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
 
@@ -20,16 +21,16 @@ public class HBaseTable extends AbstractNiFiProvenanceEventAnalyzer {
     private static final String TYPE = "hbase_table";
 
     @Override
-    public DataSetRefs analyze(ProvenanceEventRecord event) {
+    public DataSetRefs analyze(AnalysisContext context, ProvenanceEventRecord event) {
         final Referenceable ref = new Referenceable(TYPE);
         final URI uri = parseUri(event.getTransitUri());
-        final String clusterName = clusterResolvers.fromHostname(uri.getHost());
+        final String clusterName = context.getClusterResolver().fromHostname(uri.getHost());
         // Remove the heading '/'
         final String tableName = uri.getPath().substring(1);
         ref.set(ATTR_NAME, tableName);
         ref.set(ATTR_QUALIFIED_NAME, toQualifiedName(clusterName, tableName));
 
-        return singleDataSetRef(event.getEventType(), ref);
+        return singleDataSetRef(event.getComponentId(), event.getEventType(), ref);
     }
 
     @Override

@@ -5,36 +5,39 @@ import org.apache.nifi.atlas.resolver.ClusterResolvers;
 import org.apache.nifi.logging.ComponentLog;
 import org.apache.nifi.provenance.ProvenanceEventType;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.Collections;
 
 public abstract class AbstractNiFiProvenanceEventAnalyzer implements NiFiProvenanceEventAnalyzer {
 
-    protected ComponentLog logger;
-    protected ClusterResolvers clusterResolvers;
-
-    @Override
-    public void setClusterResolvers(ClusterResolvers clusterResolvers) {
-        this.clusterResolvers = clusterResolvers;
-    }
-
-    @Override
-    public void setLogger(ComponentLog logger) {
-        this.logger = logger;
+    /**
+     * Utility method to parse a string uri silently.
+     * @param uri uri to parse
+     * @return parsed URI instance
+     */
+    protected URI parseUri(String uri) {
+        try {
+            return new URI(uri);
+        } catch (URISyntaxException e) {
+            final String msg = String.format("Failed to parse uri %s due to %s", uri, e);
+            throw new IllegalArgumentException(msg, e);
+        }
     }
 
     protected String toQualifiedName(String clusterName, String dataSetName) {
         return dataSetName + "@" + clusterName;
     }
 
-    protected DataSetRefs singleDataSetRef(ProvenanceEventType eventType, Referenceable ref) {
-        final DataSetRefs refs = new DataSetRefs();
+    protected DataSetRefs singleDataSetRef(String componentId, ProvenanceEventType eventType, Referenceable ref) {
+        final DataSetRefs refs = new DataSetRefs(componentId);
         switch (eventType) {
             case SEND:
-                refs.setOutputs(Collections.singleton(ref));
+                refs.addOutput(ref);
                 break;
             case FETCH:
             case RECEIVE:
-                refs.setInputs(Collections.singleton(ref));
+                refs.addInput(ref);
                 break;
         }
 

@@ -104,7 +104,7 @@ public class NiFiTypes {
         entity.setVersion(1L);
 
         final AtlasAttributeDef nifiFlow = new AtlasAttributeDef(ATTR_NIFI_FLOW, TYPE_NIFI_FLOW);
-        nifiFlow.setIsOptional(false);
+        nifiFlow.setIsOptional(true);
 
         attributes.add(nifiFlow);
     };

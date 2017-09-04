@@ -18,20 +18,24 @@ public interface ClusterResolver {
     PropertyDescriptor getSupportedDynamicPropertyDescriptor(final String propertyDescriptorName);
 
     /**
-     * Implementation should be clear previous configurations if when this method is called again.
+     * Implementation should clear previous configurations when this method is called again.
      * @param context passed from ReportingTask
      */
     void configure(PropertyContext context);
 
-    // TODO: add default cluster name capability.
+    /**
+     * Resolve a cluster name from a hostname or an ip address.
+     * @param hostname hostname or ip address
+     * @return resolved cluster name or null
+     */
     default String fromHostname(String hostname) {
         return null;
     }
 
     /**
      * Resolve a cluster name from hints, such as Zookeeper Quorum, client port and znode path
-     * @param hints
-     * @return
+     * @param hints Contains variables to resolve a cluster name
+     * @return resolved cluster name or null
      */
     default String fromHints(Map<String, String> hints) {
         return null;

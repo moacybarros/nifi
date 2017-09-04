@@ -31,9 +31,11 @@ import org.apache.nifi.atlas.NiFiAtlasClient;
 import org.apache.nifi.atlas.NiFiFlow;
 import org.apache.nifi.atlas.NiFiFlowAnalyzer;
 import org.apache.nifi.atlas.NiFiFlowPath;
+import org.apache.nifi.atlas.provenance.AnalysisContext;
 import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzer;
 import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzerFactory;
+import org.apache.nifi.atlas.provenance.StandardAnalysisContext;
 import org.apache.nifi.atlas.resolver.ClusterResolver;
 import org.apache.nifi.atlas.resolver.ClusterResolvers;
 import org.apache.nifi.atlas.resolver.RegexClusterResolver;
@@ -46,7 +48,9 @@ import org.apache.nifi.controller.ConfigurationContext;
 import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
+import org.apache.nifi.provenance.ProvenanceRepository;
 import org.apache.nifi.reporting.AbstractReportingTask;
+import org.apache.nifi.reporting.EventAccess;
 import org.apache.nifi.reporting.ReportingContext;
 import org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer;
 import org.apache.nifi.ssl.SSLContextService;
@@ -64,10 +68,12 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 import static org.apache.commons.lang3.StringUtils.isEmpty;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
@@ -384,8 +390,12 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
 
     }
 
-    private void consumeNiFiProvenanceEvents(ReportingContext context, NiFiFlow niFiFlow) {
-        consumer.consumeEvents(context.getEventAccess(), context.getStateManager(), events -> {
+    private void consumeNiFiProvenanceEvents(ReportingContext context, NiFiFlow nifiFlow) {
+        final EventAccess eventAccess = context.getEventAccess();
+        final AnalysisContext analysisContext = new StandardAnalysisContext(nifiFlow, clusterResolvers,
+                // FIXME: Class cast shouldn't be necessary to query lineage.
+                (ProvenanceRepository)eventAccess.getProvenanceRepository());
+        consumer.consumeEvents(eventAccess, context.getStateManager(), events -> {
             for (ProvenanceEventRecord event : events) {
                 try {
                     final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(event.getComponentType(), event.getTransitUri());
@@ -395,32 +405,40 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
                     if (analyzer == null) {
                         continue;
                     }
-                    analyzer.setLogger(getLogger());
-                    analyzer.setClusterResolvers(clusterResolvers);
-                    final DataSetRefs refs = analyzer.analyze(event);
+                    final DataSetRefs refs = analyzer.analyze(analysisContext, event);
                     if (refs == null || (refs.isEmpty())) {
                         continue;
                     }
 
+                    // TODO: need special logic for remote ports as it may be connected to multiple flow paths.
+                    final Set<NiFiFlowPath> flowPaths = refs.getComponentIds().stream()
+                            .map(componentId -> {
+                                final NiFiFlowPath flowPath = nifiFlow.findPath(componentId);
+                                if (flowPath == null) {
+                                    getLogger().warn("FlowPath for {} was not found.", new Object[]{event.getComponentId()});
+                                }
+                                return flowPath;
+                            })
+                            .filter(Objects::nonNull)
+                            .collect(Collectors.toSet());
+
                     // create reference to NiFi flow path.
-                    final NiFiFlowPath flowPath = niFiFlow.findPath(event.getComponentId());
-                    if (flowPath == null) {
-                        getLogger().warn("FlowPath for {} was not found.", new Object[]{event.getComponentId()});
-                        continue;
+                    for (NiFiFlowPath flowPath : flowPaths) {
+                        // TODO: make the reference to NiFiFlow optional?
+                        final Referenceable flowRef = new Referenceable(TYPE_NIFI_FLOW);
+                        flowRef.set(ATTR_NAME, nifiFlow.getFlowName());
+                        flowRef.set(ATTR_QUALIFIED_NAME, nifiFlow.getId().getUniqueAttributes().get(ATTR_QUALIFIED_NAME));
+                        flowRef.set(ATTR_URL, nifiFlow.getUrl());
+
+                        final Referenceable flowPathRef = new Referenceable(TYPE_NIFI_FLOW_PATH);
+                        flowPathRef.set(ATTR_NAME, flowPath.getName());
+                        flowPathRef.set(ATTR_QUALIFIED_NAME, flowPath.getId());
+                        flowPathRef.set(ATTR_NIFI_FLOW, flowRef);
+                        flowPathRef.set(ATTR_URL, nifiFlow.getUrl());
+
+                        nifiAtlasHook.addDataSetRefs(refs, flowPathRef);
                     }
 
-                    final Referenceable flowRef = new Referenceable(TYPE_NIFI_FLOW);
-                    flowRef.set(ATTR_NAME, niFiFlow.getFlowName());
-                    flowRef.set(ATTR_QUALIFIED_NAME, niFiFlow.getId().getUniqueAttributes().get(ATTR_QUALIFIED_NAME));
-                    flowRef.set(ATTR_URL, niFiFlow.getUrl());
-
-                    final Referenceable flowPathRef = new Referenceable(TYPE_NIFI_FLOW_PATH);
-                    flowPathRef.set(ATTR_NAME, flowPath.getName());
-                    flowPathRef.set(ATTR_QUALIFIED_NAME, flowPath.getId());
-                    flowPathRef.set(ATTR_NIFI_FLOW, flowRef);
-                    flowPathRef.set(ATTR_URL, niFiFlow.getUrl());
-
-                    nifiAtlasHook.addDataSetRefs(refs, flowPathRef);
                 } catch (Exception e) {
                     // If something went wrong, log it and continue with other records.
                     getLogger().error("Skipping failed analyzing event {} due to {}.", new Object[]{event, e}, e);

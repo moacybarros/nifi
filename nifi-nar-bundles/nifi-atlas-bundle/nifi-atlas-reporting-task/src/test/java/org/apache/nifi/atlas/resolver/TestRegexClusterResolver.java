@@ -16,7 +16,6 @@
  */
 package org.apache.nifi.atlas.resolver;
 
-import org.apache.nifi.atlas.resolver.RegexClusterResolver;
 import org.apache.nifi.components.ValidationContext;
 import org.apache.nifi.components.ValidationResult;
 import org.apache.nifi.context.PropertyContext;
@@ -29,9 +28,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.fail;
 import static org.mockito.Mockito.when;
 
 public class TestRegexClusterResolver {

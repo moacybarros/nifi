@@ -27,7 +27,7 @@ public class TestNiFIAtlasHook {
 
         final NiFIAtlasHook hook = new NiFIAtlasHook();
 
-        final DataSetRefs refs = new DataSetRefs();
+        final DataSetRefs refs = new DataSetRefs("03eb0e87-015e-1000-0000-00007e0d56ea");
         final Referenceable topic = new Referenceable("kafka_topic");
         topic.set(ATTR_NAME, "notification");
         topic.set("topic", "notification");

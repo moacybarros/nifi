@@ -2,8 +2,11 @@ package org.apache.nifi.atlas.provenance.analyzer;
 
 import org.apache.atlas.typesystem.Referenceable;
 import org.apache.nifi.atlas.provenance.AbstractNiFiProvenanceEventAnalyzer;
+import org.apache.nifi.atlas.provenance.AnalysisContext;
 import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -19,6 +22,8 @@ import static org.apache.nifi.atlas.NiFiTypes.ATTR_URI;
  */
 public class KafkaTopic extends AbstractNiFiProvenanceEventAnalyzer {
 
+    private static final Logger logger = LoggerFactory.getLogger(KafkaTopic.class);
+
     private static final String TYPE = "kafka_topic";
     private static final String ATTR_TOPIC = "topic";
 
@@ -26,7 +31,7 @@ public class KafkaTopic extends AbstractNiFiProvenanceEventAnalyzer {
     private static final Pattern URI_PATTERN = Pattern.compile("^.+://([^/]+)/(.+)$");
 
     @Override
-    public DataSetRefs analyze(ProvenanceEventRecord event) {
+    public DataSetRefs analyze(AnalysisContext context, ProvenanceEventRecord event) {
         final Referenceable ref = new Referenceable(TYPE);
 
         final String transitUri = event.getTransitUri();
@@ -39,7 +44,7 @@ public class KafkaTopic extends AbstractNiFiProvenanceEventAnalyzer {
         String clusterName = null;
         for (String broker : uriMatcher.group(1).split(",")) {
             final String brokerHostname = broker.split(":")[0].trim();
-            clusterName = clusterResolvers.fromHostname(brokerHostname);
+            clusterName = context.getClusterResolver().fromHostname(brokerHostname);
             if (clusterName != null && !clusterName.isEmpty()) {
                 break;
             }
@@ -52,7 +57,7 @@ public class KafkaTopic extends AbstractNiFiProvenanceEventAnalyzer {
         // TODO: uri is a mandatory attribute, what value should we use?
         ref.set(ATTR_URI, transitUri);
 
-        return singleDataSetRef(event.getEventType(), ref);
+        return singleDataSetRef(event.getComponentId(), event.getEventType(), ref);
     }
 
     @Override

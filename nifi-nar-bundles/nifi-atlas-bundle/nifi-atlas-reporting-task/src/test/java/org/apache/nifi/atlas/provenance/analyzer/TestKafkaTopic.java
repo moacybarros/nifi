@@ -17,6 +17,7 @@
 package org.apache.nifi.atlas.provenance.analyzer;
 
 import org.apache.atlas.typesystem.Referenceable;
+import org.apache.nifi.atlas.provenance.AnalysisContext;
 import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzer;
 import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzerFactory;
@@ -47,11 +48,13 @@ public class TestKafkaTopic {
         final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
         when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
 
+        final AnalysisContext context = Mockito.mock(AnalysisContext.class);
+        when(context.getClusterResolver()).thenReturn(clusterResolvers);
+
         final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(processorName, transitUri);
         assertNotNull(analyzer);
 
-        analyzer.setClusterResolvers(clusterResolvers);
-        final DataSetRefs refs = analyzer.analyze(record);
+        final DataSetRefs refs = analyzer.analyze(context, record);
         assertEquals(0, refs.getInputs().size());
         assertEquals(1, refs.getOutputs().size());
         Referenceable ref = refs.getOutputs().iterator().next();
@@ -72,11 +75,13 @@ public class TestKafkaTopic {
         final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
         when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
 
+        final AnalysisContext context = Mockito.mock(AnalysisContext.class);
+        when(context.getClusterResolver()).thenReturn(clusterResolvers);
+
         final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(processorName, transitUri);
         assertNotNull(analyzer);
 
-        analyzer.setClusterResolvers(clusterResolvers);
-        final DataSetRefs refs = analyzer.analyze(record);
+        final DataSetRefs refs = analyzer.analyze(context, record);
         assertEquals(0, refs.getInputs().size());
         assertEquals(1, refs.getOutputs().size());
         Referenceable ref = refs.getOutputs().iterator().next();
@@ -97,14 +102,17 @@ public class TestKafkaTopic {
         final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
         when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
 
+        final AnalysisContext context = Mockito.mock(AnalysisContext.class);
+        when(context.getClusterResolver()).thenReturn(clusterResolvers);
+
         final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(processorName, transitUri);
         assertNotNull(analyzer);
 
-        analyzer.setClusterResolvers(clusterResolvers);
-        final DataSetRefs refs = analyzer.analyze(record);
+        final DataSetRefs refs = analyzer.analyze(context, record);
         assertEquals(1, refs.getInputs().size());
         assertEquals(0, refs.getOutputs().size());
         Referenceable ref = refs.getInputs().iterator().next();
+        assertEquals("kafka_topic", ref.getTypeName());
         assertEquals("topicA", ref.get(ATTR_NAME));
         assertEquals("topicA", ref.get("topic"));
         assertEquals("topicA@cluster1", ref.get(ATTR_QUALIFIED_NAME));
@@ -122,14 +130,17 @@ public class TestKafkaTopic {
         final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
         when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
 
+        final AnalysisContext context = Mockito.mock(AnalysisContext.class);
+        when(context.getClusterResolver()).thenReturn(clusterResolvers);
+
         final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(processorName, transitUri);
         assertNotNull(analyzer);
 
-        analyzer.setClusterResolvers(clusterResolvers);
-        final DataSetRefs refs = analyzer.analyze(record);
+        final DataSetRefs refs = analyzer.analyze(context, record);
         assertEquals(1, refs.getInputs().size());
         assertEquals(0, refs.getOutputs().size());
         Referenceable ref = refs.getInputs().iterator().next();
+        assertEquals("kafka_topic", ref.getTypeName());
         assertEquals("topicA", ref.get(ATTR_NAME));
         assertEquals("topicA", ref.get("topic"));
         assertEquals("topicA@cluster1", ref.get(ATTR_QUALIFIED_NAME));

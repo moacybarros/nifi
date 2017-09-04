@@ -1,31 +1,14 @@
 package org.apache.nifi.atlas.provenance;
 
-import org.apache.nifi.atlas.resolver.ClusterResolvers;
-import org.apache.nifi.logging.ComponentLog;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
 
-import java.net.URI;
-import java.net.URISyntaxException;
-
+/**
+ * Responsible for analyzing NiFi provenance event data to generate Atlas DataSet reference.
+ * Implementations of this interface should be thread safe.
+ */
 public interface NiFiProvenanceEventAnalyzer {
 
-    /**
-     * Utility method to parse a string uri silently.
-     * @param uri uri to parse
-     * @return parsed URI instance
-     */
-    default URI parseUri(String uri) {
-        try {
-            return new URI(uri);
-        } catch (URISyntaxException e) {
-            final String msg = String.format("Failed to parse uri %s due to %s", uri, e);
-            throw new IllegalArgumentException(msg, e);
-        }
-    }
-
-    DataSetRefs analyze(ProvenanceEventRecord event);
-
-    void setClusterResolvers(ClusterResolvers clusterResolvers);
+    DataSetRefs analyze(AnalysisContext context, ProvenanceEventRecord event);
 
     /**
      * Returns target component type pattern that this Analyzer supports.
@@ -43,7 +26,5 @@ public interface NiFiProvenanceEventAnalyzer {
     default String targetTransitUriPattern() {
         return null;
     }
-
-    void setLogger(ComponentLog logger);
 
 }

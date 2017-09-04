@@ -18,6 +18,7 @@ package org.apache.nifi.atlas;
 
 import org.apache.atlas.model.instance.AtlasEntity;
 import org.apache.atlas.model.instance.AtlasObjectId;
+import org.apache.nifi.atlas.provenance.AnalysisContext;
 import org.apache.nifi.controller.status.ConnectionStatus;
 import org.apache.nifi.controller.status.PortStatus;
 import org.apache.nifi.controller.status.ProcessorStatus;
@@ -43,7 +44,7 @@ import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW;
 
 public class NiFiFlow implements AtlasProcess {
 
-    private static final Logger logger = LoggerFactory.getLogger(NiFiFlowAnalyzer.class);
+    private static final Logger logger = LoggerFactory.getLogger(NiFiFlow.class);
 
     private final String flowName;
     private final String rootProcessGroupId;
