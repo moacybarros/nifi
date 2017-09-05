@@ -40,11 +40,13 @@ public class NiFiTypes {
     public static final String TYPE_NIFI_OUTPUT_PORT = "nifi_output_port";
 
     public static final String ATTR_NAME = "name";
+    public static final String ATTR_CLUSTER_NAME = "clusterName";
     public static final String ATTR_DESCRIPTION = "description";
     public static final String ATTR_INPUTS = "inputs";
     public static final String ATTR_OUTPUTS = "outputs";
     public static final String ATTR_URL = "url";
     public static final String ATTR_URI = "uri";
+    public static final String ATTR_PATH = "path";
     public static final String ATTR_QUALIFIED_NAME = "qualifiedName";
     public static final String ATTR_NIFI_FLOW = "nifiFlow";
     public static final String ATTR_FLOW_PATHS = "flowPaths";

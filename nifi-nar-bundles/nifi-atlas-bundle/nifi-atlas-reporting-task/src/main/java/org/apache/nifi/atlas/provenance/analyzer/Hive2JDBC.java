@@ -1,7 +1,6 @@
 package org.apache.nifi.atlas.provenance.analyzer;
 
 import org.apache.atlas.typesystem.Referenceable;
-import org.apache.nifi.atlas.provenance.AbstractNiFiProvenanceEventAnalyzer;
 import org.apache.nifi.atlas.provenance.AnalysisContext;
 import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
@@ -11,12 +10,9 @@ import org.apache.nifi.util.Tuple;
 import java.net.URI;
 import java.util.Set;
 
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.apache.nifi.atlas.provenance.analyzer.DatabaseAnalyzerUtil.ATTR_INPUT_TABLES;
 import static org.apache.nifi.atlas.provenance.analyzer.DatabaseAnalyzerUtil.ATTR_OUTPUT_TABLES;
 import static org.apache.nifi.atlas.provenance.analyzer.DatabaseAnalyzerUtil.parseTableNames;
-import static org.apache.nifi.atlas.provenance.analyzer.DatabaseAnalyzerUtil.toTableNameStr;
 
 /**
  * Analyze provenance events for Hive2 using JDBC.
@@ -35,10 +31,7 @@ import static org.apache.nifi.atlas.provenance.analyzer.DatabaseAnalyzerUtil.toT
  * </li>
  * </ul>
  */
-public class Hive2JDBC extends AbstractNiFiProvenanceEventAnalyzer {
-
-    static final String TYPE_DATABASE = "hive_db";
-    static final String TYPE_TABLE = "hive_table";
+public class Hive2JDBC extends AbstractHiveAnalyzer {
 
     @Override
     public DataSetRefs analyze(AnalysisContext context, ProvenanceEventRecord event) {
@@ -68,9 +61,7 @@ public class Hive2JDBC extends AbstractNiFiProvenanceEventAnalyzer {
 
     private DataSetRefs getDatabaseRef(String componentId, ProvenanceEventType eventType,
                                        String clusterName, String databaseName) {
-        final Referenceable ref = new Referenceable(TYPE_DATABASE);
-        ref.set(ATTR_NAME, databaseName);
-        ref.set(ATTR_QUALIFIED_NAME, toQualifiedName(clusterName, databaseName));
+        final Referenceable ref = createDatabaseRef(clusterName, databaseName);
 
         return singleDataSetRef(componentId, eventType, ref);
     }
@@ -78,9 +69,7 @@ public class Hive2JDBC extends AbstractNiFiProvenanceEventAnalyzer {
     private void addRefs(DataSetRefs refs, boolean isInput, String clusterName,
                                        Set<Tuple<String, String>> tableNames) {
         tableNames.forEach(tableName -> {
-            final Referenceable ref = new Referenceable(TYPE_TABLE);
-            ref.set(ATTR_NAME, tableName.getValue());
-            ref.set(ATTR_QUALIFIED_NAME, toQualifiedName(clusterName, toTableNameStr(tableName)));
+            final Referenceable ref = createTableRef(clusterName, tableName);
             if (isInput) {
                 refs.addInput(ref);
             } else {

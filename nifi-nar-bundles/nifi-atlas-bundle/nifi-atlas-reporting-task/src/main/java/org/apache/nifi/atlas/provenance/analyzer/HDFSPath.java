@@ -8,7 +8,9 @@ import org.apache.nifi.provenance.ProvenanceEventRecord;
 
 import java.net.URI;
 
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_CLUSTER_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_PATH;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 
 /**
@@ -27,6 +29,8 @@ public class HDFSPath extends AbstractNiFiProvenanceEventAnalyzer {
         final String clusterName = context.getClusterResolver().fromHostname(uri.getHost());
         final String path = uri.getPath();
         ref.set(ATTR_NAME, path);
+        ref.set(ATTR_PATH, path);
+        ref.set(ATTR_CLUSTER_NAME, clusterName);
         ref.set(ATTR_QUALIFIED_NAME, toQualifiedName(clusterName, path));
 
         return singleDataSetRef(event.getComponentId(), event.getEventType(), ref);
