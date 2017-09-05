@@ -48,6 +48,7 @@ public class ClusterResolvers implements ClusterResolver {
     }
 
     @Override
+    // TODO: refactor this, to accept multiple host names at once. Even more accept a comma separated hostname list. And if it contains port number, remove it?
     public String fromHostname(String hostname) {
         for (ClusterResolver resolver : resolvers) {
             final String clusterName = resolver.fromHostname(hostname);

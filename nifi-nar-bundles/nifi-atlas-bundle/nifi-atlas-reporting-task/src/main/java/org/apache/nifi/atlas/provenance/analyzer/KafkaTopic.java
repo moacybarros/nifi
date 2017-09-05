@@ -49,6 +49,7 @@ public class KafkaTopic extends AbstractNiFiProvenanceEventAnalyzer {
                 break;
             }
         }
+
         final String topicName = uriMatcher.group(2);
 
         ref.set(ATTR_NAME, topicName);
