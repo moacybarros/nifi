@@ -41,8 +41,7 @@ public class TestHBaseTable {
     @Test
     public void testHBaseTable() {
         final String processorName = "FetchHBaseRow";
-        // TODO: Even if there are multiple hosts, processor should use only one of them to make it a valid URI?
-        final String transitUri = "hbase://0.example.com/tableA";
+        final String transitUri = "hbase://0.example.com/tableA/rowB";
         final ProvenanceEventRecord record = Mockito.mock(ProvenanceEventRecord.class);
         when(record.getComponentType()).thenReturn(processorName);
         when(record.getTransitUri()).thenReturn(transitUri);
@@ -65,4 +64,32 @@ public class TestHBaseTable {
         assertEquals("tableA", ref.get(ATTR_NAME));
         assertEquals("tableA@cluster1", ref.get(ATTR_QUALIFIED_NAME));
     }
+
+    @Test
+    public void testHBaseTableWithMultipleZkHosts() {
+        final String processorName = "FetchHBaseRow";
+        final String transitUri = "hbase://zk0.example.com,zk2.example.com,zk3.example.com/tableA/rowB";
+        final ProvenanceEventRecord record = Mockito.mock(ProvenanceEventRecord.class);
+        when(record.getComponentType()).thenReturn(processorName);
+        when(record.getTransitUri()).thenReturn(transitUri);
+        when(record.getEventType()).thenReturn(ProvenanceEventType.FETCH);
+
+        final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
+        when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
+
+        final AnalysisContext context = Mockito.mock(AnalysisContext.class);
+        when(context.getClusterResolver()).thenReturn(clusterResolvers);
+
+        final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(processorName, transitUri, record.getEventType());
+        assertNotNull(analyzer);
+
+        final DataSetRefs refs = analyzer.analyze(context, record);
+        assertEquals(1, refs.getInputs().size());
+        assertEquals(0, refs.getOutputs().size());
+        Referenceable ref = refs.getInputs().iterator().next();
+        assertEquals("hbase_table", ref.getTypeName());
+        assertEquals("tableA", ref.get(ATTR_NAME));
+        assertEquals("tableA@cluster1", ref.get(ATTR_QUALIFIED_NAME));
+    }
+
 }

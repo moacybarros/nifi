@@ -26,7 +26,7 @@ public class HBaseTable extends AbstractNiFiProvenanceEventAnalyzer {
     private static final String TYPE = "hbase_table";
 
     // hbase://zk0.example.com,zk1.example.com,zk3.example.com/hbaseTableName/hbaseRowId(optional)
-    private static final Pattern URI_PATTERN = Pattern.compile("^hbase://([^/]+)/(.+)$");
+    private static final Pattern URI_PATTERN = Pattern.compile("^hbase://([^/]+)/([^/]+)/?.*$");
 
     @Override
     public DataSetRefs analyze(AnalysisContext context, ProvenanceEventRecord event) {
