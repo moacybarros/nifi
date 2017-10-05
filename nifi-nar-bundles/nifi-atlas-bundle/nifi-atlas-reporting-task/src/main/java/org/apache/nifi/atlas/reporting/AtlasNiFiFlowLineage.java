@@ -26,7 +26,6 @@ import org.apache.nifi.annotation.lifecycle.OnScheduled;
 import org.apache.nifi.annotation.lifecycle.OnUnscheduled;
 import org.apache.nifi.atlas.AtlasVariables;
 import org.apache.nifi.atlas.NiFIAtlasHook;
-import org.apache.nifi.atlas.NiFiApiClient;
 import org.apache.nifi.atlas.NiFiAtlasClient;
 import org.apache.nifi.atlas.NiFiFlow;
 import org.apache.nifi.atlas.NiFiFlowAnalyzer;
@@ -53,10 +52,7 @@ import org.apache.nifi.reporting.AbstractReportingTask;
 import org.apache.nifi.reporting.EventAccess;
 import org.apache.nifi.reporting.ReportingContext;
 import org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer;
-import org.apache.nifi.ssl.SSLContextService;
-import org.apache.nifi.web.api.entity.ClusterEntity;
 
-import javax.net.ssl.SSLContext;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -147,45 +143,6 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             .addValidator(StandardValidators.URL_VALIDATOR)
             .build();
 
-    static final PropertyDescriptor LOCAL_HOSTNAME = new PropertyDescriptor.Builder()
-            .name("local-address")
-            .displayName("Local Hostname")
-            .description("This reporting task uses NiFi REST API against itself to retrieve NiFI flow data." +
-                    " This hostname is used when making HTTP(s) requests to the REST API.")
-            .required(true)
-            .defaultValue("localhost")
-            .expressionLanguageSupported(true)
-            .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
-            .build();
-
-    static final PropertyDescriptor NIFI_API_PORT = new PropertyDescriptor.Builder()
-            .name("nifi-api-port")
-            .displayName("NiFi API Port")
-            .description("Same as 'Local Hostname', this port number is used to specify a port number of this NiFi instance.")
-            .required(true)
-            .expressionLanguageSupported(true)
-            .defaultValue("8080")
-            .addValidator(StandardValidators.PORT_VALIDATOR)
-            .build();
-
-    public static final PropertyDescriptor NIFI_API_SECURE = new PropertyDescriptor.Builder()
-            .name("nifi-api-secure")
-            .displayName("NiFi API Secure")
-            .description("Specify if this NiFi instance is secured and requires HTTPS. If true, 'SSL Context Service' needs to be set, too." +
-                    " Also, NiFi security policy should be configured for this NiFi instance to read certain resources. See 'Additional Details' for further description.")
-            .required(true)
-            .expressionLanguageSupported(true)
-            .allowableValues("true", "false")
-            .defaultValue("false")
-            .build();
-
-    static final PropertyDescriptor SSL_CONTEXT = new PropertyDescriptor.Builder()
-            .name("SSL Context Service")
-            .description("The SSL Context Service to use when communicating with a secured NiFi node.")
-            .required(false)
-            .identifiesControllerService(SSLContextService.class)
-            .build();
-
     private static final String ATLAS_PROPERTIES_FILENAME = "atlas-application.properties";
     private final ServiceLoader<ClusterResolver> clusterResolverLoader = ServiceLoader.load(ClusterResolver.class);
     private volatile NiFiAtlasClient atlasClient;
@@ -204,10 +161,6 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         properties.add(ATLAS_PASSWORD);
         properties.add(ATLAS_CONF_DIR);
         properties.add(ATLAS_NIFI_URL);
-        properties.add(LOCAL_HOSTNAME);
-        properties.add(NIFI_API_PORT);
-        properties.add(NIFI_API_SECURE);
-        properties.add(SSL_CONTEXT);
         properties.add(PROVENANCE_START_POSITION);
         properties.add(PROVENANCE_BATCH_SIZE);
         return properties;
@@ -326,43 +279,29 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
     @Override
     public void onTrigger(ReportingContext context) {
 
-        final Boolean isNiFiApiSecure = context.getProperty(NIFI_API_SECURE).evaluateAttributeExpressions().asBoolean();
-        final Integer nifiApiPort = context.getProperty(NIFI_API_PORT).evaluateAttributeExpressions().asInteger();
-        final String localhost = context.getProperty(LOCAL_HOSTNAME).evaluateAttributeExpressions().getValue();
-        final String nifiBaseUrl = (isNiFiApiSecure ? "https" : "http") + "://" + localhost + ":" + nifiApiPort + "/";
-        final NiFiApiClient nifiClient = new NiFiApiClient(nifiBaseUrl);
-
-        if (isNiFiApiSecure) {
-            final SSLContextService sslContextService = context.getProperty(SSL_CONTEXT).asControllerService(SSLContextService.class);
-            final SSLContext sslContext = sslContextService.createSSLContext(SSLContextService.ClientAuth.REQUIRED);
-            nifiClient.setSslContext(sslContext);
-        }
-
         final String clusterNodeId = context.getClusterNodeIdentifier();
-        if (context.isClustered()) {
-            if (isEmpty(clusterNodeId)) {
-                // Clustered, but this node's ID is unknown. Not ready for processing yet.
-                return;
-            }
-
-            try {
-                final ClusterEntity clusterEntity = nifiClient.getClusterEntity();
-                if (clusterEntity.getCluster().getNodes().stream()
-                        .noneMatch(node -> clusterNodeId.equals(node.getNodeId())
-                                && node.getRoles().contains("Primary Node"))) {
-                    // In a cluster, only primary node can report to Atlas.
-                    // TODO: This should be done by NiFi scheduler like processor. But not supported at this moment.
-                    return;
-                }
-            } catch (IOException e) {
-                throw new RuntimeException("Failed to get cluster entity, due to " + e, e);
-            }
+        final boolean isClustered = context.isClustered();
+        if (isClustered && isEmpty(clusterNodeId)) {
+            // Clustered, but this node's ID is unknown. Not ready for processing yet.
+            return;
         }
+
+        // If standalone or being primary node in a NiFi cluster, this node is responsible for doing primary tasks.
+        final boolean isResponsibleForPrimaryTasks = !isClustered || getNodeTypeProvider().isPrimary();
 
         // Create Entity defs in Atlas if there's none yet.
         if (!isTypeDefCreated) {
             try {
-                atlasClient.registerNiFiTypeDefs(false);
+                if (isResponsibleForPrimaryTasks) {
+                    // Create NiFi type definitions in Atlas type system.
+                    atlasClient.registerNiFiTypeDefs(false);
+                } else {
+                    // Otherwise, just check existence of NiFi type definitions.
+                    if (!atlasClient.isNiFiTypeDefsRegistered()) {
+                        getLogger().debug("NiFi type definitions are not ready in Atlas type system yet.");
+                        return;
+                    }
+                }
                 isTypeDefCreated = true;
             } catch (AtlasServiceException e) {
                 throw new RuntimeException("Failed to check and create NiFi flow type definitions in Atlas due to " + e, e);
@@ -371,6 +310,8 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
 
         final NiFiFlowAnalyzer flowAnalyzer = new NiFiFlowAnalyzer();
 
+        // Regardless of whether being a primary task node, each node has to analyse NiFiFlow.
+        // Assuming each node has the same flow definition, that is guaranteed by NiFi cluster management mechanism.
         final NiFiFlow niFiFlow;
         try {
             final AtlasVariables atlasVariables = new AtlasVariables();
@@ -380,13 +321,20 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             throw new RuntimeException("Failed to analyze NiFi flow. " + e, e);
         }
 
-        try {
-            flowAnalyzer.analyzePaths(niFiFlow);
-            atlasClient.registerNiFiFlow(niFiFlow);
-        } catch (AtlasServiceException e) {
-            throw new RuntimeException("Failed to register NiFI flow. " + e, e);
+        flowAnalyzer.analyzePaths(niFiFlow);
+
+        if (isResponsibleForPrimaryTasks) {
+            try {
+                atlasClient.registerNiFiFlow(niFiFlow);
+            } catch (AtlasServiceException e) {
+                throw new RuntimeException("Failed to register NiFI flow. " + e, e);
+            }
         }
 
+        // TODO: Is this going to be an issue? Does Atlas notification has retry mechanism designed for this situation??
+        // There is a race condition between the primary node and other nodes.
+        // If a node notifies an event related to a NiFi component which is not yet created by NiFi primary node,
+        // then the notification message will fail due to having a reference to a non-existing entity.
         consumeNiFiProvenanceEvents(context, niFiFlow);
 
     }

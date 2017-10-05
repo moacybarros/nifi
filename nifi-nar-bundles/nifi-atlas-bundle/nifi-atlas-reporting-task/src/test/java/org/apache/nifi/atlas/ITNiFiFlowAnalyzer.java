@@ -17,12 +17,10 @@
 package org.apache.nifi.atlas;
 
 import org.junit.Before;
-import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
-import java.util.List;
 import java.util.Properties;
 
 public class ITNiFiFlowAnalyzer {
@@ -30,12 +28,10 @@ public class ITNiFiFlowAnalyzer {
     private static final Logger logger = LoggerFactory.getLogger(ITNiFiFlowAnalyzer.class);
 
     private NiFiAtlasClient atlasClient;
-    private NiFiApiClient nifiClient;
     private AtlasVariables atlasVariables;
 
     @Before
     public void setup() throws Exception {
-        nifiClient = new NiFiApiClient("http://0.hdpf.aws.mine:9990/");
 
         atlasClient = NiFiAtlasClient.getInstance();
         // Add your atlas server ip address into /etc/hosts as atlas.example.com

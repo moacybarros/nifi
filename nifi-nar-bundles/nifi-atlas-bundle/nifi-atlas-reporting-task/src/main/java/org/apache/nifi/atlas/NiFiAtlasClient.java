@@ -136,6 +136,16 @@ public class NiFiAtlasClient {
     }
 
     /**
+     * @return True when required NiFi types are already created.
+     */
+    public boolean isNiFiTypeDefsRegistered() throws AtlasServiceException {
+        final Set<String> typeNames = ENTITIES.keySet();
+        final Map<String, AtlasEntityDef> existingDefs = getTypeDefs(typeNames.toArray(new String[typeNames.size()])).getEntityDefs().stream()
+                .collect(Collectors.toMap(def -> def.getName(), def -> def));
+        return typeNames.stream().allMatch(typeName -> existingDefs.containsKey(typeName));
+    }
+
+    /**
      * Create or update NiFi types in Atlas type system.
      * @param update If false, doesn't perform anything if there is existing type def for the name.
      */
