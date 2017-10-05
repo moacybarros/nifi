@@ -42,16 +42,6 @@ public class ConvertExcelToCSVProcessorTest {
     }
 
     @Test
-    public void testColToIndex() {
-        assertEquals(Integer.valueOf(0), ConvertExcelToCSVProcessor.columnToIndex("A"));
-        assertEquals(Integer.valueOf(1), ConvertExcelToCSVProcessor.columnToIndex("B"));
-        assertEquals(Integer.valueOf(25), ConvertExcelToCSVProcessor.columnToIndex("Z"));
-        assertEquals(Integer.valueOf(29), ConvertExcelToCSVProcessor.columnToIndex("AD"));
-        assertEquals(Integer.valueOf(239), ConvertExcelToCSVProcessor.columnToIndex("IF"));
-        assertEquals(Integer.valueOf(16383), ConvertExcelToCSVProcessor.columnToIndex("XFD"));
-    }
-
-    @Test
     public void testMultipleSheetsGeneratesMultipleFlowFiles() throws Exception {
 
         testRunner.enqueue(new File("src/test/resources/TwoSheets.xlsx").toPath());
@@ -79,6 +69,41 @@ public class ConvertExcelToCSVProcessorTest {
         //Since TestRunner.run() will create a random filename even if the attribute is set in enqueue manually we just check that "_{SHEETNAME}.csv is present
         assertTrue(ffSheetB.getAttribute(CoreAttributes.FILENAME.key()).endsWith("_TestSheetB.csv"));
 
+    }
+
+    @Test
+    public void testDataFormatting() throws Exception {
+        testRunner.enqueue(new File("src/test/resources/dataformatting.xlsx").toPath());
+        testRunner.run();
+
+        testRunner.assertTransferCount(ConvertExcelToCSVProcessor.SUCCESS, 1);
+        testRunner.assertTransferCount(ConvertExcelToCSVProcessor.ORIGINAL, 1);
+        testRunner.assertTransferCount(ConvertExcelToCSVProcessor.FAILURE, 0);
+
+        MockFlowFile ff = testRunner.getFlowFilesForRelationship(ConvertExcelToCSVProcessor.SUCCESS).get(0);
+        Long rowsSheet = new Long(ff.getAttribute(ConvertExcelToCSVProcessor.ROW_NUM));
+        assertTrue(rowsSheet == 9);
+
+        ff.assertContentEquals(new File("src/test/resources/dataformatting.csv"));
+    }
+
+    @Test
+    public void testCustomDelimiters() throws Exception {
+        testRunner.enqueue(new File("src/test/resources/dataformatting.xlsx").toPath());
+        testRunner.setProperty(ConvertExcelToCSVProcessor.COLUMN_DELIMITER, "\\u0001");
+        testRunner.setProperty(ConvertExcelToCSVProcessor.RECORD_DELIMITER, "\\u0002\\n");
+
+        testRunner.run();
+
+        testRunner.assertTransferCount(ConvertExcelToCSVProcessor.SUCCESS, 1);
+        testRunner.assertTransferCount(ConvertExcelToCSVProcessor.ORIGINAL, 1);
+        testRunner.assertTransferCount(ConvertExcelToCSVProcessor.FAILURE, 0);
+
+        MockFlowFile ff = testRunner.getFlowFilesForRelationship(ConvertExcelToCSVProcessor.SUCCESS).get(0);
+        Long rowsSheet = new Long(ff.getAttribute(ConvertExcelToCSVProcessor.ROW_NUM));
+        assertTrue(rowsSheet == 9);
+
+        ff.assertContentEquals(new File("src/test/resources/alternatedelimiters.csv"));
     }
 
     /**

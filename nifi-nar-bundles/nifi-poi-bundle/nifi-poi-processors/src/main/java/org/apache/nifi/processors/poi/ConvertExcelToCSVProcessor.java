@@ -19,13 +19,12 @@ package org.apache.nifi.processors.poi;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -48,15 +47,20 @@ import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.poi.openxml4j.exceptions.InvalidFormatException;
 import org.apache.poi.openxml4j.exceptions.OpenXML4JException;
 import org.apache.poi.openxml4j.opc.OPCPackage;
+import org.apache.poi.ss.usermodel.DataFormatter;
+import org.apache.poi.ss.util.CellAddress;
+import org.apache.poi.ss.util.CellReference;
+import org.apache.poi.util.SAXHelper;
+import org.apache.poi.xssf.eventusermodel.ReadOnlySharedStringsTable;
 import org.apache.poi.xssf.eventusermodel.XSSFReader;
-import org.apache.poi.xssf.model.SharedStringsTable;
-import org.apache.poi.xssf.usermodel.XSSFRichTextString;
-import org.xml.sax.Attributes;
+import org.apache.poi.xssf.eventusermodel.XSSFSheetXMLHandler;
+import org.apache.poi.xssf.model.StylesTable;
+import org.apache.poi.xssf.usermodel.XSSFComment;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 import org.xml.sax.XMLReader;
-import org.xml.sax.helpers.DefaultHandler;
-import org.xml.sax.helpers.XMLReaderFactory;
+
+import javax.xml.parsers.ParserConfigurationException;
 
 
 @Tags({"excel", "csv", "poi"})
@@ -78,17 +82,9 @@ public class ConvertExcelToCSVProcessor
     public static final String SHEET_NAME = "sheetname";
     public static final String ROW_NUM = "numrows";
     public static final String SOURCE_FILE_NAME = "sourcefilename";
-    private static final String SAX_CELL_REF = "c";
-    private static final String SAX_CELL_TYPE = "t";
-    private static final String SAX_CELL_ADDRESS = "r";
-    private static final String SAX_CELL_STRING = "s";
-    private static final String SAX_CELL_CONTENT_REF = "v";
-    private static final String SAX_ROW_REF = "row";
-    private static final String SAX_SHEET_NAME_REF = "sheetPr";
     private static final String DESIRED_SHEETS_DELIMITER = ",";
     private static final String UNKNOWN_SHEET_NAME = "UNKNOWN";
     private static final String SAX_PARSER = "org.apache.xerces.parsers.SAXParser";
-    private static final Pattern CELL_ADDRESS_REGEX = Pattern.compile("^([a-zA-Z]+)([\\d]+)$");
 
     public static final PropertyDescriptor DESIRED_SHEETS = new PropertyDescriptor
             .Builder().name("extract-sheets")
@@ -99,6 +95,24 @@ public class ConvertExcelToCSVProcessor
             .required(false)
             .expressionLanguageSupported(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
+            .build();
+
+    static final PropertyDescriptor COLUMN_DELIMITER = new PropertyDescriptor.Builder()
+            .name("excel-csv-column-delimiter")
+            .displayName("Column Delimiter")
+            .description("Character(s) used to separate columns of data in the CSV file. Special characters should use the '\\u' notation.")
+            .required(false)
+            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
+            .defaultValue(",")
+            .build();
+
+    static final PropertyDescriptor RECORD_DELIMITER = new PropertyDescriptor.Builder()
+            .name("excel-csv-record-delimiter")
+            .displayName("Record Delimiter")
+            .description("Character(s) used to separate rows of data in the CSV file. For line return enter \\n in this field. Special characters should use the '\\u' notation.")
+            .required(false)
+            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
+            .defaultValue("\\n")
             .build();
 
     public static final Relationship ORIGINAL = new Relationship.Builder()
@@ -124,6 +138,8 @@ public class ConvertExcelToCSVProcessor
     protected void init(final ProcessorInitializationContext context) {
         final List<PropertyDescriptor> descriptors = new ArrayList<>();
         descriptors.add(DESIRED_SHEETS);
+        descriptors.add(COLUMN_DELIMITER);
+        descriptors.add(RECORD_DELIMITER);
         this.descriptors = Collections.unmodifiableList(descriptors);
 
         final Set<Relationship> relationships = new HashSet<>();
@@ -150,28 +166,29 @@ public class ConvertExcelToCSVProcessor
             return;
         }
 
-        try {
+        final String desiredSheetsDelimited = context.getProperty(DESIRED_SHEETS).evaluateAttributeExpressions().getValue();
 
+        //Delimiter's are frequently special characters. Allow users to enter special characters using \ u notation and then translate.
+        final String columnDelimiter = org.apache.commons.lang3.StringEscapeUtils.unescapeJava(context.getProperty(COLUMN_DELIMITER).getValue());
+        final String recordDelimiter = org.apache.commons.lang3.StringEscapeUtils.unescapeJava(context.getProperty(RECORD_DELIMITER).getValue());
+
+        try {
             session.read(flowFile, new InputStreamCallback() {
                 @Override
                 public void process(InputStream inputStream) throws IOException {
 
                     try {
-                        String desiredSheetsDelimited = context.getProperty(DESIRED_SHEETS)
-                                .evaluateAttributeExpressions().getValue();
-
                         OPCPackage pkg = OPCPackage.open(inputStream);
                         XSSFReader r = new XSSFReader(pkg);
-                        SharedStringsTable sst = r.getSharedStringsTable();
+                        ReadOnlySharedStringsTable sst = new ReadOnlySharedStringsTable(pkg);
+                        StylesTable styles = r.getStylesTable();
                         XSSFReader.SheetIterator iter = (XSSFReader.SheetIterator) r.getSheetsData();
 
                         if (desiredSheetsDelimited != null) {
-
                             String[] desiredSheets = StringUtils
                                     .split(desiredSheetsDelimited, DESIRED_SHEETS_DELIMITER);
 
                             if (desiredSheets != null) {
-
                                 while (iter.hasNext()) {
                                     InputStream sheet = iter.next();
                                     String sheetName = iter.getSheetName();
@@ -179,7 +196,8 @@ public class ConvertExcelToCSVProcessor
                                     for (int i = 0; i < desiredSheets.length; i++) {
                                         //If the sheetName is a desired one parse it
                                         if (sheetName.equalsIgnoreCase(desiredSheets[i])) {
-                                            handleExcelSheet(session, flowFile, sst, sheet, sheetName);
+                                            handleExcelSheet(session, flowFile, sst, styles, sheet, sheetName,
+                                                    columnDelimiter, recordDelimiter);
                                             break;
                                         }
                                     }
@@ -191,13 +209,14 @@ public class ConvertExcelToCSVProcessor
                         } else {
                             //Get all of the sheets in the document.
                             while (iter.hasNext()) {
-                                handleExcelSheet(session, flowFile, sst, iter.next(), iter.getSheetName());
+                                handleExcelSheet(session, flowFile, sst, styles, iter.next(), iter.getSheetName(),
+                                        columnDelimiter, recordDelimiter);
                             }
                         }
                     } catch (InvalidFormatException ife) {
                         getLogger().error("Only .xlsx Excel 2007 OOXML files are supported", ife);
                         throw new UnsupportedOperationException("Only .xlsx Excel 2007 OOXML files are supported", ife);
-                    } catch (OpenXML4JException e) {
+                    } catch (OpenXML4JException | SAXException e) {
                         getLogger().error("Error occurred while processing Excel document metadata", e);
                     }
                 }
@@ -221,44 +240,43 @@ public class ConvertExcelToCSVProcessor
      *  The NiFi ProcessSession instance for the current invocation.
      */
     private void handleExcelSheet(ProcessSession session, FlowFile originalParentFF,
-            SharedStringsTable sst, final InputStream sheetInputStream, String sName) throws IOException {
+                                  ReadOnlySharedStringsTable sst, StylesTable styles, final InputStream sheetInputStream, String sName,
+                                  String columnDelimiter, String recordDelimiter) throws IOException {
 
         FlowFile ff = session.create();
         try {
+            final DataFormatter formatter = new DataFormatter();
+            final InputSource sheetSource = new InputSource(sheetInputStream);
 
-            XMLReader parser =
-                    XMLReaderFactory.createXMLReader(
-                            SAX_PARSER
-                    );
-            ExcelSheetRowHandler handler = new ExcelSheetRowHandler(sst);
+            final SheetToCSV sheetHandler = new SheetToCSV();
+            sheetHandler.setColumnDelimiter(columnDelimiter);
+            sheetHandler.setRecordDelimiter(recordDelimiter);
+
+            final XMLReader parser = SAXHelper.newXMLReader();
+            final XSSFSheetXMLHandler handler = new XSSFSheetXMLHandler(
+                    styles, null, sst, sheetHandler, formatter, false);
+
             parser.setContentHandler(handler);
 
             ff = session.write(ff, new OutputStreamCallback() {
                 @Override
                 public void process(OutputStream out) throws IOException {
-                    InputSource sheetSource = new InputSource(sheetInputStream);
-                    ExcelSheetRowHandler eh = null;
+                    PrintStream outPrint = new PrintStream(out);
+                    sheetHandler.setOutput(outPrint);
+
                     try {
-                        eh = (ExcelSheetRowHandler) parser.getContentHandler();
-                        eh.setFlowFileOutputStream(out);
-                        parser.setContentHandler(eh);
                         parser.parse(sheetSource);
+
                         sheetInputStream.close();
+                        outPrint.close();
                     } catch (SAXException se) {
-                        getLogger().error("Error occurred while processing Excel sheet {}", new Object[]{eh.getSheetName()}, se);
+                        getLogger().error("Error occurred while processing Excel sheet {}", new Object[]{sName}, se);
                     }
                 }
             });
 
-            if (handler.getSheetName().equals(UNKNOWN_SHEET_NAME)) {
-                //Used the named parsed from the handler. This logic is only here because IF the handler does find a value that should take precedence.
-                ff = session.putAttribute(ff, SHEET_NAME, sName);
-            } else {
-                ff = session.putAttribute(ff, SHEET_NAME, handler.getSheetName());
-                sName = handler.getSheetName();
-            }
-
-            ff = session.putAttribute(ff, ROW_NUM, new Long(handler.getRowCount()).toString());
+            ff = session.putAttribute(ff, SHEET_NAME, sName);
+            ff = session.putAttribute(ff, ROW_NUM, new Long(sheetHandler.getRowCount()).toString());
 
             if (StringUtils.isNotEmpty(originalParentFF.getAttribute(CoreAttributes.FILENAME.key()))) {
                 ff = session.putAttribute(ff, SOURCE_FILE_NAME, originalParentFF.getAttribute(CoreAttributes.FILENAME.key()));
@@ -273,7 +291,7 @@ public class ConvertExcelToCSVProcessor
 
             session.transfer(ff, SUCCESS);
 
-        } catch (SAXException saxE) {
+        } catch (SAXException | ParserConfigurationException saxE) {
             getLogger().error("Failed to create instance of SAXParser {}", new Object[]{SAX_PARSER}, saxE);
             ff = session.putAttribute(ff,
                     ConvertExcelToCSVProcessor.class.getName() + ".error", saxE.getMessage());
@@ -283,163 +301,134 @@ public class ConvertExcelToCSVProcessor
         }
     }
 
-    static Integer columnToIndex(String col) {
-        int length = col.length();
-        int accumulator = 0;
-        for (int i = length; i > 0; i--) {
-            char c = col.charAt(i - 1);
-            int x = ((int) c) - 64;
-            accumulator += x * Math.pow(26, length - i);
-        }
-        // Make it to start with 0.
-        return accumulator - 1;
-    }
-
-    private static class CellAddress {
-        final int row;
-        final int col;
-
-        private CellAddress(int row, int col) {
-            this.row = row;
-            this.col = col;
-        }
-    }
-
     /**
-     * Extracts every row from an Excel Sheet and generates a corresponding JSONObject whose key is the Excel CellAddress and value
-     * is the content of that CellAddress converted to a String
+     * Uses the XSSF Event SAX helpers to do most of the work
+     *  of parsing the Sheet XML, and outputs the contents
+     *  as a (basic) CSV.
      */
-    private class ExcelSheetRowHandler
-            extends DefaultHandler {
+    private class SheetToCSV implements XSSFSheetXMLHandler.SheetContentsHandler {
+        private String delimiter = ",";
+        private String recordDelimiter = "\n";
+        private boolean firstCellOfRow;
+        private int currentRow = -1;
+        private int currentCol = -1;
+        private int rowCount = 0;
+        private boolean rowHasValues=false;
+        private PrintStream output;
 
-        private SharedStringsTable sst;
-        private String currentContent;
-        private boolean nextIsString;
-        private CellAddress firstCellAddress;
-        private CellAddress firstRowLastCellAddress;
-        private CellAddress previousCellAddress;
-        private CellAddress nextCellAddress;
-        private OutputStream outputStream;
-        private boolean firstColInRow;
-        long rowCount;
-        String sheetName;
+        private boolean firstRow=false;
+        private int firstCol;
+        private int lastCol;
 
-        private ExcelSheetRowHandler(SharedStringsTable sst) {
-            this.sst = sst;
-            this.firstColInRow = true;
-            this.rowCount = 0l;
-            this.sheetName = UNKNOWN_SHEET_NAME;
+        private StringBuilder sbRow;
+
+        public String getColumnDelimiter(){
+            return delimiter;
         }
 
-        public void setFlowFileOutputStream(OutputStream outputStream) {
-            this.outputStream = outputStream;
+        public String getRecordDelimiter(){
+            return recordDelimiter;
         }
 
-
-        public void startElement(String uri, String localName, String name,
-                Attributes attributes) throws SAXException {
-
-            if (name.equals(SAX_CELL_REF)) {
-                String cellType = attributes.getValue(SAX_CELL_TYPE);
-                // Analyze cell address.
-                Matcher cellAddressMatcher = CELL_ADDRESS_REGEX.matcher(attributes.getValue(SAX_CELL_ADDRESS));
-                if (cellAddressMatcher.matches()) {
-                    String col = cellAddressMatcher.group(1);
-                    String row = cellAddressMatcher.group(2);
-                    nextCellAddress = new CellAddress(Integer.parseInt(row), columnToIndex(col));
-
-                    if (firstCellAddress == null) {
-                        firstCellAddress = nextCellAddress;
-                    }
-                }
-                if (cellType != null && cellType.equals(SAX_CELL_STRING)) {
-                    nextIsString = true;
-                } else {
-                    nextIsString = false;
-                }
-            } else if (name.equals(SAX_ROW_REF)) {
-                if (firstRowLastCellAddress == null) {
-                    firstRowLastCellAddress = previousCellAddress;
-                }
-                firstColInRow = true;
-                previousCellAddress = null;
-                nextCellAddress = null;
-            } else if (name.equals(SAX_SHEET_NAME_REF)) {
-                sheetName = attributes.getValue(0);
-            }
-
-            currentContent = "";
+        public void setColumnDelimiter(String delimiter){
+            this.delimiter = delimiter;
         }
 
-        private void fillEmptyColumns(int nextColumn) throws IOException {
-            final CellAddress previousCell = previousCellAddress != null ? previousCellAddress : firstCellAddress;
-            if (previousCell != null) {
-                for (int i = 0; i < (nextColumn - previousCell.col); i++) {
-                    // Fill columns.
-                    outputStream.write(",".getBytes());
-                }
-            }
+        public void setRecordDelimiter(String recordDelimiter){
+            this.recordDelimiter = recordDelimiter;
         }
 
-        public void endElement(String uri, String localName, String name)
-                throws SAXException {
-
-            if (nextIsString) {
-                int idx = Integer.parseInt(currentContent);
-                currentContent = new XSSFRichTextString(sst.getEntryAt(idx)).toString();
-                nextIsString = false;
-            }
-
-            if (name.equals(SAX_CELL_CONTENT_REF)
-                    // Limit scanning from the first column, and up to the last column.
-                    && (firstCellAddress == null || firstCellAddress.col <= nextCellAddress.col)
-                    && (firstRowLastCellAddress == null || nextCellAddress.col <= firstRowLastCellAddress.col)) {
-                try {
-                    // A cell is found.
-                    fillEmptyColumns(nextCellAddress.col);
-                    firstColInRow = false;
-                    outputStream.write(currentContent.getBytes());
-                    // Keep previously found cell address.
-                    previousCellAddress = nextCellAddress;
-                } catch (IOException e) {
-                    getLogger().error("IO error encountered while writing content of parsed cell " +
-                            "value from sheet {}", new Object[]{getSheetName()}, e);
-                }
-            }
-
-            if (name.equals(SAX_ROW_REF)) {
-                //If this is the first row and the end of the row element has been encountered then that means no columns were present.
-                if (!firstColInRow) {
-                    try {
-                        if (firstRowLastCellAddress != null) {
-                            fillEmptyColumns(firstRowLastCellAddress.col);
-                        }
-                        rowCount++;
-                        outputStream.write("\n".getBytes());
-                    } catch (IOException e) {
-                        getLogger().error("IO error encountered while writing new line indicator", e);
-                    }
-                }
-            }
-
-        }
-
-        public void characters(char[] ch, int start, int length)
-                throws SAXException {
-            currentContent += new String(ch, start, length);
-        }
-
-        public long getRowCount() {
+        public int getRowCount(){
             return rowCount;
         }
 
-        public String getSheetName() {
-            return sheetName;
+        public void setOutput(PrintStream output){
+            this.output = output;
+        }
+
+        @Override
+        public void startRow(int rowNum) {
+            // Prepare for this row
+            firstCellOfRow = true;
+            firstRow = currentRow==-1;
+            currentRow = rowNum;
+            currentCol = -1;
+            rowHasValues = false;
+
+            sbRow = new StringBuilder();
+        }
+
+        @Override
+        public void endRow(int rowNum) {
+            if(firstRow){
+                lastCol = currentCol;
+            }
+
+            //if there was no data in this row, don't write it
+            if(!rowHasValues) {
+                return;
+            }
+
+            // Ensure the correct number of columns
+            for (int i=currentCol; i<lastCol; i++) {
+                sbRow.append(delimiter);
+            }
+            sbRow.append(recordDelimiter);
+
+            output.append(sbRow.toString());
+            rowCount++;
+        }
+
+        @Override
+        public void cell(String cellReference, String formattedValue,
+                         XSSFComment comment) {
+
+            // gracefully handle missing CellRef here in a similar way as XSSFCell does
+            if(cellReference == null) {
+                cellReference = new CellAddress(currentRow, currentCol).formatAsString();
+            }
+
+            // Did we miss any cells?
+            int thisCol = (new CellReference(cellReference)).getCol();
+
+            //Use the first row of the file to decide on the area of data to export
+            if(firstRow && firstCellOfRow){
+                firstCol = thisCol;
+            }
+
+            //if this cell falls outside our area, return and don't write it out.
+            if(!firstRow && (thisCol < firstCol || thisCol > lastCol)){
+                return;
+            }
+
+            int missedCols = (thisCol - firstCol) - (currentCol - firstCol) - 1;
+            if(firstCellOfRow){
+                missedCols = (thisCol - firstCol);
+            }
+
+            if (firstCellOfRow) {
+                firstCellOfRow = false;
+            } else {
+                sbRow.append(delimiter);
+            }
+
+            for (int i=0; i<missedCols; i++) {
+                sbRow.append(delimiter);
+            }
+            currentCol = thisCol;
+
+            sbRow.append(formattedValue);
+
+            rowHasValues = true;
+        }
+
+        @Override
+        public void headerFooter(String s, boolean b, String s1) {
+
         }
     }
 
-
-    /**
+        /**
      * Takes the original input filename and updates it by removing the file extension and replacing it with
      * the .csv extension.
      *
