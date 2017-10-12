@@ -48,8 +48,6 @@ public class NiFiFlow {
     private final Set<AtlasObjectId> inputs = new HashSet<>();
     private final Set<AtlasObjectId> outputs = new HashSet<>();
     private final List<NiFiFlowPath> flowPaths = new ArrayList<>();
-    private final Map<String, Set<AtlasObjectId>> processorInputs = new HashMap<>();
-    private final Map<String, Set<AtlasObjectId>> processorOutputs = new HashMap<>();
     private final Map<String, ProcessorStatus> processors = new HashMap<>();
     private final Map<String, RemoteProcessGroupStatus> remoteProcessGroups = new HashMap<>();
     private final Map<String, List<ConnectionStatus>> incomingRelationShips = new HashMap<>();
@@ -121,14 +119,6 @@ public class NiFiFlow {
 
     public List<ConnectionStatus> getOutgoingRelationShips(String componentId) {
         return outGoingRelationShips.get(componentId);
-    }
-
-    public Set<AtlasObjectId> getInputs(String processorId) {
-        return processorInputs.get(processorId);
-    }
-
-    public Set<AtlasObjectId> getOutputs(String processorId) {
-        return processorOutputs.get(processorId);
     }
 
     public void addInputPort(PortStatus port) {
