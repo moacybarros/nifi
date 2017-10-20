@@ -24,7 +24,6 @@ import org.apache.nifi.annotation.documentation.CapabilityDescription;
 import org.apache.nifi.annotation.documentation.Tags;
 import org.apache.nifi.annotation.lifecycle.OnScheduled;
 import org.apache.nifi.annotation.lifecycle.OnUnscheduled;
-import org.apache.nifi.atlas.AtlasVariables;
 import org.apache.nifi.atlas.NiFIAtlasHook;
 import org.apache.nifi.atlas.NiFiAtlasClient;
 import org.apache.nifi.atlas.NiFiFlow;
@@ -133,7 +132,7 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
             .build();
 
-    static final PropertyDescriptor ATLAS_NIFI_URL = new PropertyDescriptor.Builder()
+    public static final PropertyDescriptor ATLAS_NIFI_URL = new PropertyDescriptor.Builder()
             .name("atlas-nifi-url")
             .displayName("NiFi URL for Atlas")
             .description("NiFi URL is used in Atlas to represent this NiFi cluster (or standalone instance)." +
@@ -242,7 +241,7 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
 
         atlasClient = NiFiAtlasClient.getInstance();
         try {
-            atlasClient.initialize(true, urls.toArray(new String[]{}), user, password, confDir);
+            atlasClient.initialize(urls.toArray(new String[]{}), user, password, confDir);
         } catch (final NullPointerException e) {
             throw new ProcessException(String.format("Failed to initialize Atlas client due to %s." +
                     " Make sure 'atlas-application.properties' is in the directory specified with %s" +
@@ -314,9 +313,7 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         // Assuming each node has the same flow definition, that is guaranteed by NiFi cluster management mechanism.
         final NiFiFlow niFiFlow;
         try {
-            final AtlasVariables atlasVariables = new AtlasVariables();
-            atlasVariables.setNifiUrl(context.getProperty(ATLAS_NIFI_URL).evaluateAttributeExpressions().getValue());
-            niFiFlow = flowAnalyzer.analyzeProcessGroup(atlasVariables, context);
+            niFiFlow = flowAnalyzer.analyzeProcessGroup(context);
         } catch (IOException e) {
             throw new RuntimeException("Failed to analyze NiFi flow. " + e, e);
         }

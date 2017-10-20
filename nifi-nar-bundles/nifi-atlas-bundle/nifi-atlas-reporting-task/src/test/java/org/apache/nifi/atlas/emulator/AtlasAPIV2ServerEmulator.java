@@ -1,4 +1,4 @@
-package org.apache.nifi.atlas;
+package org.apache.nifi.atlas.emulator;
 
 import org.apache.atlas.model.discovery.AtlasSearchResult;
 import org.apache.atlas.model.instance.AtlasEntity;
@@ -8,6 +8,7 @@ import org.apache.atlas.model.typedef.AtlasEntityDef;
 import org.apache.atlas.model.typedef.AtlasTypesDef;
 import org.apache.atlas.notification.hook.HookNotification;
 import org.apache.atlas.typesystem.Referenceable;
+import org.apache.nifi.atlas.NiFiTypes;
 import org.codehaus.jackson.map.ObjectMapper;
 import org.eclipse.jetty.server.Connector;
 import org.eclipse.jetty.server.Handler;
@@ -43,16 +44,54 @@ import java.util.stream.Collectors;
 public class AtlasAPIV2ServerEmulator {
 
     private static final Logger logger = LoggerFactory.getLogger(AtlasAPIV2ServerEmulator.class);
-    private static Server server;
-    private static ServerConnector httpConnector;
+    private Server server;
+    private ServerConnector httpConnector;
+    private AtlasNotificationServerEmulator notificationServerEmulator;
 
     public static void main(String[] args) throws Exception {
+        final AtlasAPIV2ServerEmulator emulator = new AtlasAPIV2ServerEmulator();
+        emulator.start();
+    }
+
+    public void start() throws Exception {
+        if (server == null) {
+            createServer();
+        }
+
+        server.start();
+        logger.info("Starting {} on port {}", AtlasAPIV2ServerEmulator.class.getSimpleName(), httpConnector.getLocalPort());
+
+        notificationServerEmulator.consume(m -> {
+            if (m instanceof HookNotification.EntityCreateRequest) {
+                HookNotification.EntityCreateRequest em = (HookNotification.EntityCreateRequest) m;
+                for (Referenceable ref : em.getEntities()) {
+                    final AtlasEntity entity = toEntity(ref);
+                    atlasEntities.put(toEntityKey(entity), entity);
+                }
+            } else if (m instanceof HookNotification.EntityPartialUpdateRequest) {
+                HookNotification.EntityPartialUpdateRequest em
+                        = (HookNotification.EntityPartialUpdateRequest) m;
+                final AtlasEntity entity = toEntity(em.getEntity());
+                final String key = toEntityKey(entity);
+                final AtlasEntity exEntity = atlasEntities.get(key);
+
+                if (exEntity != null) {
+                    convertReferenceableToObjectId(entity.getAttributes())
+                            .forEach((k, v) -> exEntity.setAttribute(k, v));
+                } else {
+                    atlasEntities.put(key, entity);
+                }
+            }
+        });
+    }
+
+    private void createServer() throws Exception {
         server = new Server();
         final ContextHandlerCollection handlerCollection = new ContextHandlerCollection();
 
         final ServletContextHandler staticContext = new ServletContextHandler();
         staticContext.setContextPath("/");
-        
+
         final ServletContextHandler atlasApiV2Context = new ServletContextHandler();
         atlasApiV2Context.setContextPath("/api/atlas/v2/");
 
@@ -76,32 +115,13 @@ public class AtlasAPIV2ServerEmulator {
         servletHandler.addServletWithMapping(EntityBulkServlet.class, "/entity/bulk/");
         servletHandler.addServletWithMapping(EntitySearchServlet.class, "/search/basic/");
         servletHandler.addServletWithMapping(LineageServlet.class, "/debug/lineage/");
-        server.start();
 
-        logger.info("Starting {} on port {}", AtlasAPIV2ServerEmulator.class.getSimpleName(), httpConnector.getLocalPort());
+        notificationServerEmulator = new AtlasNotificationServerEmulator();
+    }
 
-        new AtlasNotificationServerEmulator().consume(m -> {
-            if (m instanceof HookNotification.EntityCreateRequest) {
-                HookNotification.EntityCreateRequest em = (HookNotification.EntityCreateRequest) m;
-                for (Referenceable ref : em.getEntities()) {
-                    final AtlasEntity entity = toEntity(ref);
-                    atlasEntities.put(toEntityKey(entity), entity);
-                }
-            } else if (m instanceof HookNotification.EntityPartialUpdateRequest) {
-                HookNotification.EntityPartialUpdateRequest em
-                        = (HookNotification.EntityPartialUpdateRequest) m;
-                final AtlasEntity entity = toEntity(em.getEntity());
-                final String key = toEntityKey(entity);
-                final AtlasEntity exEntity = atlasEntities.get(key);
-
-                if (exEntity != null) {
-                    convertReferenceableToObjectId(entity.getAttributes())
-                            .forEach((k, v) -> exEntity.setAttribute(k, v));
-                } else {
-                    atlasEntities.put(key, entity);
-                }
-            }
-        });
+    public void stop() throws Exception {
+        notificationServerEmulator.stop();
+        server.stop();
     }
 
     private static void respondWithJson(HttpServletResponse resp, Object entity) throws IOException {
@@ -170,6 +190,12 @@ public class AtlasAPIV2ServerEmulator {
             withExtInfo.getEntities().forEach(entity -> atlasEntities.put(toEntityKey((AtlasEntity) entity), entity));
             final EntityMutationResponse mutationResponse = new EntityMutationResponse();
             respondWithJson(resp, mutationResponse);
+        }
+
+        @Override
+        protected void doDelete(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
+            atlasEntities.clear();
+            resp.setStatus(200);
         }
     }
 
@@ -267,6 +293,7 @@ public class AtlasAPIV2ServerEmulator {
         private Map<String, String> toNode(AtlasEntity entity) {
             Map<String, String> node = new HashMap<>();
             node.put("name", entity.getAttribute(NiFiTypes.ATTR_NAME).toString());
+            node.put("type", entity.getTypeName());
             return node;
         }
 
@@ -281,7 +308,14 @@ public class AtlasAPIV2ServerEmulator {
             return s + "::" + t;
         }
 
-        private void traverse(AtlasEntity s, List<Link> links, Map<String, Integer> nodeIndices, Map<String, List<AtlasEntity>> outgoingEntities) {
+        private void traverse(Set<AtlasEntity> seen, AtlasEntity s, List<Link> links, Map<String, Integer> nodeIndices, Map<String, List<AtlasEntity>> outgoingEntities) {
+
+            // To avoid cyclic links.
+            if (seen.contains(s)) {
+                return;
+            }
+            seen.add(s);
+
             // Traverse entities those are updated by this entity.
             final Object outputs = s.getAttribute(NiFiTypes.ATTR_OUTPUTS);
             if (outputs != null) {
@@ -291,7 +325,7 @@ public class AtlasAPIV2ServerEmulator {
 
                     if (t != null) {
                         links.add(toLink(s, t, nodeIndices));
-                        traverse(t, links, nodeIndices, outgoingEntities);
+                        traverse(seen, t, links, nodeIndices, outgoingEntities);
                     }
                 }
             }
@@ -315,7 +349,7 @@ public class AtlasAPIV2ServerEmulator {
             if (outGoings != null) {
                 outGoings.forEach(o -> {
                     links.add(toLink(s, o, nodeIndices));
-                    traverse(o, links, nodeIndices, outgoingEntities);
+                    traverse(seen, o, links, nodeIndices, outgoingEntities);
                 });
             }
 
@@ -357,6 +391,7 @@ public class AtlasAPIV2ServerEmulator {
             // Correct all flow_path
             final Map<String, List<AtlasEntity>> entities = atlasEntities.values().stream()
                     .collect(Collectors.groupingBy(AtlasEntity::getTypeName));
+            final HashSet<AtlasEntity> seen = new HashSet<>();
 
             // Add nifi_flow
             if (entities.containsKey(NiFiTypes.TYPE_NIFI_FLOW)) {
@@ -384,7 +419,7 @@ public class AtlasAPIV2ServerEmulator {
                     // Search recursively
                     heads.forEach(s -> {
                         links.add(toLink(nifiFlow, s, nodeIndices));
-                        traverse(s, links, nodeIndices, outgoingEntities);
+                        traverse(seen, s, links, nodeIndices, outgoingEntities);
                     });
 
 

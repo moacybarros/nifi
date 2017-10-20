@@ -34,7 +34,7 @@ public class ITNiFiAtlasClient {
     public void setup() {
         atlasClient = NiFiAtlasClient.getInstance();
         // Add your atlas server ip address into /etc/hosts as atlas.example.com
-        atlasClient.initialize(true, new String[]{"http://atlas.example.com:21000/"}, "admin", "admin", null);
+        atlasClient.initialize(new String[]{"http://atlas.example.com:21000/"}, "admin", "admin", null);
     }
 
     @Test

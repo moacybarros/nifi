@@ -36,7 +36,7 @@ public class NiFiRemotePort extends AbstractNiFiProvenanceEventAnalyzer {
         final String type = isRemoteInputPort ? TYPE_NIFI_INPUT_PORT : TYPE_NIFI_OUTPUT_PORT;
         final String remotePortId = event.getComponentId();
 
-        // TODO: What if the connected component is not a processor such as Funnel?
+        // Find connections that connects to/from the remote port.
         final List<ConnectionStatus> connections = isRemoteInputPort
                 ? context.findConnectionTo(remotePortId)
                 : context.findConnectionFrom(remotePortId);
@@ -84,7 +84,8 @@ public class NiFiRemotePort extends AbstractNiFiProvenanceEventAnalyzer {
             return null;
         }
 
-        // TODO: What if there is no previous node? Expired or remote_output to remote_input direct connection?
+        // TODO: how about remote_output to remote_input direct connection?
+        // If noo previous provenance node found due to expired or other reasons, just log a warning msg and do nothing.
         final LineageNode previousProvenanceNode = traverseLineage(lineage, String.valueOf(event.getEventId()));
         if (previousProvenanceNode == null) {
             logger.warn("Traverse lineage could not find any preceding provenance event node: {}", new Object[]{event});

@@ -84,18 +84,9 @@ public class NiFiAtlasClient {
         return nifiClient;
     }
 
-    public void initialize(final boolean force, final String[] baseUrls, final String user, final String password, final File atlasConfDir) {
-        if (atlasClient != null && !force) {
-            // Already initialized and keep using it.
-            return;
-        }
+    public void initialize(final String[] baseUrls, final String user, final String password, final File atlasConfDir) {
 
         synchronized (NiFiAtlasClient.class) {
-
-            if (atlasClient != null && !force) {
-                // Already initialized and keep using it.
-                return;
-            }
 
             if (atlasClient != null) {
                 logger.info("{} had been setup but replacing it with new one.", atlasClient);
@@ -231,7 +222,6 @@ public class NiFiAtlasClient {
         flowEntity.setAttribute(ATTR_DESCRIPTION, nifiFlow.getDescription());
 
         // Create nifi_flow entity to make nifiFlowId available for other entities.
-        // TODO: why does it keep using the same atlasEntities list??
         EntityMutationResponse mutationResponse = atlasClient.createEntities(atlasEntities);
         logger.debug("mutation response={}", mutationResponse);
 
@@ -340,7 +330,6 @@ public class NiFiAtlasClient {
 
         for (AtlasObjectId in : inputs) {
             if (outputs.contains(in)) {
-                // TODO: is it true?
                 throw new IllegalStateException("Looping dataset will cause infinite loop.");
             }
         }

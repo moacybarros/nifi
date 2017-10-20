@@ -42,22 +42,19 @@ import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_INPUT_PORT;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_OUTPUT_PORT;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_QUEUE;
+import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.ATLAS_NIFI_URL;
 
 public class NiFiFlowAnalyzer {
 
     private static final Logger logger = LoggerFactory.getLogger(NiFiFlowAnalyzer.class);
 
-    public NiFiFlow analyzeProcessGroup(AtlasVariables atlasVariables, ReportingContext context) throws IOException {
+    public NiFiFlow analyzeProcessGroup(ReportingContext context) throws IOException {
         final ProcessGroupStatus rootProcessGroup = context.getEventAccess().getGroupStatus("root");
 
         final String flowName = rootProcessGroup.getName();
-        // TODO: improve this.
-        final String nifiUrlForAtlasMetadata = atlasVariables.getNifiUrl();
-        final String nifiUrl = nifiUrlForAtlasMetadata;
-        final NiFiFlow nifiFlow = new NiFiFlow(flowName, rootProcessGroup.getId(), nifiUrl);
 
-        // TODO: Do we have anything to set?
-        // nifiFlow.setDescription();
+        final String nifiUrl = context.getProperty(ATLAS_NIFI_URL).evaluateAttributeExpressions().getValue();
+        final NiFiFlow nifiFlow = new NiFiFlow(flowName, rootProcessGroup.getId(), nifiUrl);
 
         analyzeProcessGroup(rootProcessGroup, nifiFlow);
 
@@ -76,8 +73,6 @@ public class NiFiFlowAnalyzer {
             entity.setAttribute(ATTR_NIFI_FLOW, nifiFlow.getId());
             entity.setAttribute(ATTR_NAME, portName);
             entity.setAttribute(ATTR_QUALIFIED_NAME, port.getId());
-            // TODO: do we have anything to set?
-//            entity.setAttribute(ATTR_DESCRIPTION, port.getComponent().getComments());
 
             final AtlasObjectId portId = new AtlasObjectId(typeName, ATTR_QUALIFIED_NAME, port.getId());
             final Map<AtlasObjectId, AtlasEntity> ports = isInput ? nifiFlow.getRootInputPortEntities() : nifiFlow.getRootOutputPortEntities();
@@ -268,9 +263,10 @@ public class NiFiFlowAnalyzer {
                 .collect(Collectors.toSet());
 
         headProcessors.forEach(startPid -> {
-            // TODO: Can we improve this a bit, if new processor is inserted, then entity id will be changed, and existing lineage to DataSet will be lost. But that may be OK.
             // By using the startPid as its qualifiedName, it's guaranteed that
             // the same path will end up being the same Atlas entity.
+            // However, if the first processor is replaced by another,
+            // the flow path will have a different id, and the old path is logically deleted.
             final NiFiFlowPath path = new NiFiFlowPath(startPid);
             final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
             paths.add(path);

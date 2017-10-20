@@ -24,8 +24,6 @@ import org.apache.nifi.controller.status.ProcessorStatus;
 import org.apache.nifi.reporting.EventAccess;
 import org.apache.nifi.reporting.ReportingContext;
 import org.apache.nifi.util.Tuple;
-import org.apache.nifi.web.api.dto.ProcessGroupDTO;
-import org.apache.nifi.web.api.entity.ProcessGroupEntity;
 import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -46,12 +44,10 @@ import static org.mockito.Mockito.when;
 public class TestNiFiFlowAnalyzer {
 
     private int componentId = 0;
-    private AtlasVariables atlasVariables;
 
     @Before
     public void before() throws Exception {
         componentId = 0;
-        atlasVariables = new AtlasVariables();
     }
 
     private ProcessGroupStatus createEmptyProcessGroupStatus() {
@@ -61,14 +57,6 @@ public class TestNiFiFlowAnalyzer {
         processGroupStatus.setName("Flow name");
 
         return processGroupStatus;
-    }
-
-    private ProcessGroupEntity createProcessGroupEntity() {
-        final ProcessGroupEntity entity = new ProcessGroupEntity();
-        ProcessGroupDTO processGroup = new ProcessGroupDTO();
-        processGroup.setComments("Flow comment");
-        entity.setComponent(processGroup);
-        return entity;
     }
 
     @Test
@@ -84,7 +72,7 @@ public class TestNiFiFlowAnalyzer {
 
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables, reportingContext);
+        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(reportingContext);
 
         assertEquals("Flow name", nifiFlow.getFlowName());
 //        assertEquals("Flow comment", nifiFlow.getDescription());
@@ -150,7 +138,7 @@ public class TestNiFiFlowAnalyzer {
 
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables, reportingContext);
+        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(reportingContext);
 
         assertEquals(1, nifiFlow.getProcessors().size());
 
@@ -186,7 +174,7 @@ public class TestNiFiFlowAnalyzer {
 
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables, reportingContext);
+        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(reportingContext);
 
         assertEquals(2, nifiFlow.getProcessors().size());
 
@@ -225,7 +213,7 @@ public class TestNiFiFlowAnalyzer {
 
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables, reportingContext);
+        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(reportingContext);
 
         assertEquals(4, nifiFlow.getProcessors().size());
 
@@ -278,7 +266,7 @@ public class TestNiFiFlowAnalyzer {
 
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables, reportingContext);
+        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(reportingContext);
 
         assertEquals(4, nifiFlow.getProcessors().size());
 
@@ -339,7 +327,7 @@ public class TestNiFiFlowAnalyzer {
 
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables, reportingContext);
+        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(reportingContext);
 
         assertEquals(3, nifiFlow.getProcessors().size());
 
@@ -433,7 +421,7 @@ public class TestNiFiFlowAnalyzer {
 
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(atlasVariables, reportingContext);
+        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(reportingContext);
         nifiFlow.dump();
 
         assertEquals(3, nifiFlow.getProcessors().size());

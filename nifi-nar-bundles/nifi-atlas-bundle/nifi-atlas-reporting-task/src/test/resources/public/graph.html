@@ -33,7 +33,7 @@ var svg = d3.select("svg"),
     height = +svg.attr("height");
 
 var formatNumber = d3.format(",.0f"),
-    format = function(d) { return formatNumber(d) + " TWh"; },
+    format = function(d) { return formatNumber(d); },
     color = d3.scaleOrdinal(d3.schemeCategory10);
 
 var sankey = d3.sankey()
@@ -94,7 +94,7 @@ d3.json("/api/atlas/v2/debug/lineage/", function(error, lineage) {
       .attr("text-anchor", "start");
 
   node.append("title")
-      .text(function(d) { return d.name + "\n" + format(d.value); });
+      .text(function(d) { return d.type + "\n" + d.name; });
 });
 
 </script>
