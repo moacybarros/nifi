@@ -100,38 +100,6 @@ public class ITNiFiFlowAnalyzer {
 
     }
 
-    // TODO: fix
-//    @Test
-//    public void testFetchNiFiFlow() throws Exception {
-//        final NiFiFlowAnalyzer flowAnalyzer = new NiFiFlowAnalyzer(nifiClient);
-//        final NiFiFlow niFiFlow = flowAnalyzer.analyzeProcessGroup(atlasVariables);
-//        niFiFlow.dump();
-//
-//        flowAnalyzer.analyzePaths(niFiFlow);
-//        final List<NiFiFlowPath> niFiFlowPaths = niFiFlow.getFlowPaths();
-//        logger.info("Paths:");
-//        niFiFlowPaths.forEach(path -> logger.info("{} -> {} ({}) -> {}",
-//                path.getIncomingPaths().size(),
-//                niFiFlow.getProcessors().get(path.getId()).getName(),
-//                path.getProcessorIds().size(),
-//                path.getOutgoingPaths().size()));
-//    }
-
-    // TODO: fix
-//    @Test
-//    public void testRegisterNiFiFlow() throws Exception {
-//        final NiFiFlowAnalyzer flowAnalyzer = new NiFiFlowAnalyzer(nifiClient);
-//        final NiFiFlow niFiFlow = flowAnalyzer.analyzeProcessGroup(atlasVariables);
-//        niFiFlow.dump();
-//
-//        flowAnalyzer.analyzePaths(niFiFlow);
-//        final List<NiFiFlowPath> niFiFlowPaths = niFiFlow.getFlowPaths();
-//        logger.info("nifiFlowPath={}", niFiFlowPaths);
-//
-//        atlasClient.registerNiFiFlow(niFiFlow);
-//    }
-
-
     /**
      * Load template file using the test method name.
      */
@@ -158,7 +126,7 @@ public class ITNiFiFlowAnalyzer {
         }
 
         final String template = ITNiFiFlowAnalyzer.class.getResource("/flow-templates/" + name + ".xml").getPath();
-        final TemplateContentHander handler = new TemplateContentHander();
+        final TemplateContentHander handler = new TemplateContentHander(name);
         xmlReader.setContentHandler(handler);
         try {
             xmlReader.parse(template);
@@ -183,7 +151,6 @@ public class ITNiFiFlowAnalyzer {
         private final Map<String, Map<Class, BiConsumer<Object, String>>> setters = new HashMap<>();
         private final Context context = new Context();
 
-
         private BiConsumer<Object, String> s(String tag, BiConsumer<Object, String> setter) {
             return (o, s) -> {
                 // Only apply the function when the element is the first level child.
@@ -194,7 +161,14 @@ public class ITNiFiFlowAnalyzer {
             };
         }
 
-        public TemplateContentHander() {
+        public TemplateContentHander(String name) {
+            rootPgStatus = new ProcessGroupStatus();
+            rootPgStatus.setId(name);
+            rootPgStatus.setName(name);
+            pgStatus = rootPgStatus;
+            current = rootPgStatus;
+            pgStack.push(rootPgStatus);
+
             setters.put("id", idSetters);
             setters.put("name", nameSetters);
 
@@ -216,16 +190,15 @@ public class ITNiFiFlowAnalyzer {
             });
 
             nameSetters.put(ProcessGroupStatus.class, s("processGroups",
-                    (o, name) -> ((ProcessGroupStatus) o).setName(name)));
+                    (o, n) -> ((ProcessGroupStatus) o).setName(n)));
 
             nameSetters.put(ProcessorStatus.class, s("processors",
-                    (o, name) -> ((ProcessorStatus) o).setName(name)));
+                    (o, n) -> ((ProcessorStatus) o).setName(n)));
 
-            nameSetters.put(PortStatus.class, (o, name) -> ((PortStatus) o).setName(name));
+            nameSetters.put(PortStatus.class, (o, n) -> ((PortStatus) o).setName(n));
 
-            // TODO: the name of remote port needs to be fetched from remoteProce
             nameSetters.put(ConnectionStatus.class, s("connections",
-                    (o, name) -> ((ConnectionStatus) o).setName(name)));
+                    (o, n) -> ((ConnectionStatus) o).setName(n)));
         }
 
         private ProcessGroupStatus rootPgStatus;
@@ -250,19 +223,25 @@ public class ITNiFiFlowAnalyzer {
 
         @Override
         public void startDocument() throws SAXException {
+        }
 
+        private void setConnectionNames(ProcessGroupStatus pg) {
+            pg.getConnectionStatus().forEach(c -> setConnectionName(c));
+            pg.getProcessGroupStatus().forEach(child -> setConnectionNames(child));
+        }
+
+        private void setConnectionName(ConnectionStatus c) {
+            if (c.getSourceName() == null || c.getSourceName().isEmpty()) {
+                c.setSourceName(componentNames.get(c.getSourceId()));
+            }
+            if (c.getDestinationName() == null || c.getDestinationName().isEmpty()) {
+                c.setDestinationName(componentNames.get(c.getDestinationId()));
+            }
         }
 
         @Override
         public void endDocument() throws SAXException {
-            rootPgStatus.getConnectionStatus().forEach(c -> {
-                if (c.getSourceName() == null || c.getSourceName().isEmpty()) {
-                    c.setSourceName(componentNames.get(c.getSourceId()));
-                }
-                if (c.getDestinationName() == null || c.getDestinationName().isEmpty()) {
-                    c.setDestinationName(componentNames.get(c.getDestinationId()));
-                }
-            });
+            setConnectionNames(rootPgStatus);
             System.out.println("rootPgStatus=" + rootPgStatus);
         }
 
@@ -289,9 +268,6 @@ public class ITNiFiFlowAnalyzer {
                     parentPgStatus = pgStatus;
                     pgStatus = new ProcessGroupStatus();
                     current = pgStatus;
-                    if (rootPgStatus == null) {
-                        rootPgStatus = pgStatus;
-                    }
                     if (parentPgStatus != null) {
                         parentPgStatus.getProcessGroupStatus().add(pgStatus);
                     }
@@ -511,8 +487,8 @@ public class ITNiFiFlowAnalyzer {
     public void testSingleFlowPath() throws Exception {
         final ProcessGroupStatus rootPgStatus = loadTemplate("SingleFlowPath");
         final ProvenanceRecords prs = new ProvenanceRecords();
-        prs.add(pr("2e9a2852-228f-379b-0000-000000000000", "ConsumeKafka_0_11", RECEIVE, "PLAINTEXT://0.kafka.example.com:6667/nifi-test"));
-        prs.add(pr("5a56149a-d82a-3242-0000-000000000000", "PublishKafka_0_11", SEND, "PLAINTEXT://0.kafka.example.com:6667/nifi-test"));
+        prs.add(pr("2e9a2852-228f-379b-0000-000000000000", "ConsumeKafka_0_11", RECEIVE, "PLAINTEXT://0.kafka.example.com:6667/topic-a"));
+        prs.add(pr("5a56149a-d82a-3242-0000-000000000000", "PublishKafka_0_11", SEND, "PLAINTEXT://0.kafka.example.com:6667/topic-b"));
         test(rootPgStatus, prs);
     }
 
@@ -547,21 +523,24 @@ public class ITNiFiFlowAnalyzer {
         return lineage;
     }
 
+    /**
+     * A client NiFi sends FlowFiles to a remote NiFi.
+     */
     @Test
     public void testS2SSend() throws Exception {
-        final ProcessGroupStatus rootPgStatus = loadTemplate();
+        final ProcessGroupStatus rootPgStatus = loadTemplate("S2SSend");
         final ProvenanceRecords prs = new ProvenanceRecords();
         prs.add(pr("ca71e4d9-2a4f-3970-0000-000000000000", "Generate A", CREATE));
         prs.add(pr("c439cdca-e989-3491-0000-000000000000", "Generate C", CREATE));
         prs.add(pr("b775b657-5a5b-3708-0000-000000000000", "GetTwitter", CREATE));
 
-        prs.add((pr("015f101e-dcd7-17bd-8899-1a723733521a", "Remote Input Port", SEND,
+        prs.add((pr("77919f59-533e-35a3-0000-000000000000", "Remote Input Port", SEND,
                 "http://nifi.example.com:8080/nifi-api/data-transfer/input-ports" +
-                        "/015f101e-dcd7-17bd-8899-1a723733521a/transactions/tx-1/flow-files")));
+                        "/77919f59-533e-35a3-0000-000000000000/transactions/tx-1/flow-files")));
 
-        prs.add((pr("015f101e-dcd7-17bd-8899-1a723733521a", "Remote Input Port", SEND,
+        prs.add((pr("77919f59-533e-35a3-0000-000000000000", "Remote Input Port", SEND,
                 "http://nifi.example.com:8080/nifi-api/data-transfer/input-ports" +
-                        "/015f101e-dcd7-17bd-8899-1a723733521a/transactions/tx-2/flow-files")));
+                        "/77919f59-533e-35a3-0000-000000000000/transactions/tx-2/flow-files")));
 
         Map<Long, ComputeLineageResult> lineages = new HashMap<>();
         // Generate C created a FlowFile, then it's sent via S2S
@@ -572,15 +551,52 @@ public class ITNiFiFlowAnalyzer {
         test(rootPgStatus, prs, lineages);
     }
 
+    /**
+     * A client NiFi gets FlowFiles from a remote NiFi.
+     */
     @Test
     public void testS2SGet() throws Exception {
-        final ProcessGroupStatus rootPgStatus = loadTemplate();
+        final ProcessGroupStatus rootPgStatus = loadTemplate("S2SGet");
         final ProvenanceRecords prs = new ProvenanceRecords();
-        prs.add(pr("015f1040-dcd7-17bd-5c1f-e31afe0a09a4", "Remote Output Port", RECEIVE,
+        prs.add(pr("392e7343-3950-329b-0000-000000000000", "Remote Output Port", RECEIVE,
                 "http://nifi.example.com:8080/nifi-api/data-transfer/input-ports" +
-                        "/015f101e-dcd7-17bd-8899-1a723733521a/transactions/tx-1/flow-files"));
+                        "/392e7343-3950-329b-0000-000000000000/transactions/tx-1/flow-files"));
 
         test(rootPgStatus, prs);
+    }
+
+    /**
+     * A remote NiFi transfers FlowFiles to remote client NiFis.
+     * This NiFi instance owns RootProcessGroup output port.
+     */
+    @Test
+    public void testS2STransfer() throws Exception {
+        final ProcessGroupStatus rootPgStatus = loadTemplate("S2STransfer");
+        final ProvenanceRecords prs = new ProvenanceRecords();
+        test(rootPgStatus, prs);
+    }
+
+    /**
+     * A remote NiFi receives FlowFiles from remote client NiFis.
+     * This NiFi instance owns RootProcessGroup input port.
+     */
+    @Test
+    public void testS2SReceive() throws Exception {
+        final ProcessGroupStatus rootPgStatus = loadTemplate("S2SReceive");
+        final ProvenanceRecords prs = new ProvenanceRecords();
+        test(rootPgStatus, prs);
+    }
+
+    @Test
+    public void testS2SReceiveAndSendCombination() throws Exception {
+        testS2SReceive();
+        testS2SSend();
+    }
+
+    @Test
+    public void testS2STransferAndGetCombination() throws Exception {
+        testS2STransfer();
+        testS2SGet();
     }
 
 }

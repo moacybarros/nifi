@@ -66,23 +66,27 @@ public class AtlasAPIV2ServerEmulator {
                 HookNotification.EntityCreateRequest em = (HookNotification.EntityCreateRequest) m;
                 for (Referenceable ref : em.getEntities()) {
                     final AtlasEntity entity = toEntity(ref);
-                    atlasEntities.put(toEntityKey(entity), entity);
+                    updateEntityByNotification(entity);
                 }
             } else if (m instanceof HookNotification.EntityPartialUpdateRequest) {
                 HookNotification.EntityPartialUpdateRequest em
                         = (HookNotification.EntityPartialUpdateRequest) m;
                 final AtlasEntity entity = toEntity(em.getEntity());
-                final String key = toEntityKey(entity);
-                final AtlasEntity exEntity = atlasEntities.get(key);
-
-                if (exEntity != null) {
-                    convertReferenceableToObjectId(entity.getAttributes())
-                            .forEach((k, v) -> exEntity.setAttribute(k, v));
-                } else {
-                    atlasEntities.put(key, entity);
-                }
+                updateEntityByNotification(entity);
             }
         });
+    }
+
+    private void updateEntityByNotification(AtlasEntity entity) {
+        final String key = toEntityKey(entity);
+        final AtlasEntity exEntity = atlasEntities.get(key);
+
+        if (exEntity != null) {
+            convertReferenceableToObjectId(entity.getAttributes())
+                    .forEach((k, v) -> exEntity.setAttribute(k, v));
+        } else {
+            atlasEntities.put(key, entity);
+        }
     }
 
     private void createServer() throws Exception {
@@ -255,60 +259,25 @@ public class AtlasAPIV2ServerEmulator {
 
     public static class LineageServlet extends HttpServlet {
 
-        public static class Link {
-            private int source;
-            private int target;
-            private double value;
-
-            public Link(int source, int target) {
-                this.source = source;
-                this.target = target;
-            }
-
-            public int getSource() {
-                return source;
-            }
-
-            public void setSource(int source) {
-                this.source = source;
-            }
-
-            public int getTarget() {
-                return target;
-            }
-
-            public void setTarget(int target) {
-                this.target = target;
-            }
-
-            public double getValue() {
-                return value;
-            }
-
-            public void setValue(double value) {
-                this.value = value;
-            }
-        }
-
-        private Map<String, String> toNode(AtlasEntity entity) {
-            Map<String, String> node = new HashMap<>();
-            node.put("name", entity.getAttribute(NiFiTypes.ATTR_NAME).toString());
-            node.put("type", entity.getTypeName());
+        private Lineage.Node toNode(AtlasEntity entity) {
+            Lineage.Node node = new Lineage.Node();
+            node.setName(entity.getAttribute(NiFiTypes.ATTR_NAME).toString());
+            node.setType(entity.getTypeName());
             return node;
         }
 
-        private Link toLink(AtlasEntity s, AtlasEntity t, Map<String, Integer> nodeIndices) {
+        private Lineage.Link toLink(AtlasEntity s, AtlasEntity t, Map<String, Integer> nodeIndices) {
             final Integer sid = nodeIndices.get(toEntityKey(s));
             final Integer tid = nodeIndices.get(toEntityKey(t));
 
-            return new Link(sid, tid);
+            return new Lineage.Link(sid, tid);
         }
 
         private String toLinkKey(Integer s, Integer t) {
             return s + "::" + t;
         }
 
-        private void traverse(Set<AtlasEntity> seen, AtlasEntity s, List<Link> links, Map<String, Integer> nodeIndices, Map<String, List<AtlasEntity>> outgoingEntities) {
+        private void traverse(Set<AtlasEntity> seen, AtlasEntity s, List<Lineage.Link> links, Map<String, Integer> nodeIndices, Map<String, List<AtlasEntity>> outgoingEntities) {
 
             // To avoid cyclic links.
             if (seen.contains(s)) {
@@ -359,8 +328,8 @@ public class AtlasAPIV2ServerEmulator {
         @Override
         protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
             final Map<String, Object> result = new HashMap<>();
-            final List<Map<String, String>> nodes = new ArrayList<>();
-            final List<Link> links = new ArrayList<>();
+            final List<Lineage.Node> nodes = new ArrayList<>();
+            final List<Lineage.Link> links = new ArrayList<>();
             final Map<String, Integer> nodeIndices = new HashMap<>();
             // DataSet to outgoing Processes.
             final Map<String, List<AtlasEntity>> outgoingEntities = new HashMap<>();
@@ -395,7 +364,8 @@ public class AtlasAPIV2ServerEmulator {
 
             // Add nifi_flow
             if (entities.containsKey(NiFiTypes.TYPE_NIFI_FLOW)) {
-                AtlasEntity nifiFlow = entities.get(NiFiTypes.TYPE_NIFI_FLOW).get(0);
+                final Map<String, AtlasEntity> nifiFlows = entities.get(NiFiTypes.TYPE_NIFI_FLOW)
+                        .stream().collect(Collectors.toMap(n -> (String) n.getAttribute("qualifiedName"), n -> n));
 
                 if (entities.containsKey(NiFiTypes.TYPE_NIFI_FLOW_PATH)) {
 
@@ -416,9 +386,21 @@ public class AtlasAPIV2ServerEmulator {
                         heads.addAll(inputPorts);
                     }
 
-                    // Search recursively
                     heads.forEach(s -> {
-                        links.add(toLink(nifiFlow, s, nodeIndices));
+
+                        // Link it to parent NiFi Flow.
+                        final Object nifiFlowRef = s.getAttribute("nifiFlow");
+                        if (nifiFlowRef != null) {
+                            Map<String, Object> uniqueAttrs = (Map<String, Object>)((Map<String, Object>) nifiFlowRef).get("uniqueAttributes");
+                            String qname = (String) uniqueAttrs.get("qualifiedName");
+
+                            final AtlasEntity nifiFlow = nifiFlows.get(qname);
+                            if (nifiFlow != null) {
+                                links.add(toLink(nifiFlow, s, nodeIndices));
+                            }
+                        }
+
+                        // Traverse recursively
                         traverse(seen, s, links, nodeIndices, outgoingEntities);
                     });
 
@@ -426,10 +408,10 @@ public class AtlasAPIV2ServerEmulator {
                 }
             }
 
-            final List<Link> uniqueLinks = new ArrayList<>();
+            final List<Lineage.Link> uniqueLinks = new ArrayList<>();
             final Set linkKeys = new HashSet<>();
-            for (Link link : links) {
-                final String linkKey = toLinkKey(link.source, link.target);
+            for (Lineage.Link link : links) {
+                final String linkKey = toLinkKey(link.getSource(), link.getTarget());
                 if (!linkKeys.contains(linkKey)) {
                     uniqueLinks.add(link);
                     linkKeys.add(linkKey);
@@ -438,8 +420,8 @@ public class AtlasAPIV2ServerEmulator {
 
             // Group links by its target, and configure each weight value.
             // E.g. 1 -> 3 and 2 -> 3, then 1 (0.5) -> 3 and 2 (0.5) -> 3.
-            uniqueLinks.stream().collect(Collectors.groupingBy(l -> l.target))
-                    .forEach((t, ls) -> ls.forEach(l -> l.value = 1 / (double) ls.size()));
+            uniqueLinks.stream().collect(Collectors.groupingBy(l -> l.getTarget()))
+                    .forEach((t, ls) -> ls.forEach(l -> l.setValue(1 / (double) ls.size())));
 
             result.put("links", uniqueLinks);
 
