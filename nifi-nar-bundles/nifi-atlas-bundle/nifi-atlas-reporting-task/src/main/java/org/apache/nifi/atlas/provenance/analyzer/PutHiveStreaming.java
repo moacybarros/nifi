@@ -23,7 +23,7 @@ public class PutHiveStreaming extends AbstractHiveAnalyzer {
     public DataSetRefs analyze(AnalysisContext context, ProvenanceEventRecord event) {
 
         final URI uri = parseUri(event.getTransitUri());
-        final String clusterName = context.getClusterResolver().fromHostname(uri.getHost());
+        final String clusterName = context.getClusterResolver().fromHostNames(uri.getHost());
         final Set<Tuple<String, String>> outputTables = parseTableNames(null, event.getAttribute(ATTR_OUTPUT_TABLES));
         if (outputTables.isEmpty()) {
             return null;

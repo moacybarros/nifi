@@ -26,7 +26,7 @@ public class HDFSPath extends AbstractNiFiProvenanceEventAnalyzer {
     public DataSetRefs analyze(AnalysisContext context, ProvenanceEventRecord event) {
         final Referenceable ref = new Referenceable(TYPE);
         final URI uri = parseUri(event.getTransitUri());
-        final String clusterName = context.getClusterResolver().fromHostname(uri.getHost());
+        final String clusterName = context.getClusterResolver().fromHostNames(uri.getHost());
         final String path = uri.getPath();
         ref.set(ATTR_NAME, path);
         ref.set(ATTR_PATH, path);

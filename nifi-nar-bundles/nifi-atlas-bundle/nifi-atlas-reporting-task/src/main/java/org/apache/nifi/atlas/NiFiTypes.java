@@ -53,7 +53,6 @@ public class NiFiTypes {
     public static final String ATTR_QUEUES = "queues";
     public static final String ATTR_INPUT_PORTS = "inputPorts";
     public static final String ATTR_OUTPUT_PORTS = "outputPorts";
-    public static final String ATTR_CREATED_BY_NIFI_FLOW = "createdByNiFiFlow";
     public static final String ATTR_INCOMING_FLOW_PATHS = "incomingFlowPaths";
     public static final String ATTR_OUTGOING_FLOW_PATHS = "outgoingFlowPaths";
 
@@ -91,19 +90,11 @@ public class NiFiTypes {
         outputPorts.setIsOptional(true);
         outputPorts.addConstraint(ownedRef);
 
-        // TODO: We no longer need this.
-        // This contains duplicated entries with 'outputs' but it's important to put those here, too.
-        // In order to delete when nifi_flow is deleted.
-        final AtlasAttributeDef generatedData = new AtlasAttributeDef(ATTR_CREATED_BY_NIFI_FLOW, arrayOf(TYPE_NIFI_DATA));
-        generatedData.setIsOptional(true);
-        generatedData.addConstraint(ownedRef);
-
         attributes.add(url);
         attributes.add(flowPaths);
         attributes.add(queues);
         attributes.add(inputPorts);
         attributes.add(outputPorts);
-        attributes.add(generatedData);
     };
 
     private static EntityDefinition NIFI_COMPONENT = (entity, superTypes, attributes) -> {

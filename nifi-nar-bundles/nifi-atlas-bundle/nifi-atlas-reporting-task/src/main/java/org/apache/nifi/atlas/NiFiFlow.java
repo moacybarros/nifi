@@ -165,21 +165,25 @@ public class NiFiFlow {
         return queues;
     }
 
-    public Map<AtlasObjectId, AtlasEntity> getCreatedData() {
-        return createdData;
-    }
-
     public List<NiFiFlowPath> getFlowPaths() {
         return flowPaths;
     }
 
-    public NiFiFlowPath findPath(String processorGuid) {
+    public NiFiFlowPath findPath(String componentId) {
+        return findPath(componentId, false);
+    }
+
+    /**
+     * Find a flow_path that contains specified compoentId.
+     * If any flow_path was not found, and is referable from root path, then return the root path.
+     */
+    public NiFiFlowPath findPath(String componentId, boolean referableFromRootPath) {
         for (NiFiFlowPath path: flowPaths) {
-            if (path.getProcessorIds().contains(processorGuid)){
+            if (path.getProcessorIds().contains(componentId)){
                 return path;
             }
         }
-        return null;
+        return referableFromRootPath ? flowPaths.get(0) : null;
     }
 
     public boolean isProcessor(String componentId) {

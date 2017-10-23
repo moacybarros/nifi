@@ -69,8 +69,6 @@ public class NiFiProvenanceEventAnalyzerFactory {
             }
         }
 
-        // TODO: implement a simple limited size cache mechanism here? If performance becomes a problem.
-
         for (Map.Entry<Pattern, NiFiProvenanceEventAnalyzer> entry : analyzersForComponentType.entrySet()) {
             if (entry.getKey().matcher(typeName).matches()) {
                 return entry.getValue();

@@ -24,11 +24,11 @@ public interface ClusterResolver {
     void configure(PropertyContext context);
 
     /**
-     * Resolve a cluster name from a hostname or an ip address.
-     * @param hostname hostname or ip address
+     * Resolve a cluster name from a list of host names or an ip addresses.
+     * @param hostNames hostname or ip address
      * @return resolved cluster name or null
      */
-    default String fromHostname(String hostname) {
+    default String fromHostNames(String ... hostNames) {
         return null;
     }
 

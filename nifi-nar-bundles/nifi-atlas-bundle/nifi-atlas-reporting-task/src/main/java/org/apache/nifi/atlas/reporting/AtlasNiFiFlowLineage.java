@@ -96,8 +96,7 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
     static final PropertyDescriptor ATLAS_URLS = new PropertyDescriptor.Builder()
             .name("atlas-urls")
             .displayName("Atlas URLs")
-            // TODO: Update doc to describe multiple URLs are for HA.
-            .description("Comma separated URLs of the Atlas Server (e.g. http://atlas-server-hostname:21000).")
+            .description("Comma separated URL of Atlas Servers (e.g. http://atlas-server-hostname:21000).")
             .required(true)
             .expressionLanguageSupported(true)
             .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
@@ -142,6 +141,17 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             .addValidator(StandardValidators.URL_VALIDATOR)
             .build();
 
+    public static final PropertyDescriptor ATLAS_DEFAULT_CLUSTER_NAME = new PropertyDescriptor.Builder()
+            .name("atlas-default-cluster-name")
+            .displayName("Atlas Default Cluster Name")
+            .description("Cluster name for Atlas entities reported by this ReportingTask." +
+                    " Cluster name mappings can be configured by user defined properties." +
+                    " See additional detail for detail.")
+            .required(false)
+            .expressionLanguageSupported(true)
+            .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
+            .build();
+
     private static final String ATLAS_PROPERTIES_FILENAME = "atlas-application.properties";
     private final ServiceLoader<ClusterResolver> clusterResolverLoader = ServiceLoader.load(ClusterResolver.class);
     private volatile NiFiAtlasClient atlasClient;
@@ -160,6 +170,7 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         properties.add(ATLAS_PASSWORD);
         properties.add(ATLAS_CONF_DIR);
         properties.add(ATLAS_NIFI_URL);
+        properties.add(ATLAS_DEFAULT_CLUSTER_NAME);
         properties.add(PROVENANCE_START_POSITION);
         properties.add(PROVENANCE_BATCH_SIZE);
         return properties;
@@ -209,6 +220,19 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         // initAtlasClient has to be done first as it loads AtlasProperty.
         initAtlasClient(context);
         initProvenanceConsumer(context);
+        initClusterResolvers(context);
+
+        nifiAtlasHook = new NiFIAtlasHook();
+    }
+
+    private void initClusterResolvers(ConfigurationContext context) {
+        final Set<ClusterResolver> loadedClusterResolvers = new LinkedHashSet<>();
+        clusterResolverLoader.forEach(resolver -> {
+            resolver.configure(context);
+            loadedClusterResolvers.add(resolver);
+        });
+        final String defaultClusterName = context.getProperty(ATLAS_DEFAULT_CLUSTER_NAME).evaluateAttributeExpressions().getValue();
+        clusterResolvers = new ClusterResolvers(Collections.unmodifiableSet(loadedClusterResolvers), defaultClusterName);
     }
 
 
@@ -257,15 +281,6 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         consumer.addTargetEventType(CREATE, FETCH, RECEIVE, SEND);
         consumer.setLogger(getLogger());
         consumer.setScheduled(true);
-
-        final Set<ClusterResolver> loadedClusterResolvers = new LinkedHashSet<>();
-        clusterResolverLoader.forEach(resolver -> {
-            resolver.configure(context);
-            loadedClusterResolvers.add(resolver);
-        });
-        clusterResolvers = new ClusterResolvers(Collections.unmodifiableSet(loadedClusterResolvers), null);
-
-        nifiAtlasHook = new NiFIAtlasHook();
     }
 
     @OnUnscheduled
@@ -328,8 +343,7 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             }
         }
 
-        // TODO: Is this going to be an issue? Does Atlas notification has retry mechanism designed for this situation??
-        // There is a race condition between the primary node and other nodes.
+        // NOTE: There is a race condition between the primary node and other nodes.
         // If a node notifies an event related to a NiFi component which is not yet created by NiFi primary node,
         // then the notification message will fail due to having a reference to a non-existing entity.
         consumeNiFiProvenanceEvents(context, niFiFlow);
@@ -339,7 +353,7 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
     private void consumeNiFiProvenanceEvents(ReportingContext context, NiFiFlow nifiFlow) {
         final EventAccess eventAccess = context.getEventAccess();
         final AnalysisContext analysisContext = new StandardAnalysisContext(nifiFlow, clusterResolvers,
-                // FIXME: Class cast shouldn't be necessary to query lineage.
+                // FIXME: This class cast shouldn't be necessary to query lineage. Possible refactor target in next major update.
                 (ProvenanceRepository)eventAccess.getProvenanceRepository());
         consumer.consumeEvents(eventAccess, context.getStateManager(), events -> {
             for (ProvenanceEventRecord event : events) {
@@ -356,10 +370,9 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
                         continue;
                     }
 
-                    // TODO: need special logic for remote ports as it may be connected to multiple flow paths.
                     final Set<NiFiFlowPath> flowPaths = refs.getComponentIds().stream()
                             .map(componentId -> {
-                                final NiFiFlowPath flowPath = nifiFlow.findPath(componentId);
+                                final NiFiFlowPath flowPath = nifiFlow.findPath(componentId, refs.isReferableFromRootPath());
                                 if (flowPath == null) {
                                     getLogger().warn("FlowPath for {} was not found.", new Object[]{event.getComponentId()});
                                 }
@@ -369,13 +382,12 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
                             .collect(Collectors.toSet());
 
                     // create reference to NiFi flow path.
-                    for (NiFiFlowPath flowPath : flowPaths) {
-                        // TODO: make the reference to NiFiFlow optional?
-                        final Referenceable flowRef = new Referenceable(TYPE_NIFI_FLOW);
-                        flowRef.set(ATTR_NAME, nifiFlow.getFlowName());
-                        flowRef.set(ATTR_QUALIFIED_NAME, nifiFlow.getId().getUniqueAttributes().get(ATTR_QUALIFIED_NAME));
-                        flowRef.set(ATTR_URL, nifiFlow.getUrl());
+                    final Referenceable flowRef = new Referenceable(TYPE_NIFI_FLOW);
+                    flowRef.set(ATTR_NAME, nifiFlow.getFlowName());
+                    flowRef.set(ATTR_QUALIFIED_NAME, nifiFlow.getId().getUniqueAttributes().get(ATTR_QUALIFIED_NAME));
+                    flowRef.set(ATTR_URL, nifiFlow.getUrl());
 
+                    for (NiFiFlowPath flowPath : flowPaths) {
                         final Referenceable flowPathRef = new Referenceable(TYPE_NIFI_FLOW_PATH);
                         flowPathRef.set(ATTR_NAME, flowPath.getName());
                         flowPathRef.set(ATTR_QUALIFIED_NAME, flowPath.getId());

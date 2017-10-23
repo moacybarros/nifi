@@ -7,6 +7,7 @@ import org.apache.nifi.provenance.ProvenanceEventType;
 
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.Arrays;
 import java.util.Collections;
 
 public abstract class AbstractNiFiProvenanceEventAnalyzer implements NiFiProvenanceEventAnalyzer {
@@ -42,6 +43,15 @@ public abstract class AbstractNiFiProvenanceEventAnalyzer implements NiFiProvena
         }
 
         return refs;
+    }
+
+    /**
+     * Utility method to split comma separated host names. Port number will be removed.
+     */
+    protected String[] splitHostNames(String hostNames) {
+        return Arrays.stream(hostNames.split(","))
+                .map(hostName -> hostName.split(":")[0].trim())
+                .toArray(String[]::new);
     }
 
 }

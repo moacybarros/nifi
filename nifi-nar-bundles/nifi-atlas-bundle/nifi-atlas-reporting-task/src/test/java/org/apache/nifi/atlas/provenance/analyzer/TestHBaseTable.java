@@ -18,8 +18,6 @@ package org.apache.nifi.atlas.provenance.analyzer;
 
 import org.apache.atlas.typesystem.Referenceable;
 import org.apache.nifi.atlas.provenance.AnalysisContext;
-import org.apache.nifi.atlas.provenance.StandardAnalysisContext;
-import org.apache.nifi.atlas.resolver.ClusterResolver;
 import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzer;
 import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzerFactory;
@@ -33,6 +31,8 @@ import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.mockito.Matchers.any;
+import static org.mockito.Matchers.anyString;
 import static org.mockito.Matchers.matches;
 import static org.mockito.Mockito.when;
 
@@ -48,7 +48,7 @@ public class TestHBaseTable {
         when(record.getEventType()).thenReturn(ProvenanceEventType.FETCH);
 
         final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
-        when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
+        when(clusterResolvers.fromHostNames(matches(".+\\.example\\.com"))).thenReturn("cluster1");
 
         final AnalysisContext context = Mockito.mock(AnalysisContext.class);
         when(context.getClusterResolver()).thenReturn(clusterResolvers);
@@ -75,7 +75,10 @@ public class TestHBaseTable {
         when(record.getEventType()).thenReturn(ProvenanceEventType.FETCH);
 
         final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
-        when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
+        when(clusterResolvers.fromHostNames(
+                matches("zk0.example.com"),
+                matches("zk2.example.com"),
+                matches("zk3.example.com"))).thenReturn("cluster1");
 
         final AnalysisContext context = Mockito.mock(AnalysisContext.class);
         when(context.getClusterResolver()).thenReturn(clusterResolvers);

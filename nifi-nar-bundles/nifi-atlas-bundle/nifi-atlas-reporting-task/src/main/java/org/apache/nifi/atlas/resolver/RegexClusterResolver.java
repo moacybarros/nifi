@@ -104,13 +104,13 @@ public class RegexClusterResolver implements ClusterResolver {
     }
 
     @Override
-    public String fromHostname(String _hostname) {
-        // Avoid NullPointerException when matching.
-        final String hostname = _hostname == null ? "" : _hostname;
+    public String fromHostNames(String ... hostNames) {
         for (Map.Entry<String, Set<Pattern>> entry : clusterNamePatterns.entrySet()) {
             for (Pattern pattern : entry.getValue()) {
-                if (pattern.matcher(hostname).matches()) {
-                    return entry.getKey();
+                for (String hostname : hostNames) {
+                    if (pattern.matcher(hostname).matches()) {
+                        return entry.getKey();
+                    }
                 }
             }
         }

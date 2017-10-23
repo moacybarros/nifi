@@ -16,7 +16,6 @@
  */
 package org.apache.nifi.atlas.reporting;
 
-import com.fasterxml.jackson.databind.ObjectReader;
 import org.apache.nifi.atlas.NiFiAtlasClient;
 import org.apache.nifi.atlas.emulator.AtlasAPIV2ServerEmulator;
 import org.apache.nifi.atlas.emulator.Lineage;
@@ -61,7 +60,6 @@ import javax.xml.parsers.SAXParserFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
-import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -85,9 +83,9 @@ import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-public class ITNiFiFlowAnalyzer {
+public class ITAtlasNiFiFlowLineage {
 
-    private static final Logger logger = LoggerFactory.getLogger(ITNiFiFlowAnalyzer.class);
+    private static final Logger logger = LoggerFactory.getLogger(ITAtlasNiFiFlowLineage.class);
 
     private NiFiAtlasClient atlasClient;
 
@@ -99,18 +97,10 @@ public class ITNiFiFlowAnalyzer {
         atlasClient.initialize(new String[]{"http://atlas.example.com:21000/"}, "admin", "admin", null);
 
         final Properties atlasProperties = new Properties();
-        try (InputStream in = ITNiFiFlowAnalyzer.class.getResourceAsStream("/atlas-application.properties")) {
+        try (InputStream in = ITAtlasNiFiFlowLineage.class.getResourceAsStream("/atlas-application.properties")) {
             atlasProperties.load(in);
         }
 
-    }
-
-    /**
-     * Load template file using the test method name.
-     */
-    private ProcessGroupStatus loadTemplate() {
-        final StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
-        return loadTemplate(stackTrace[2].getMethodName().substring(4));
     }
 
     private ProcessGroupStatus loadTemplate(String name) {
@@ -130,7 +120,7 @@ public class ITNiFiFlowAnalyzer {
             throw new RuntimeException("Failed to create a XML reader", e);
         }
 
-        final String template = ITNiFiFlowAnalyzer.class.getResource("/flow-templates/" + name + ".xml").getPath();
+        final String template = ITAtlasNiFiFlowLineage.class.getResource("/flow-templates/" + name + ".xml").getPath();
         final TemplateContentHander handler = new TemplateContentHander(name);
         xmlReader.setContentHandler(handler);
         try {
@@ -445,7 +435,7 @@ public class ITNiFiFlowAnalyzer {
     private boolean useEmbeddedEmulator;
     private AtlasAPIV2ServerEmulator atlasAPIServer;
 
-    public ITNiFiFlowAnalyzer() {
+    public ITAtlasNiFiFlowLineage() {
         useEmbeddedEmulator = Boolean.valueOf(System.getenv("useEmbeddedEmulator"));
         if (useEmbeddedEmulator) {
             atlasAPIServer = new AtlasAPIV2ServerEmulator();
@@ -775,4 +765,42 @@ public class ITNiFiFlowAnalyzer {
 
     }
 
+    /**
+     * A client NiFi gets FlowFiles from a remote output port and sends it to a remote input port without doing anything.
+     */
+    @Test
+    public void testS2SDirect() throws Exception {
+        final ProcessGroupStatus rootPgStatus = loadTemplate("S2SDirect");
+        final ProvenanceRecords prs = new ProvenanceRecords();
+
+        prs.add(pr("015f1040-dcd7-17bd-5c1f-e31afe0a09a4", "Remote Output Port", RECEIVE,
+                "http://nifi.example.com:8080/nifi-api/data-transfer/input-ports" +
+                        "/015f1040-dcd7-17bd-5c1f-e31afe0a09a4/transactions/tx-1/flow-files"));
+
+        prs.add((pr("015f101e-dcd7-17bd-8899-1a723733521a", "Remote Input Port", SEND,
+                "http://nifi.example.com:8080/nifi-api/data-transfer/input-ports" +
+                        "/015f101e-dcd7-17bd-8899-1a723733521a/transactions/tx-2/flow-files")));
+
+        // This provenance should not reported (by being linked to root flow_path).
+        prs.add((pr("00000000-0000-0000-0000-000000000000", "Unknown", CREATE)));
+
+        Map<Long, ComputeLineageResult> lineages = new HashMap<>();
+        // Received from remote output port, then sent it via remote input port
+        lineages.put(1L, createLineage(prs, 0, 1));
+        test(rootPgStatus, prs, lineages);
+
+        waitNotificationsGetDelivered();
+
+        final Lineage lineage = getLineage();
+
+        final Node flow = lineage.findNode("nifi_flow", "S2SDirect", "S2SDirect");
+        final Node remoteOutputPort = lineage.findNode("nifi_output_port", "output", "015f1040-dcd7-17bd-5c1f-e31afe0a09a4");
+        final Node remoteInputPort = lineage.findNode("nifi_input_port", "input", "015f101e-dcd7-17bd-8899-1a723733521a");
+        final Node pathRoot = lineage.findNode("nifi_flow_path", "root", "S2SDirect");
+
+        // Even if there is no Processor, lineage can be reported using root flow_path.
+        lineage.assertLink(flow, pathRoot);
+        lineage.assertLink(remoteOutputPort, pathRoot);
+        lineage.assertLink(pathRoot, remoteInputPort);
+    }
 }

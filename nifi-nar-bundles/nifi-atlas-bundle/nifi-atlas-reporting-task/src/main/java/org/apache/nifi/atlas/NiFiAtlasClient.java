@@ -44,7 +44,6 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_CREATED_BY_NIFI_FLOW;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_DESCRIPTION;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_FLOW_PATHS;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_INCOMING_FLOW_PATHS;
@@ -204,10 +203,9 @@ public class NiFiAtlasClient {
         final Map<AtlasObjectId, AtlasEntity> inputPorts = nifiFlow.getRootInputPortEntities();
         final Map<AtlasObjectId, AtlasEntity> outputPorts = nifiFlow.getRootOutputPortEntities();
         final Map<AtlasObjectId, AtlasEntity> queues = nifiFlow.getQueues();
-        final Map<AtlasObjectId, AtlasEntity> createdData = nifiFlow.getCreatedData();
 
         // Number of entity objects before adding paths. +1 is the root flow.
-        final int offsetToPaths = 1 + inputPorts.size() + outputPorts.size() + queues.size() + createdData.size();
+        final int offsetToPaths = 1 + inputPorts.size() + outputPorts.size() + queues.size();
         final List<AtlasEntity> entities = new ArrayList<>(offsetToPaths + paths.size());
         final AtlasEntity.AtlasEntitiesWithExtInfo atlasEntities = new AtlasEntity.AtlasEntitiesWithExtInfo(entities);
 
@@ -229,7 +227,6 @@ public class NiFiAtlasClient {
         entities.addAll(inputPorts.values());
         entities.addAll(outputPorts.values());
         entities.addAll(queues.values());
-        entities.addAll(createdData.values());
 
         mutationResponse = atlasClient.createEntities(atlasEntities);
         logger.debug("mutation response={}", mutationResponse);
@@ -246,15 +243,19 @@ public class NiFiAtlasClient {
 
             final StringBuilder name = new StringBuilder();
             final StringBuilder description = new StringBuilder();
-            path.getProcessorIds().forEach(pid -> {
-                final ProcessorStatus processor = nifiFlow.getProcessors().get(pid);
-                if (name.length() > 0) {
-                    name.append(", ");
-                    description.append(", ");
-                }
-                name.append(String.format("%s", processor.getName()));
-                description.append(String.format("%s::%s", processor.getName(), pid));
-            });
+            if (nifiFlow.getRootProcessGroupId().equals(path.getId())) {
+                name.append("root");
+            } else {
+                path.getProcessorIds().forEach(pid -> {
+                    final ProcessorStatus processor = nifiFlow.getProcessors().get(pid);
+                    if (name.length() > 0) {
+                        name.append(", ");
+                        description.append(", ");
+                    }
+                    name.append(processor.getName());
+                    description.append(String.format("%s::%s", processor.getName(), pid));
+                });
+            }
 
             path.setName(name.toString());
             pathEntity.setAttribute(ATTR_NAME, name.toString());
@@ -297,7 +298,6 @@ public class NiFiAtlasClient {
         flowEntity.setAttribute(ATTR_QUEUES, queues.keySet());
         flowEntity.setAttribute(ATTR_INPUT_PORTS, inputPorts.keySet());
         flowEntity.setAttribute(ATTR_OUTPUT_PORTS, outputPorts.keySet());
-        flowEntity.setAttribute(ATTR_CREATED_BY_NIFI_FLOW, createdData.keySet());
 
         // Send updated entities.
         try {

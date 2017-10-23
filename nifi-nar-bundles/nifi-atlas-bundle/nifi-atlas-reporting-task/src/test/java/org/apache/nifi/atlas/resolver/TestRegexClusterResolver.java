@@ -52,7 +52,7 @@ public class TestRegexClusterResolver {
         Assert.assertEquals(0, validationResults.size());
         resolver.configure(context);
 
-        Assert.assertNull(resolver.fromHostname("example.com"));
+        Assert.assertNull(resolver.fromHostNames("example.com"));
     }
 
     @Test
@@ -107,7 +107,7 @@ public class TestRegexClusterResolver {
 
         resolver.configure(context);
 
-        Assert.assertEquals("Cluster1", resolver.fromHostname("host1.example.com"));
+        Assert.assertEquals("Cluster1", resolver.fromHostNames("host1.example.com"));
     }
 
     @Test
@@ -124,10 +124,10 @@ public class TestRegexClusterResolver {
 
         resolver.configure(context);
 
-        Assert.assertEquals("Cluster1", resolver.fromHostname("host1.example.com"));
-        Assert.assertEquals("Cluster1", resolver.fromHostname("192.168.1.10"));
-        Assert.assertEquals("Cluster1", resolver.fromHostname("192.168.1.22"));
-        Assert.assertNull(resolver.fromHostname("192.168.2.30"));
+        Assert.assertEquals("Cluster1", resolver.fromHostNames("host1.example.com"));
+        Assert.assertEquals("Cluster1", resolver.fromHostNames("192.168.1.10"));
+        Assert.assertEquals("Cluster1", resolver.fromHostNames("192.168.1.22"));
+        Assert.assertNull(resolver.fromHostNames("192.168.2.30"));
     }
 
     @Test
@@ -146,13 +146,13 @@ public class TestRegexClusterResolver {
 
         resolver.configure(context);
 
-        Assert.assertEquals("Cluster1", resolver.fromHostname("host1.c1.example.com"));
-        Assert.assertEquals("Cluster1", resolver.fromHostname("192.168.1.10"));
-        Assert.assertEquals("Cluster1", resolver.fromHostname("192.168.1.22"));
-        Assert.assertEquals("Cluster2", resolver.fromHostname("host2.c2.example.com"));
-        Assert.assertEquals("Cluster2", resolver.fromHostname("192.168.2.10"));
-        Assert.assertEquals("Cluster2", resolver.fromHostname("192.168.2.22"));
-        Assert.assertNull(resolver.fromHostname("192.168.3.30"));
+        Assert.assertEquals("Cluster1", resolver.fromHostNames("host1.c1.example.com"));
+        Assert.assertEquals("Cluster1", resolver.fromHostNames("192.168.1.10"));
+        Assert.assertEquals("Cluster1", resolver.fromHostNames("192.168.1.22"));
+        Assert.assertEquals("Cluster2", resolver.fromHostNames("host2.c2.example.com"));
+        Assert.assertEquals("Cluster2", resolver.fromHostNames("192.168.2.10"));
+        Assert.assertEquals("Cluster2", resolver.fromHostNames("192.168.2.22"));
+        Assert.assertNull(resolver.fromHostNames("192.168.3.30"));
     }
 
 }

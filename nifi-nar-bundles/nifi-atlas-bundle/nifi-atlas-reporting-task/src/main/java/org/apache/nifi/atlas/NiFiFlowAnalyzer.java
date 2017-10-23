@@ -253,8 +253,14 @@ public class NiFiFlowAnalyzer {
     }
 
     public void analyzePaths(NiFiFlow nifiFlow) {
+        final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
+
+        // Root path is used to link DataSets those are not connected to actual flow_path,
+        // such as a flow receiving from a Remote Output Port then sending to a Remote Input Port directly.
+        final NiFiFlowPath rootPath = new NiFiFlowPath(nifiFlow.getRootProcessGroupId());
+        paths.add(rootPath);
+
         // Now let's break it into flow paths.
-        // TODO: add tests that confirms various situations, Remote Ports, Funnel, Root Group Ports ... etc.
         final Set<String> headProcessors = nifiFlow.getProcessors().keySet().stream()
                 .filter(pid -> {
                     final List<ConnectionStatus> ins = nifiFlow.getIncomingRelationShips(pid);
@@ -268,7 +274,6 @@ public class NiFiFlowAnalyzer {
             // However, if the first processor is replaced by another,
             // the flow path will have a different id, and the old path is logically deleted.
             final NiFiFlowPath path = new NiFiFlowPath(startPid);
-            final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
             paths.add(path);
             traverse(nifiFlow, paths, path, startPid);
         });

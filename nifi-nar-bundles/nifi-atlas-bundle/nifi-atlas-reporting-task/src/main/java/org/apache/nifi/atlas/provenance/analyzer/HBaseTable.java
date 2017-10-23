@@ -8,7 +8,6 @@ import org.apache.nifi.provenance.ProvenanceEventRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.net.URI;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -38,16 +37,9 @@ public class HBaseTable extends AbstractNiFiProvenanceEventAnalyzer {
         }
 
         final Referenceable ref = new Referenceable(TYPE);
-        String clusterName = null;
-        for (String zkHost : uriMatcher.group(1).split(",")) {
-            final String zkHostName = zkHost.split(":")[0].trim();
-            clusterName = context.getClusterResolver().fromHostname(zkHostName);
-            if (clusterName != null && !clusterName.isEmpty()) {
-                break;
-            }
-        }
+        final String[] hostNames = splitHostNames(uriMatcher.group(1));
+        final String clusterName = context.getClusterResolver().fromHostNames(hostNames);
 
-        // TODO: remove rowId if any.
         final String tableName = uriMatcher.group(2);
         ref.set(ATTR_NAME, tableName);
         ref.set(ATTR_QUALIFIED_NAME, toQualifiedName(clusterName, tableName));

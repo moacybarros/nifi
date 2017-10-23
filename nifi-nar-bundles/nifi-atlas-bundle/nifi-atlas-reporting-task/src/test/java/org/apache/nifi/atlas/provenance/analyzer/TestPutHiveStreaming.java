@@ -27,16 +27,11 @@ import org.apache.nifi.provenance.ProvenanceEventType;
 import org.junit.Test;
 import org.mockito.Mockito;
 
-import java.util.HashMap;
-import java.util.Map;
-
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
-import static org.apache.nifi.atlas.provenance.analyzer.DatabaseAnalyzerUtil.ATTR_INPUT_TABLES;
 import static org.apache.nifi.atlas.provenance.analyzer.DatabaseAnalyzerUtil.ATTR_OUTPUT_TABLES;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
 import static org.mockito.Matchers.matches;
 import static org.mockito.Mockito.when;
 
@@ -53,7 +48,7 @@ public class TestPutHiveStreaming {
         when(record.getAttribute(ATTR_OUTPUT_TABLES)).thenReturn("databaseA.tableA");
 
         final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
-        when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
+        when(clusterResolvers.fromHostNames(matches(".+\\.example\\.com"))).thenReturn("cluster1");
 
         final AnalysisContext context = Mockito.mock(AnalysisContext.class);
         when(context.getClusterResolver()).thenReturn(clusterResolvers);

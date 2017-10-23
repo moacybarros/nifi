@@ -10,6 +10,7 @@ public class DataSetRefs {
     private final Set<String> componentIds;
     private Set<Referenceable> inputs;
     private Set<Referenceable> outputs;
+    private boolean referableFromRootPath;
 
     public DataSetRefs(String componentId) {
         this.componentIds = Collections.singleton(componentId);
@@ -47,5 +48,16 @@ public class DataSetRefs {
 
     public boolean isEmpty() {
         return (inputs == null || inputs.isEmpty()) && (outputs == null || outputs.isEmpty());
+    }
+
+    /**
+     * @return True if target DataSets can be referred from root flow_path.
+     */
+    public boolean isReferableFromRootPath() {
+        return referableFromRootPath;
+    }
+
+    public void setReferableFromRootPath(boolean referableFromRootPath) {
+        this.referableFromRootPath = referableFromRootPath;
     }
 }

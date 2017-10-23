@@ -64,7 +64,7 @@ public class StandardAnalysisContext implements AnalysisContext {
         return null;
     }
 
-    // TODO: Work around. User is required to avoid NullPointerException at PersistentProvenanceRepository.submitLineageComputation
+    // NOTE: This user is required to avoid NullPointerException at PersistentProvenanceRepository.submitLineageComputation
     private static final QueryNiFiUser NIFI_USER = new QueryNiFiUser();
     private static class QueryNiFiUser implements NiFiUser {
         @Override
@@ -102,4 +102,5 @@ public class StandardAnalysisContext implements AnalysisContext {
             return null;
         }
     }
+
 }

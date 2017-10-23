@@ -64,8 +64,9 @@ public class NiFiRemotePort extends AbstractNiFiProvenanceEventAnalyzer {
 
             refs = new DataSetRefs(previousEvent.getComponentId());
             refs.addOutput(ref);
+
         } else {
-            // Ror RemoteOutputPort, it's possible that multiple processors are connected.
+            // For RemoteOutputPort, it's possible that multiple processors are connected.
             // In that case, the received FlowFile is cloned and passed to each connection.
             // So we need to create multiple DataSetRefs.
             final Set<String> connectedComponentIds = connections.stream()
@@ -74,6 +75,7 @@ public class NiFiRemotePort extends AbstractNiFiProvenanceEventAnalyzer {
             refs.addInput(ref);
         }
 
+        refs.setReferableFromRootPath(true);
         return refs;
     }
 
@@ -84,8 +86,7 @@ public class NiFiRemotePort extends AbstractNiFiProvenanceEventAnalyzer {
             return null;
         }
 
-        // TODO: how about remote_output to remote_input direct connection?
-        // If noo previous provenance node found due to expired or other reasons, just log a warning msg and do nothing.
+        // If no previous provenance node found due to expired or other reasons, just log a warning msg and do nothing.
         final LineageNode previousProvenanceNode = traverseLineage(lineage, String.valueOf(event.getEventId()));
         if (previousProvenanceNode == null) {
             logger.warn("Traverse lineage could not find any preceding provenance event node: {}", new Object[]{event});

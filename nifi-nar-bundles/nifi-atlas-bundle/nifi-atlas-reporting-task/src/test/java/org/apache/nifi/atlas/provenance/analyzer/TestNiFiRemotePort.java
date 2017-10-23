@@ -48,6 +48,10 @@ import static org.mockito.Matchers.eq;
 import static org.mockito.Matchers.matches;
 import static org.mockito.Mockito.when;
 
+/**
+ * Tests for RemotePorts.
+ * More complex and detailed tests are available at {@link org.apache.nifi.atlas.reporting.ITAtlasNiFiFlowLineage}.
+ */
 public class TestNiFiRemotePort {
 
     @Test
@@ -68,7 +72,7 @@ public class TestNiFiRemotePort {
         when(createEvent.getEventType()).thenReturn(ProvenanceEventType.CREATE);
 
         final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
-        when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
+        when(clusterResolvers.fromHostNames(matches(".+\\.example\\.com"))).thenReturn("cluster1");
 
         final List<ConnectionStatus> connections = new ArrayList<>();
         final ConnectionStatus connection = new ConnectionStatus();
@@ -125,7 +129,6 @@ public class TestNiFiRemotePort {
 
     @Test
     public void testRemoteOutputPort() {
-        // TODO: add test multiple connections.
         final String componentType = "Remote Output Port";
         final String transitUri = "http://0.example.com:8080/nifi-api/data-transfer/output-ports/port-guid/transactions/tx-guid/flow-files";
         final ProvenanceEventRecord record = Mockito.mock(ProvenanceEventRecord.class);
@@ -135,7 +138,7 @@ public class TestNiFiRemotePort {
         when(record.getEventType()).thenReturn(ProvenanceEventType.RECEIVE);
 
         final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
-        when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
+        when(clusterResolvers.fromHostNames(matches(".+\\.example\\.com"))).thenReturn("cluster1");
 
         final List<ConnectionStatus> connections = new ArrayList<>();
         final ConnectionStatus connection = new ConnectionStatus();

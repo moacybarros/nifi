@@ -51,7 +51,7 @@ public class TestCreateObscureInputDataSet {
         when(record.getEventType()).thenReturn(ProvenanceEventType.CREATE);
 
         final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
-        when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
+        when(clusterResolvers.fromHostNames(matches(".+\\.example\\.com"))).thenReturn("cluster1");
 
         final List<ConnectionStatus> connections = new ArrayList<>();
 
@@ -81,7 +81,7 @@ public class TestCreateObscureInputDataSet {
         when(record.getEventType()).thenReturn(ProvenanceEventType.CREATE);
 
         final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
-        when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
+        when(clusterResolvers.fromHostNames(matches(".+\\.example\\.com"))).thenReturn("cluster1");
 
         final List<ConnectionStatus> connections = new ArrayList<>();
         // The content of connection is not important, just create an empty status.

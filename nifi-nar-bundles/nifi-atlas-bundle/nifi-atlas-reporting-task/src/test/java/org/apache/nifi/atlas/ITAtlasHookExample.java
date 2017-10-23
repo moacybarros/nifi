@@ -127,35 +127,8 @@ public class ITAtlasHookExample extends AtlasHook {
         path5Inputs.add(new Referenceable(path4));
         path5.set(ATTR_INPUTS, path5Inputs);
 
-        //        final AtlasObjectId nifiFlowId = new AtlasObjectId(TYPE_NIFI_FLOW, ATTR_QUALIFIED_NAME, "7c84501d-d10c-407c-b9f3-1d80e38fe36a");
-//        final Referenceable nifiFlowRef = new Referenceable(TYPE_NIFI_FLOW);
-//        nifiFlowRef.set("name", "NiFi Flow");
-//        nifiFlowRef.set("qualifiedName", "7c84501d-d10c-407c-b9f3-1d80e38fe36a");
 
-        // TODO: how can I set nifi_flow reference?? If I use Referenceable, it requires all mandatory attributes.
-        // TODO: If I use AtlasObjectId, serialization error occurs
-        // TODO: If I know its id and version, I can use Id.
-//        ref.set("nifiFlow", nifiFlowRef);
-//        final Id nifiFlowId = new Id("6b62d74f-0650-4dbb-af4f-be460a8621c5", 1, TYPE_NIFI_FLOW);
-//        path1.set("nifiFlow", nifiFlowId);
-//
-//        final Id p1RefId = new Id("689721a6-b1de-491b-90ca-c0f746c4ee21", 1, TYPE_NIFI_FLOW_PATH);
-//        final Id p3RefId = new Id("a46273c4-0211-4202-9c50-5830b54bbe22", 1, TYPE_NIFI_FLOW_PATH);
-//        final Id p5RefId = new Id("7bacf1ca-6220-4b7b-9072-d4b08ffbf5d2", 1, TYPE_NIFI_FLOW_PATH);
-//        final Id queueRefId = new Id("4925bd7e-b656-494a-8ba2-55538f0968e1", 1, TYPE_NIFI_QUEUE);
-//        final ArrayList<Id> inputs = new ArrayList<>();
-//        inputs.add(p1RefId);
-////        inputs.add(p3RefId);
-//        final ArrayList<Id> outputs = new ArrayList<>();
-//        outputs.add(queueRefId);
-//        path1.set("inputs", inputs);
-//        path1.set("outputs", outputs);
-
-
-        final HookNotification.EntityCreateRequest message = new HookNotification.EntityCreateRequest("nifi",
-//                flow, path5, path4, path3, path2, path1);
-//                flow, path1, path2, path3, path4);
-                path2);
+        final HookNotification.EntityCreateRequest message = new HookNotification.EntityCreateRequest("nifi", path2);
         messages.add(message);
         notifyEntities(messages);
     }

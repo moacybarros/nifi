@@ -47,7 +47,7 @@ public class TestHDFSPath {
         when(record.getEventType()).thenReturn(ProvenanceEventType.SEND);
 
         final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
-        when(clusterResolvers.fromHostname(matches(".+\\.example\\.com"))).thenReturn("cluster1");
+        when(clusterResolvers.fromHostNames(matches(".+\\.example\\.com"))).thenReturn("cluster1");
 
         final AnalysisContext context = Mockito.mock(AnalysisContext.class);
         when(context.getClusterResolver()).thenReturn(clusterResolvers);
