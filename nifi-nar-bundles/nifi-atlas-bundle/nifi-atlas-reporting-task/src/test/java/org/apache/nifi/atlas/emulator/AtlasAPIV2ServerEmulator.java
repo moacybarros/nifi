@@ -77,13 +77,21 @@ public class AtlasAPIV2ServerEmulator {
         });
     }
 
+    @SuppressWarnings("unchecked")
     private void updateEntityByNotification(AtlasEntity entity) {
         final String key = toEntityKey(entity);
         final AtlasEntity exEntity = atlasEntities.get(key);
 
         if (exEntity != null) {
-            convertReferenceableToObjectId(entity.getAttributes())
-                    .forEach((k, v) -> exEntity.setAttribute(k, v));
+            convertReferenceableToObjectId(entity.getAttributes()).forEach((k, v) -> {
+                Object r = v;
+                final Object exAttr = exEntity.getAttribute(k);
+                if (exAttr != null && exAttr instanceof Collection) {
+                    ((Collection) exAttr).addAll((Collection) v);
+                    r = exAttr;
+                }
+                exEntity.setAttribute(k, r);
+            });
         } else {
             atlasEntities.put(key, entity);
         }
@@ -259,25 +267,26 @@ public class AtlasAPIV2ServerEmulator {
 
     public static class LineageServlet extends HttpServlet {
 
-        private Lineage.Node toNode(AtlasEntity entity) {
-            Lineage.Node node = new Lineage.Node();
+        private Node toNode(AtlasEntity entity) {
+            Node node = new Node();
             node.setName(entity.getAttribute(NiFiTypes.ATTR_NAME).toString());
+            node.setQualifiedName(entity.getAttribute(NiFiTypes.ATTR_QUALIFIED_NAME).toString());
             node.setType(entity.getTypeName());
             return node;
         }
 
-        private Lineage.Link toLink(AtlasEntity s, AtlasEntity t, Map<String, Integer> nodeIndices) {
+        private Link toLink(AtlasEntity s, AtlasEntity t, Map<String, Integer> nodeIndices) {
             final Integer sid = nodeIndices.get(toEntityKey(s));
             final Integer tid = nodeIndices.get(toEntityKey(t));
 
-            return new Lineage.Link(sid, tid);
+            return new Link(sid, tid);
         }
 
         private String toLinkKey(Integer s, Integer t) {
             return s + "::" + t;
         }
 
-        private void traverse(Set<AtlasEntity> seen, AtlasEntity s, List<Lineage.Link> links, Map<String, Integer> nodeIndices, Map<String, List<AtlasEntity>> outgoingEntities) {
+        private void traverse(Set<AtlasEntity> seen, AtlasEntity s, List<Link> links, Map<String, Integer> nodeIndices, Map<String, List<AtlasEntity>> outgoingEntities) {
 
             // To avoid cyclic links.
             if (seen.contains(s)) {
@@ -327,13 +336,13 @@ public class AtlasAPIV2ServerEmulator {
         @SuppressWarnings("unchecked")
         @Override
         protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
-            final Map<String, Object> result = new HashMap<>();
-            final List<Lineage.Node> nodes = new ArrayList<>();
-            final List<Lineage.Link> links = new ArrayList<>();
+            final Lineage result = new Lineage();
+            final List<Node> nodes = new ArrayList<>();
+            final List<Link> links = new ArrayList<>();
             final Map<String, Integer> nodeIndices = new HashMap<>();
             // DataSet to outgoing Processes.
             final Map<String, List<AtlasEntity>> outgoingEntities = new HashMap<>();
-            result.put("nodes", nodes);
+            result.setNodes(nodes);
 
             // Add all nodes.
             atlasEntities.entrySet().forEach(entry -> {
@@ -408,9 +417,9 @@ public class AtlasAPIV2ServerEmulator {
                 }
             }
 
-            final List<Lineage.Link> uniqueLinks = new ArrayList<>();
+            final List<Link> uniqueLinks = new ArrayList<>();
             final Set linkKeys = new HashSet<>();
-            for (Lineage.Link link : links) {
+            for (Link link : links) {
                 final String linkKey = toLinkKey(link.getSource(), link.getTarget());
                 if (!linkKeys.contains(linkKey)) {
                     uniqueLinks.add(link);
@@ -423,7 +432,7 @@ public class AtlasAPIV2ServerEmulator {
             uniqueLinks.stream().collect(Collectors.groupingBy(l -> l.getTarget()))
                     .forEach((t, ls) -> ls.forEach(l -> l.setValue(1 / (double) ls.size())));
 
-            result.put("links", uniqueLinks);
+            result.setLinks(uniqueLinks);
 
             respondWithJson(resp, result);
         }
