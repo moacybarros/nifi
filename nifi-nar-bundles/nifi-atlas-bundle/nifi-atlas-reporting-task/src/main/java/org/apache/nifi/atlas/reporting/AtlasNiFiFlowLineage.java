@@ -65,14 +65,12 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Date;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.ServiceLoader;
 import java.util.Set;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
@@ -86,6 +84,7 @@ import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW_PATH;
 import static org.apache.nifi.provenance.ProvenanceEventType.CREATE;
 import static org.apache.nifi.provenance.ProvenanceEventType.FETCH;
 import static org.apache.nifi.provenance.ProvenanceEventType.RECEIVE;
+import static org.apache.nifi.provenance.ProvenanceEventType.REMOTE_INVOCATION;
 import static org.apache.nifi.provenance.ProvenanceEventType.SEND;
 import static org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer.PROVENANCE_BATCH_SIZE;
 import static org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer.PROVENANCE_START_POSITION;
@@ -355,7 +354,6 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         // Create Atlas configuration file if necessary.
         if (createAtlasConf) {
 
-            // TODO: update properties.
             atlasProperties.put(ATLAS_PROPERTY_CLUSTER_NAME, defaultClusterName);
             final String kafkaBootStrapServers = context.getProperty(ATLAS_KAFKA_BOOTSTRAP_SERVERS).evaluateAttributeExpressions().getValue();
             atlasProperties.put(ATLAS_PROPERTY_KAFKA_BOOTSTRAP_SERVERS, kafkaBootStrapServers);
@@ -384,7 +382,7 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         consumer = new ProvenanceEventConsumer();
         consumer.setStartPositionValue(context.getProperty(PROVENANCE_START_POSITION).getValue());
         consumer.setBatchSize(context.getProperty(PROVENANCE_BATCH_SIZE).asInteger());
-        consumer.addTargetEventType(CREATE, FETCH, RECEIVE, SEND);
+        consumer.addTargetEventType(CREATE, FETCH, RECEIVE, SEND, REMOTE_INVOCATION);
         consumer.setLogger(getLogger());
         consumer.setScheduled(true);
     }

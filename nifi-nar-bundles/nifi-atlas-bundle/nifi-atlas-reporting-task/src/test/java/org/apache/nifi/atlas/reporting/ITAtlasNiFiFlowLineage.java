@@ -75,6 +75,7 @@ import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.ATLAS_URLS;
 import static org.apache.nifi.atlas.reporting.SimpleProvenanceRecord.pr;
 import static org.apache.nifi.provenance.ProvenanceEventType.CREATE;
 import static org.apache.nifi.provenance.ProvenanceEventType.RECEIVE;
+import static org.apache.nifi.provenance.ProvenanceEventType.REMOTE_INVOCATION;
 import static org.apache.nifi.provenance.ProvenanceEventType.SEND;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyInt;
@@ -803,4 +804,32 @@ public class ITAtlasNiFiFlowLineage {
         lineage.assertLink(remoteOutputPort, pathRoot);
         lineage.assertLink(pathRoot, remoteInputPort);
     }
+
+    @Test
+    public void testRemoteInvocation() throws Exception {
+        final ProcessGroupStatus rootPgStatus = loadTemplate("RemoteInvocation");
+        final ProvenanceRecords prs = new ProvenanceRecords();
+        prs.add(pr("2607ed95-c6ef-3636-0000-000000000000", "DeleteHDFS", REMOTE_INVOCATION, "hdfs://nn1.example.com:8020/test/2017-10-23"));
+        prs.add(pr("2607ed95-c6ef-3636-0000-000000000000", "DeleteHDFS", REMOTE_INVOCATION, "hdfs://nn1.example.com:8020/test/2017-10-24"));
+        prs.add(pr("2607ed95-c6ef-3636-0000-000000000000", "DeleteHDFS", REMOTE_INVOCATION, "hdfs://nn1.example.com:8020/test/2017-10-25"));
+        test(rootPgStatus, prs);
+
+        waitNotificationsGetDelivered();
+
+        final Lineage lineage = getLineage();
+
+        final Node flow = lineage.findNode("nifi_flow", "RemoteInvocation", "RemoteInvocation");
+        final Node path = lineage.findNode("nifi_flow_path",
+                "DeleteHDFS",
+                "2607ed95-c6ef-3636-0000-000000000000");
+        final Node hdfsPath23 = lineage.findNode("hdfs_path", "/test/2017-10-23@example");
+        final Node hdfsPath24 = lineage.findNode("hdfs_path", "/test/2017-10-24@example");
+        final Node hdfsPath25 = lineage.findNode("hdfs_path", "/test/2017-10-25@example");
+        lineage.assertLink(flow, path);
+        lineage.assertLink(path, hdfsPath23);
+        lineage.assertLink(path, hdfsPath24);
+        lineage.assertLink(path, hdfsPath25);
+
+    }
+
 }

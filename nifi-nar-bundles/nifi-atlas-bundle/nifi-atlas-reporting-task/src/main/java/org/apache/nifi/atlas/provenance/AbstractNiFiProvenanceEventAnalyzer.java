@@ -34,6 +34,7 @@ public abstract class AbstractNiFiProvenanceEventAnalyzer implements NiFiProvena
         final DataSetRefs refs = new DataSetRefs(componentId);
         switch (eventType) {
             case SEND:
+            case REMOTE_INVOCATION:
                 refs.addOutput(ref);
                 break;
             case FETCH:

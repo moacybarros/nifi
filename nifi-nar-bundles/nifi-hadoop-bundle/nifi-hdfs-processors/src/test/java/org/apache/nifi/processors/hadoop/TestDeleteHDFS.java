@@ -25,12 +25,15 @@ import static org.mockito.Mockito.when;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.nifi.hadoop.KerberosProperties;
+import org.apache.nifi.provenance.ProvenanceEventRecord;
+import org.apache.nifi.provenance.ProvenanceEventType;
 import org.apache.nifi.util.MockFlowFile;
 import org.apache.nifi.util.NiFiProperties;
 import org.apache.nifi.util.TestRunner;
@@ -65,8 +68,14 @@ public class TestDeleteHDFS {
         runner.setProperty(DeleteHDFS.FILE_OR_DIRECTORY, filePath.toString());
         runner.assertValid();
         runner.run();
-        runner.assertTransferCount(DeleteHDFS.REL_SUCCESS, 0);
+        // Even if there's no incoming relationship, a FlowFile is created to indicate which path is deleted.
+        runner.assertTransferCount(DeleteHDFS.REL_SUCCESS, 1);
         runner.assertTransferCount(DeleteHDFS.REL_FAILURE, 0);
+
+        final List<ProvenanceEventRecord> provenanceEvents = runner.getProvenanceEvents();
+        assertEquals(1, provenanceEvents.size());
+        assertEquals(ProvenanceEventType.REMOTE_INVOCATION, provenanceEvents.get(0).getEventType());
+        assertEquals("/some/path/to/file.txt", provenanceEvents.get(0).getTransitUri());
     }
 
     @Test
@@ -164,7 +173,7 @@ public class TestDeleteHDFS {
         runner.setProperty(DeleteHDFS.FILE_OR_DIRECTORY, glob.toString());
         runner.assertValid();
         runner.run();
-        runner.assertTransferCount(DeleteHDFS.REL_SUCCESS, 0);
+        runner.assertTransferCount(DeleteHDFS.REL_SUCCESS, 1);
     }
 
     @Test
