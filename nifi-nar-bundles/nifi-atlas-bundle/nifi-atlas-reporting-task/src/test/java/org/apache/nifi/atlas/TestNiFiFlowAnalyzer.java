@@ -29,6 +29,10 @@ import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mockito;
 
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -308,6 +312,17 @@ public class TestNiFiFlowAnalyzer {
         assertEquals(pathA, pathForPr1);
         assertEquals(pathB, pathForPr2);
         assertEquals(pathC, pathForPr3);
+    }
+
+    @Test
+    public void testTimeFormat() {
+        final Date now = new Date();
+        System.out.println(String.format("%tFT%tT.000%tz", now, now, now));
+
+        String nows = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX")
+                .withZone(ZoneOffset.UTC)
+                .format(Instant.now());
+        System.out.println(nows);
     }
 
 }

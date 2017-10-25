@@ -54,19 +54,25 @@ import org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Date;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.ServiceLoader;
 import java.util.Set;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
@@ -125,7 +131,8 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             .name("atlas-conf-dir")
             .displayName("Atlas Configuration Directory")
             .description("Directory path that contains 'atlas-application.properties' file." +
-                    " If not specified, 'atlas-application.properties' file under root classpath is used.")
+                    " If not specified and 'Create Atlas Configuration File' is disabled," +
+                    " then, 'atlas-application.properties' file under root classpath is used.")
             .required(false)
             .expressionLanguageSupported(true)
             .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
@@ -145,6 +152,7 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             .name("atlas-default-cluster-name")
             .displayName("Atlas Default Cluster Name")
             .description("Cluster name for Atlas entities reported by this ReportingTask." +
+                    " If not specified, 'atlas.cluster.name' in Atlas Configuration File is used." +
                     " Cluster name mappings can be configured by user defined properties." +
                     " See additional detail for detail.")
             .required(false)
@@ -152,15 +160,50 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
             .build();
 
+    static final PropertyDescriptor ATLAS_CONF_CREATE = new PropertyDescriptor.Builder()
+            .name("atlas-conf-create")
+            .displayName("Create Atlas Configuration File")
+            .description("If enabled, 'atlas-application.properties' file will be created in 'Atlas Configuration Directory'" +
+                    " automatically when this processor starts." +
+                    " Note that the existing configuration file will be overwritten.")
+            .required(false)
+            .expressionLanguageSupported(false)
+            .allowableValues("true", "false")
+            .defaultValue("false")
+            .build();
+
+    static final PropertyDescriptor ATLAS_KAFKA_BOOTSTRAP_SERVERS = new PropertyDescriptor.Builder()
+            .name("atlas-kafka-bootstrap-servers")
+            .displayName("Atlas Kafka Bootstrap Servers")
+            .description("Kafka Bootstrap Servers to send Atlas hook notification messages based on NiFi provenance events." +
+                    " E.g. 'localhost:9092'")
+            .required(false)
+            .expressionLanguageSupported(true)
+            .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
+            .build();
+
     private static final String ATLAS_PROPERTIES_FILENAME = "atlas-application.properties";
+    private static final String ATLAS_PROPERTY_CLUSTER_NAME = "atlas.cluster.name";
+    private static final String ATLAS_PROPERTY_KAFKA_BOOTSTRAP_SERVERS = "atlas.kafka.bootstrap.servers";
     private final ServiceLoader<ClusterResolver> clusterResolverLoader = ServiceLoader.load(ClusterResolver.class);
     private volatile NiFiAtlasClient atlasClient;
     private volatile Properties atlasProperties;
     private volatile boolean isTypeDefCreated = false;
+    private volatile String defaultClusterName;
 
     private volatile ProvenanceEventConsumer consumer;
     private volatile ClusterResolvers clusterResolvers;
     private volatile NiFIAtlasHook nifiAtlasHook;
+
+    private static PropertyDescriptor[] propertiesOnlyToCreateAtlasConf = new PropertyDescriptor[] {
+            ATLAS_KAFKA_BOOTSTRAP_SERVERS
+    };
+
+    private static PropertyDescriptor[] requiredPropertiesToCreateAtlasConf = new PropertyDescriptor[] {
+            ATLAS_CONF_DIR,
+            ATLAS_DEFAULT_CLUSTER_NAME,
+            ATLAS_KAFKA_BOOTSTRAP_SERVERS
+    };
 
     @Override
     protected List<PropertyDescriptor> getSupportedPropertyDescriptors() {
@@ -173,6 +216,13 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         properties.add(ATLAS_DEFAULT_CLUSTER_NAME);
         properties.add(PROVENANCE_START_POSITION);
         properties.add(PROVENANCE_BATCH_SIZE);
+
+        // Following properties are required if ATLAS_CONF_CREATE is enabled.
+        // Otherwise should be left blank.
+        // TODO: need Kerbelized Kafka support, https://community.hortonworks.com/articles/58370/kafka-topic-creation-and-acl-configuration-for-atl.html
+        properties.add(ATLAS_CONF_CREATE);
+        properties.add(ATLAS_KAFKA_BOOTSTRAP_SERVERS);
+
         return properties;
     }
 
@@ -212,6 +262,25 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
 
         clusterResolverLoader.forEach(resolver -> results.addAll(resolver.validate(validationContext)));
 
+        if (validationContext.getProperty(ATLAS_CONF_CREATE).asBoolean()) {
+            for (PropertyDescriptor p : requiredPropertiesToCreateAtlasConf) {
+                if (!validationContext.getProperty(p).isSet()) {
+                    results.add(new ValidationResult.Builder().subject(p.getDisplayName())
+                            .explanation(String.format("'%s' is required when '%s' is enabled.",
+                                    p.getDisplayName(), ATLAS_CONF_CREATE.getDisplayName())).valid(false).build());
+                }
+            }
+
+        } else {
+            for (PropertyDescriptor p : propertiesOnlyToCreateAtlasConf) {
+                if (validationContext.getProperty(p).isSet()) {
+                    results.add(new ValidationResult.Builder().subject(p.getDisplayName())
+                            .explanation(String.format("'%s' should be left blank when '%s' is disabled.",
+                                    p.getDisplayName(), ATLAS_CONF_CREATE.getDisplayName())).valid(false).build());
+                }
+            }
+        }
+
         return results;
     }
 
@@ -231,7 +300,6 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             resolver.configure(context);
             loadedClusterResolvers.add(resolver);
         });
-        final String defaultClusterName = context.getProperty(ATLAS_DEFAULT_CLUSTER_NAME).evaluateAttributeExpressions().getValue();
         clusterResolvers = new ClusterResolvers(Collections.unmodifiableSet(loadedClusterResolvers), defaultClusterName);
     }
 
@@ -247,21 +315,59 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
 
         atlasProperties = new Properties();
         final File atlasPropertiesFile = new File(confDir, ATLAS_PROPERTIES_FILENAME);
-        if (atlasPropertiesFile.isFile()) {
-            getLogger().info("Loading {}", new Object[]{confDir});
-            try (InputStream in = new FileInputStream(atlasPropertiesFile)) {
-                atlasProperties.load(in);
-            }
-        } else {
-            final String fileInClasspath = "/" + ATLAS_PROPERTIES_FILENAME;
-            try (InputStream in = AtlasNiFiFlowLineage.class.getResourceAsStream(fileInClasspath)) {
-                getLogger().info("Loading {} from classpath", new Object[]{fileInClasspath});
-                if (in == null) {
-                    throw new ProcessException(String.format("Could not find %s from classpath.", fileInClasspath));
+
+        final Boolean createAtlasConf = context.getProperty(ATLAS_CONF_CREATE).asBoolean();
+        if (!createAtlasConf) {
+            // Load existing properties file.
+            if (atlasPropertiesFile.isFile()) {
+                getLogger().info("Loading {}", new Object[]{atlasPropertiesFile});
+                try (InputStream in = new FileInputStream(atlasPropertiesFile)) {
+                    atlasProperties.load(in);
                 }
-                atlasProperties.load(in);
+            } else {
+                final String fileInClasspath = "/" + ATLAS_PROPERTIES_FILENAME;
+                try (InputStream in = AtlasNiFiFlowLineage.class.getResourceAsStream(fileInClasspath)) {
+                    getLogger().info("Loading {} from classpath", new Object[]{fileInClasspath});
+                    if (in == null) {
+                        throw new ProcessException(String.format("Could not find %s in classpath." +
+                                " Please add it to classpath," +
+                                " or specify %s a directory containing Atlas properties file," +
+                                " or enable %s to generate it.",
+                                fileInClasspath, ATLAS_CONF_DIR.getDisplayName(), ATLAS_CONF_CREATE.getDisplayName()));
+                    }
+                    atlasProperties.load(in);
+                }
             }
         }
+
+        // Resolve default cluster name.
+        defaultClusterName = context.getProperty(ATLAS_DEFAULT_CLUSTER_NAME).evaluateAttributeExpressions().getValue();
+        if (defaultClusterName == null || defaultClusterName.isEmpty()) {
+            // If default cluster name is not specified by processor configuration, then load it from Atlas config.
+            defaultClusterName = atlasProperties.getProperty(ATLAS_PROPERTY_CLUSTER_NAME);
+        }
+
+        // If default cluster name is still not defined, processor should not be able to start.
+        if (defaultClusterName == null || defaultClusterName.isEmpty()) {
+            throw new ProcessException("Default cluster name is not defined.");
+        }
+
+        // Create Atlas configuration file if necessary.
+        if (createAtlasConf) {
+
+            // TODO: update properties.
+            atlasProperties.put(ATLAS_PROPERTY_CLUSTER_NAME, defaultClusterName);
+            final String kafkaBootStrapServers = context.getProperty(ATLAS_KAFKA_BOOTSTRAP_SERVERS).evaluateAttributeExpressions().getValue();
+            atlasProperties.put(ATLAS_PROPERTY_KAFKA_BOOTSTRAP_SERVERS, kafkaBootStrapServers);
+
+            try (FileOutputStream fos = new FileOutputStream(atlasPropertiesFile)) {
+                String ts = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX")
+                        .withZone(ZoneOffset.UTC)
+                        .format(Instant.now());
+                atlasProperties.store(fos, "Generated by Apache NiFi AtlasNiFiFlowLineage ReportingTask at " + ts);
+            }
+        }
+
 
         atlasClient = NiFiAtlasClient.getInstance();
         try {

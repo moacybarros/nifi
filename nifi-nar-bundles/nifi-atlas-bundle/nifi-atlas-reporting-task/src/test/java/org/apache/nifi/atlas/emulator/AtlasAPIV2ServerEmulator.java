@@ -427,10 +427,24 @@ public class AtlasAPIV2ServerEmulator {
                 }
             }
 
-            // Group links by its target, and configure each weight value.
-            // E.g. 1 -> 3 and 2 -> 3, then 1 (0.5) -> 3 and 2 (0.5) -> 3.
-            uniqueLinks.stream().collect(Collectors.groupingBy(l -> l.getTarget()))
-                    .forEach((t, ls) -> ls.forEach(l -> l.setValue(1 / (double) ls.size())));
+            // Links from nifi_flow to nifi_flow_path/nifi_input_port should be narrow (0.1).
+            // Others will share 1.0.
+            final Map<Boolean, List<Link>> flowToPathOrElse = uniqueLinks.stream().collect(Collectors.groupingBy(l -> {
+                final String stype = nodes.get(l.getSource()).getType();
+                final String ttype = nodes.get(l.getTarget()).getType();
+                return "nifi_flow".equals(stype) && ("nifi_flow_path".equals(ttype) || ("nifi_input_port".equals(ttype)));
+            }));
+
+            flowToPathOrElse.forEach((f2p, ls) -> {
+                if (f2p) {
+                    ls.forEach(l -> l.setValue(0.1));
+                } else {
+                    // Group links by its target, and configure each weight value.
+                    // E.g. 1 -> 3 and 2 -> 3, then 1 (0.5) -> 3 and 2 (0.5) -> 3.
+                    ls.stream().collect(Collectors.groupingBy(l -> l.getTarget()))
+                        .forEach((t, ls2SameTgt) -> ls2SameTgt.forEach(l -> l.setValue(1.0 / (double) ls2SameTgt.size())));
+                }
+            });
 
             result.setLinks(uniqueLinks);
 
