@@ -47,6 +47,7 @@ public class AtlasAPIV2ServerEmulator {
     private Server server;
     private ServerConnector httpConnector;
     private AtlasNotificationServerEmulator notificationServerEmulator;
+    private EmbeddedKafka embeddedKafka;
 
     public static void main(String[] args) throws Exception {
         final AtlasAPIV2ServerEmulator emulator = new AtlasAPIV2ServerEmulator();
@@ -60,6 +61,9 @@ public class AtlasAPIV2ServerEmulator {
 
         server.start();
         logger.info("Starting {} on port {}", AtlasAPIV2ServerEmulator.class.getSimpleName(), httpConnector.getLocalPort());
+
+        embeddedKafka = new EmbeddedKafka(false);
+        embeddedKafka.start();
 
         notificationServerEmulator.consume(m -> {
             if (m instanceof HookNotification.EntityCreateRequest) {
@@ -133,6 +137,7 @@ public class AtlasAPIV2ServerEmulator {
 
     public void stop() throws Exception {
         notificationServerEmulator.stop();
+        embeddedKafka.stop();
         server.stop();
     }
 
