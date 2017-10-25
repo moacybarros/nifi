@@ -165,7 +165,8 @@ public class DeleteHDFS extends AbstractHadoopProcessor {
 
                         fileSystem.delete(path, context.getProperty(RECURSIVE).asBoolean());
                         getLogger().debug("For flowfile {} Deleted file at path {} with name {}", new Object[]{originalFlowFile, path.getParent().toString(), path.getName()});
-                        session.getProvenanceReporter().invokeRemoteProcess(flowFile, path.toString());
+                        final Path qualifiedPath = path.makeQualified(fileSystem.getUri(), fileSystem.getWorkingDirectory());
+                        session.getProvenanceReporter().invokeRemoteProcess(flowFile, qualifiedPath.toString());
                     } catch (IOException ioe) {
                         // One possible scenario is that the IOException is permissions based, however it would be impractical to check every possible
                         // external HDFS authorization tool (Ranger, Sentry, etc). Local ACLs could be checked but the operation would be expensive.
