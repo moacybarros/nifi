@@ -541,7 +541,7 @@ public class HBase_1_1_2_ClientService extends AbstractControllerService impleme
     }
 
     @Override
-    public String toTransitUri(String tableName) {
+    public String toTransitUri(String tableName, String rowKey) {
         if (connection == null) {
             logger.warn("Connection has not been established, could not create a transit URI. Returning null.");
             return null;
@@ -549,6 +549,6 @@ public class HBase_1_1_2_ClientService extends AbstractControllerService impleme
         final Configuration configuration = connection.getConfiguration();
         // Remove white spaces.
         final String zkQuorum = configuration.get(HBASE_CONF_ZK_QUORUM).replaceAll("\\s", "");
-        return "hbase://" + zkQuorum + "/tableName";
+        return "hbase://" + zkQuorum + "/" + tableName + (rowKey != null && !rowKey.isEmpty() ? "/" + rowKey : "");
     }
 }

@@ -13,6 +13,7 @@ import java.util.regex.Pattern;
 
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_URI;
 
 /**
  * Analyze a transit URI as a HBase table.
@@ -30,9 +31,10 @@ public class HBaseTable extends AbstractNiFiProvenanceEventAnalyzer {
     @Override
     public DataSetRefs analyze(AnalysisContext context, ProvenanceEventRecord event) {
 
-        final Matcher uriMatcher = URI_PATTERN.matcher(event.getTransitUri());
+        final String transitUri = event.getTransitUri();
+        final Matcher uriMatcher = URI_PATTERN.matcher(transitUri);
         if (!uriMatcher.matches()) {
-            logger.warn("Unexpected transit URI: {}", new Object[]{event.getTransitUri()});
+            logger.warn("Unexpected transit URI: {}", new Object[]{transitUri});
             return null;
         }
 
@@ -43,6 +45,8 @@ public class HBaseTable extends AbstractNiFiProvenanceEventAnalyzer {
         final String tableName = uriMatcher.group(2);
         ref.set(ATTR_NAME, tableName);
         ref.set(ATTR_QUALIFIED_NAME, toQualifiedName(clusterName, tableName));
+        // TODO: 'uri' is a mandatory attribute, but what should we set?
+        ref.set(ATTR_URI, transitUri);
 
         return singleDataSetRef(event.getComponentId(), event.getEventType(), ref);
     }
