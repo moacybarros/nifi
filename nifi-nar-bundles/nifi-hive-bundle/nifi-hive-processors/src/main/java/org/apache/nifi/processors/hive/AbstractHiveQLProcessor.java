@@ -16,13 +16,10 @@
  */
 package org.apache.nifi.processors.hive;
 
-import org.antlr.runtime.ANTLRStringStream;
-import org.antlr.runtime.CommonTokenStream;
-import org.antlr.runtime.RecognitionException;
-import org.antlr.runtime.TokenStream;
 import org.antlr.runtime.tree.CommonTree;
-import org.apache.hadoop.hive.ql.parse.HiveLexer;
-import org.apache.hadoop.hive.ql.parse.HiveParser;
+import org.apache.hadoop.hive.ql.parse.ASTNode;
+import org.apache.hadoop.hive.ql.parse.ParseDriver;
+import org.apache.hadoop.hive.ql.parse.ParseException;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.dbcp.hive.HiveDBCPService;
 import org.apache.nifi.flowfile.FlowFile;
@@ -36,14 +33,13 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.nio.charset.Charset;
-import java.sql.SQLDataException;
-import java.sql.Time;
-import java.sql.Timestamp;
 import java.sql.Date;
 import java.sql.PreparedStatement;
+import java.sql.SQLDataException;
 import java.sql.SQLException;
+import java.sql.Time;
+import java.sql.Timestamp;
 import java.sql.Types;
-
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -271,12 +267,10 @@ public abstract class AbstractHiveQLProcessor extends AbstractSessionFactoryProc
         }
     }
 
-    protected Set<TableName> findTableNames(final String query) throws RecognitionException {
-        final HiveParser parser = createParser(query);
-        final HiveParser.statement_return statement = parser.statement();
-        final Object treeObj = statement.getTree();
+    protected Set<TableName> findTableNames(final String query) throws ParseException {
+        final ASTNode node = new ParseDriver().parse(normalize(query));
         final HashSet<TableName> tableNames = new HashSet<>();
-        findTableNames(treeObj, tableNames);
+        findTableNames(node, tableNames);
         return tableNames;
     }
 
@@ -288,16 +282,8 @@ public abstract class AbstractHiveQLProcessor extends AbstractSessionFactoryProc
      * In this normalize method, '?' is replaced to 'x' to avoid that.
      */
     private String normalize(String query) {
-        return query.toUpperCase().replace('?', 'x');
+        return query.replace('?', 'x');
     }
-
-    private HiveParser createParser(String query) {
-        final ANTLRStringStream input = new ANTLRStringStream(normalize(query));
-        HiveLexer lexer = new HiveLexer(input);
-        TokenStream tokens = new CommonTokenStream(lexer);
-        return new HiveParser(tokens);
-    }
-
 
     private void findTableNames(final Object obj, final Set<TableName> tableNames) {
         if (!(obj instanceof CommonTree)) {
