@@ -45,7 +45,6 @@ public class ProvenanceEventConsumer {
     public static final AllowableValue END_OF_STREAM = new AllowableValue("end-of-stream", "End of Stream",
             "Start reading provenance Events from the end of the stream, ignoring old events");
     public static final PropertyDescriptor PROVENANCE_START_POSITION = new PropertyDescriptor.Builder()
-            // TODO: SiteToSiteProvenanceReportingTask should use its own property for backward compatibility
             .name("provenance-start-position")
             .displayName("Provenance Record Start Position")
             .description("If the Reporting Task has never been run, or if its state has been reset by a user, specifies where in the stream of Provenance Events the Reporting Task should start")
@@ -54,7 +53,6 @@ public class ProvenanceEventConsumer {
             .required(true)
             .build();
     public static final PropertyDescriptor PROVENANCE_BATCH_SIZE = new PropertyDescriptor.Builder()
-            // TODO: SiteToSiteProvenanceReportingTask should use its own property for backward compatibility
             .name("provenance-batch-size")
             .displayName("Provenance Record Batch Size")
             .description("Specifies how many records to send in a single batch, at most.")
@@ -84,7 +82,7 @@ public class ProvenanceEventConsumer {
     }
 
     public void setComponentTypeRegex(final String componentTypeRegex) {
-        if (StringUtils.isBlank(componentTypeRegex)) {
+        if (!StringUtils.isBlank(componentTypeRegex)) {
             this.componentTypeRegex = Pattern.compile(componentTypeRegex);
         }
     }
@@ -95,8 +93,10 @@ public class ProvenanceEventConsumer {
         }
     }
 
-    public void addTargetComponentId(final String componentId) {
-        componentIds.add(componentId);
+    public void addTargetComponentId(final String ... ids) {
+        for (String id : ids) {
+            componentIds.add(id);
+        }
     }
 
     public void setScheduled(boolean scheduled) {
@@ -156,42 +156,35 @@ public class ProvenanceEventConsumer {
             return;
         }
 
-        List<ProvenanceEventRecord> events;
+        List<ProvenanceEventRecord> rawEvents;
+        List<ProvenanceEventRecord> filteredEvents;
         try {
-            events = filterEvents(eventAccess.getProvenanceEvents(firstEventId, batchSize));
+            rawEvents = eventAccess.getProvenanceEvents(firstEventId, batchSize);
+            filteredEvents = filterEvents(rawEvents);
         } catch (final IOException ioe) {
             logger.error("Failed to retrieve Provenance Events from repository due to: " + ioe.getMessage(), ioe);
             return;
         }
 
-        if (events == null || events.isEmpty()) {
+        if (rawEvents == null || rawEvents.isEmpty()) {
             logger.debug("No events to send due to 'events' being null or empty.");
             return;
         }
 
         // Consume while there are more events and not stopped.
-        while (events != null && !events.isEmpty() && isScheduled()) {
+        while (rawEvents != null && !rawEvents.isEmpty() && isScheduled()) {
 
-            // Executes callback.
-            consumer.accept(events);
-
-            // Store the id of the last event so we know where we left off
-            final ProvenanceEventRecord lastEvent = events.get(events.size() - 1);
-            final String lastEventId = String.valueOf(lastEvent.getEventId());
-            try {
-                Map<String, String> newMapOfState = new HashMap<>();
-                newMapOfState.put(LAST_EVENT_ID_KEY, lastEventId);
-                stateManager.setState(newMapOfState, Scope.LOCAL);
-            } catch (final IOException ioe) {
-                logger.error("Failed to update state to {} due to {}; this could result in events being re-sent after a restart. The message of {} was: {}",
-                        new Object[]{lastEventId, ioe, ioe, ioe.getMessage()}, ioe);
+            if (!filteredEvents.isEmpty()) {
+                // Executes callback.
+                consumer.accept(filteredEvents);
             }
 
-            firstEventId = lastEvent.getEventId() + 1;
+            firstEventId = updateLastEventId(rawEvents, stateManager);
 
             // Retrieve the next batch
             try {
-                events = filterEvents(eventAccess.getProvenanceEvents(firstEventId, batchSize));
+                rawEvents = eventAccess.getProvenanceEvents(firstEventId, batchSize);
+                filteredEvents = filterEvents(rawEvents);
             } catch (final IOException ioe) {
                 logger.error("Failed to retrieve Provenance Events from repository due to: " + ioe.getMessage(), ioe);
                 return;
@@ -199,6 +192,27 @@ public class ProvenanceEventConsumer {
         }
 
     }
+
+    private long updateLastEventId(final List<ProvenanceEventRecord> events, final StateManager stateManager) {
+        if (events == null || events.isEmpty()) {
+            return firstEventId;
+        }
+
+        // Store the id of the last event so we know where we left off
+        final ProvenanceEventRecord lastEvent = events.get(events.size() - 1);
+        final String lastEventId = String.valueOf(lastEvent.getEventId());
+        try {
+            Map<String, String> newMapOfState = new HashMap<>();
+            newMapOfState.put(LAST_EVENT_ID_KEY, lastEventId);
+            stateManager.setState(newMapOfState, Scope.LOCAL);
+        } catch (final IOException ioe) {
+            logger.error("Failed to update state to {} due to {}; this could result in events being re-sent after a restart. The message of {} was: {}",
+                    new Object[] {lastEventId, ioe, ioe, ioe.getMessage()}, ioe);
+        }
+
+        return lastEvent.getEventId() + 1;
+    }
+
 
     private boolean isFilteringEnabled() {
         return componentTypeRegex != null || !eventTypes.isEmpty() || !componentIds.isEmpty();
