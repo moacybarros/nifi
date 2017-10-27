@@ -797,7 +797,7 @@ public class ITAtlasNiFiFlowLineage {
         final Node flow = lineage.findNode("nifi_flow", "S2SDirect", "S2SDirect");
         final Node remoteOutputPort = lineage.findNode("nifi_output_port", "output", "015f1040-dcd7-17bd-5c1f-e31afe0a09a4");
         final Node remoteInputPort = lineage.findNode("nifi_input_port", "input", "015f101e-dcd7-17bd-8899-1a723733521a");
-        final Node pathRoot = lineage.findNode("nifi_flow_path", "root", "S2SDirect");
+        final Node pathRoot = lineage.findNode("nifi_flow_path", "S2SDirect", "S2SDirect");
 
         // Even if there is no Processor, lineage can be reported using root flow_path.
         lineage.assertLink(flow, pathRoot);

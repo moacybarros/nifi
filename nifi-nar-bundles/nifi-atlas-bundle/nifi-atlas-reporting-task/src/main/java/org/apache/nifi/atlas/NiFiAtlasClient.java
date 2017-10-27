@@ -238,13 +238,13 @@ public class NiFiAtlasClient {
             final AtlasEntity pathEntity = new AtlasEntity();
             entities.add(pathEntity);
             pathEntity.setTypeName(TYPE_NIFI_FLOW_PATH);
-            pathEntity.setAttribute(ATTR_NIFI_FLOW, nifiFlow.getId());
             pathEntity.setVersion(1L);
+            pathEntity.setAttribute(ATTR_NIFI_FLOW, nifiFlow.getId());
 
             final StringBuilder name = new StringBuilder();
             final StringBuilder description = new StringBuilder();
             if (nifiFlow.getRootProcessGroupId().equals(path.getId())) {
-                name.append("root");
+                name.append(nifiFlowName);
             } else {
                 path.getProcessorIds().forEach(pid -> {
                     final ProcessorStatus processor = nifiFlow.getProcessors().get(pid);
@@ -263,7 +263,14 @@ public class NiFiAtlasClient {
 
             // Use first processor's id as qualifiedName.
             pathEntity.setAttribute(ATTR_QUALIFIED_NAME, path.getId());
-            pathEntity.setAttribute(ATTR_URL, url);
+
+            final String pathUrl = path.getId().equals(path.getGroupId())
+                    // This path represents the root path of a process group.
+                    ? String.format("%s?processGroupId=%s", nifiFlow.getUrl(), path.getGroupId())
+                    // This path represents a partial flow within a process group consists of processors.
+                    : String.format("%s?processGroupId=%s&componentIds=%s", nifiFlow.getUrl(), path.getGroupId(), path.getId());
+
+            pathEntity.setAttribute(ATTR_URL, pathUrl);
 
             // At this point, nifi_flow is already created, so DataSet can have a pointer to nifi_flow.
             activateDataSetIOLinks(path, pathEntity);

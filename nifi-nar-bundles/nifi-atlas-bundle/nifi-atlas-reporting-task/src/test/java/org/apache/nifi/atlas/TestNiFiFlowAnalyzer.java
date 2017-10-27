@@ -91,6 +91,7 @@ public class TestNiFiFlowAnalyzer {
         final ProcessorStatus processor = new ProcessorStatus();
         processor.setName(type);
         processor.setId(nextComponentId());
+        processor.setGroupId(pgStatus.getId());
         pgStatus.getProcessorStatus().add(processor);
 
         return  processor;
@@ -155,14 +156,21 @@ public class TestNiFiFlowAnalyzer {
         analyzer.analyzePaths(nifiFlow);
         final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
-        assertEquals(1, paths.size());
+        assertEquals(2, paths.size());
 
+        // root path
         final NiFiFlowPath path0 = paths.get(0);
-        assertEquals(path0.getId(), path0.getProcessorIds().get(0));
+        assertEquals(rootPG.getId(), path0.getId());
+        assertEquals(rootPG.getId(), path0.getGroupId());
+
+        // first path
+        final NiFiFlowPath path1 = paths.get(1);
+        assertEquals(path1.getId(), path1.getProcessorIds().get(0));
+        assertEquals(rootPG.getId(), path1.getGroupId());
 
         // Should be able to find a path from a given processor GUID.
         final NiFiFlowPath pathForPr0 = nifiFlow.findPath(pr0.getId());
-        assertEquals(path0, pathForPr0);
+        assertEquals(path1, pathForPr0);
     }
 
 

@@ -21,6 +21,7 @@ import org.apache.atlas.model.instance.AtlasObjectId;
 import org.apache.nifi.controller.status.ConnectionStatus;
 import org.apache.nifi.controller.status.PortStatus;
 import org.apache.nifi.controller.status.ProcessGroupStatus;
+import org.apache.nifi.controller.status.ProcessorStatus;
 import org.apache.nifi.reporting.ReportingContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -257,11 +258,14 @@ public class NiFiFlowAnalyzer {
 
         // Root path is used to link DataSets those are not connected to actual flow_path,
         // such as a flow receiving from a Remote Output Port then sending to a Remote Input Port directly.
-        final NiFiFlowPath rootPath = new NiFiFlowPath(nifiFlow.getRootProcessGroupId());
+        final String rootProcessGroupId = nifiFlow.getRootProcessGroupId();
+        final NiFiFlowPath rootPath = new NiFiFlowPath(rootProcessGroupId);
+        rootPath.setGroupId(rootProcessGroupId);
         paths.add(rootPath);
 
         // Now let's break it into flow paths.
-        final Set<String> headProcessors = nifiFlow.getProcessors().keySet().stream()
+        final Map<String, ProcessorStatus> processors = nifiFlow.getProcessors();
+        final Set<String> headProcessors = processors.keySet().stream()
                 .filter(pid -> {
                     final List<ConnectionStatus> ins = nifiFlow.getIncomingRelationShips(pid);
                     return isHeadProcessor(nifiFlow, ins);
@@ -276,6 +280,13 @@ public class NiFiFlowAnalyzer {
             final NiFiFlowPath path = new NiFiFlowPath(startPid);
             paths.add(path);
             traverse(nifiFlow, paths, path, startPid);
+        });
+
+        paths.forEach(path -> {
+            if (processors.containsKey(path.getId())) {
+                final ProcessorStatus processor = processors.get(path.getId());
+                path.setGroupId(processor.getGroupId());
+            }
         });
     }
 
