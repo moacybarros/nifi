@@ -33,7 +33,6 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
-import org.antlr.runtime.RecognitionException;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.nifi.annotation.behavior.EventDriven;
@@ -86,8 +85,8 @@ import static org.apache.nifi.util.hive.HiveJdbcCommon.NORMALIZE_NAMES_FOR_AVRO;
         @WritesAttribute(attribute = "fragment.index", description = "If 'Max Rows Per Flow File' is set then the position of this FlowFile in the list of "
                 + "outgoing FlowFiles that were all derived from the same result set FlowFile. This can be "
                 + "used in conjunction with the fragment.identifier attribute to know which FlowFiles originated from the same query result set and in what order  "
-                + "FlowFiles were produced")
-        @WritesAttribute(attribute = "query.input.tables", description = "Contains input table names in comma delimited 'databaseName.tableName' format."),
+                + "FlowFiles were produced"),
+        @WritesAttribute(attribute = "query.input.tables", description = "Contains input table names in comma delimited 'databaseName.tableName' format.")
 })
 public class SelectHiveQL extends AbstractHiveQLProcessor {
 
@@ -321,7 +320,6 @@ public class SelectHiveQL extends AbstractHiveQLProcessor {
                 }
             }
 
-<<<<<<< HEAD
             final List<FlowFile> resultSetFlowFiles = new ArrayList<>();
             try {
                 logger.debug("Executing query {}", new Object[]{selectQuery});

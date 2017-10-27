@@ -200,14 +200,14 @@ public class TestNiFiFlowAnalyzer {
         analyzer.analyzePaths(nifiFlow);
         final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
-        assertEquals(1, paths.size());
+        assertEquals(2, paths.size());
 
         // Should be able to find a path from a given processor GUID.
         final NiFiFlowPath pathForPr0 = nifiFlow.findPath(pr0.getId());
         final NiFiFlowPath pathForPr1 = nifiFlow.findPath(pr1.getId());
-        final NiFiFlowPath path0 = paths.get(0);
-        assertEquals(path0, pathForPr0);
-        assertEquals(path0, pathForPr1);
+        final NiFiFlowPath path1 = paths.get(1);
+        assertEquals(path1, pathForPr0);
+        assertEquals(path1, pathForPr1);
     }
 
     @Test
@@ -240,7 +240,7 @@ public class TestNiFiFlowAnalyzer {
         analyzer.analyzePaths(nifiFlow);
         final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
-        assertEquals(2, paths.size());
+        assertEquals(3, paths.size());
 
         // Order is not guaranteed
         final Map<String, NiFiFlowPath> pathMap = paths.stream().collect(Collectors.toMap(p -> p.getId(), p -> p));
@@ -294,7 +294,7 @@ public class TestNiFiFlowAnalyzer {
         analyzer.analyzePaths(nifiFlow);
         final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
-        assertEquals(3, paths.size());
+        assertEquals(4, paths.size());
 
         // Order is not guaranteed
         final Map<String, NiFiFlowPath> pathMap = paths.stream().collect(Collectors.toMap(p -> p.getId(), p -> p));

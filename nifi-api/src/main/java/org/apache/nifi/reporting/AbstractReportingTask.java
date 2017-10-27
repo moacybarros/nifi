@@ -22,7 +22,6 @@ import org.apache.nifi.components.AbstractConfigurableComponent;
 import org.apache.nifi.controller.ControllerServiceLookup;
 import org.apache.nifi.controller.NodeTypeProvider;
 import org.apache.nifi.logging.ComponentLog;
-import org.apache.nifi.processor.ProcessorInitializationContext;
 
 public abstract class AbstractReportingTask extends AbstractConfigurableComponent implements ReportingTask {
 

@@ -46,7 +46,6 @@ import org.apache.nifi.util.StopWatch;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URI;
 import java.security.PrivilegedAction;
 import java.util.ArrayList;
 import java.util.HashSet;
