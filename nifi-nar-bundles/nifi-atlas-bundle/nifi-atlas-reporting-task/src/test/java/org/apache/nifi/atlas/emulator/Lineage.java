@@ -18,8 +18,12 @@ package org.apache.nifi.atlas.emulator;
 
 import org.junit.Assert;
 
+import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.stream.IntStream;
 
+import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW_PATH;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
@@ -45,12 +49,19 @@ public class Lineage {
         this.links = links;
     }
 
-    public Node findNode(String type, String qname) {
+    private String toFullQname(String type, String _qname) {
+        return type.startsWith("nifi_") && _qname.matches("[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}")
+                    && !_qname.endsWith("-0000-000000000000")
+                    ? _qname + "-0000-000000000000" : _qname;
+    }
+
+    public Node findNode(String type, String _qname) {
+        final String qname = toFullQname(type, _qname);
         return nodes.stream().filter(n -> type.equals(n.getType()) && qname.equals(n.getQualifiedName()))
                 .findFirst().orElseGet(() -> {
-            Assert.fail(String.format("Node was not found for %s::%s", type, qname));
-            return null;
-        });
+                    Assert.fail(String.format("Node was not found for %s::%s", type, qname));
+                    return null;
+                });
     }
 
     public Node findNode(String type, String name, String qname) {
@@ -59,7 +70,8 @@ public class Lineage {
         return node;
     }
 
-    public int getNodeIndex(String type, String qname) {
+    public int getNodeIndex(String type, String _qname) {
+        final String qname = toFullQname(type, _qname);
         for (int i = 0; i < nodes.size(); i++) {
             Node n = nodes.get(i);
             if (type.equals(n.getType()) && qname.equals(n.getQualifiedName())) {
@@ -67,6 +79,14 @@ public class Lineage {
             }
         }
         return -1;
+    }
+
+    public int[] getFlowPathVariationIndices(String _qname) {
+        final String qname = toFullQname(TYPE_NIFI_FLOW_PATH, _qname);
+        return IntStream.range(0, nodes.size()).filter(i -> {
+            Node n = nodes.get(i);
+            return TYPE_NIFI_FLOW_PATH.equals(n.getType()) && n.getQualifiedName().startsWith(qname);
+        }).toArray();
     }
 
     public void assertLink(Node s, Node t) {
@@ -82,8 +102,20 @@ public class Lineage {
         assertNotNull(findNode(sType, sName, sQname));
         assertNotNull(findNode(tType, tName, tQname));
 
-        assertTrue(String.format("Link from %s::%s to %s::%s was not found", sType, sQname, tType, tQname),
-                links.stream().anyMatch(l -> l.getSource() == si && l.getTarget() == ti));
+        final Callable<Boolean> exactMatch = () -> links.stream().anyMatch(l -> l.getSource() == si && l.getTarget() == ti);
+        final Callable<Boolean> valiationMatch = () -> {
+            int[] sis = TYPE_NIFI_FLOW_PATH.equals(sType) ? getFlowPathVariationIndices(sQname) : new int[]{si};
+            int[] tis = TYPE_NIFI_FLOW_PATH.equals(tType) ? getFlowPathVariationIndices(tQname) : new int[]{ti};
+            return links.stream().anyMatch(
+                    l -> Arrays.stream(sis).anyMatch(s -> l.getSource() == s)
+                        && Arrays.stream(tis).anyMatch(t -> l.getTarget() == t));
+        };
+        final String msg = String.format("Link from %s::%s to %s::%s was not found", sType, sQname, tType, tQname);
+        try {
+            assertTrue(msg, exactMatch.call() || valiationMatch.call());
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
 
     }
 }

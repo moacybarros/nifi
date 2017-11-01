@@ -14,20 +14,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.nifi.atlas.provenance;
+package org.apache.nifi.atlas.provenance.lineage;
 
-import org.apache.nifi.atlas.resolver.ClusterResolver;
-import org.apache.nifi.controller.status.ConnectionStatus;
+import org.apache.nifi.atlas.NiFiFlow;
+import org.apache.nifi.atlas.provenance.AnalysisContext;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
-import org.apache.nifi.provenance.lineage.ComputeLineageResult;
+import org.apache.nifi.provenance.ProvenanceEventType;
 
-import java.util.List;
+public interface LineageStrategy {
 
-public interface AnalysisContext {
-    ClusterResolver getClusterResolver();
-    List<ConnectionStatus> findConnectionTo(String componentId);
-    List<ConnectionStatus> findConnectionFrom(String componentId);
-    ComputeLineageResult queryLineage(long eventId);
-    ComputeLineageResult findParents(long eventId);
-    ProvenanceEventRecord getProvenanceEvent(long eventId);
+    default ProvenanceEventType[] getTargetEventTypes(){
+        return new ProvenanceEventType[0];
+    }
+
+    void setLineageContext(LineageContext lineageContext);
+
+    void processEvent(AnalysisContext analysisContext, NiFiFlow nifiFlow, ProvenanceEventRecord event);
+
 }

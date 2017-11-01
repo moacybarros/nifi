@@ -22,6 +22,7 @@ import org.apache.nifi.atlas.provenance.AnalysisContext;
 import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.controller.status.ConnectionStatus;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
+import org.apache.nifi.provenance.ProvenanceEventType;
 import org.apache.nifi.provenance.lineage.ComputeLineageResult;
 import org.apache.nifi.provenance.lineage.LineageNode;
 import org.apache.nifi.provenance.lineage.LineageNodeType;
@@ -48,6 +49,12 @@ public class NiFiRemotePort extends AbstractNiFiProvenanceEventAnalyzer {
 
     @Override
     public DataSetRefs analyze(AnalysisContext context, ProvenanceEventRecord event) {
+
+        if (!ProvenanceEventType.SEND.equals(event.getEventType())
+                && !ProvenanceEventType.RECEIVE.equals(event.getEventType())) {
+            return null;
+        }
+
         final boolean isRemoteInputPort = event.getComponentType().equals("Remote Input Port");
         final String type = isRemoteInputPort ? TYPE_NIFI_INPUT_PORT : TYPE_NIFI_OUTPUT_PORT;
         final String remotePortId = event.getComponentId();

@@ -22,6 +22,7 @@ org.apache.nifi.atlas.provenance.analyzer.PutHiveStreaming
 org.apache.nifi.atlas.provenance.analyzer.Hive2JDBC
 org.apache.nifi.atlas.provenance.analyzer.HDFSPath
 org.apache.nifi.atlas.provenance.analyzer.HBaseTable
+org.apache.nifi.atlas.provenance.analyzer.FilePath
 
 # By event type, if none of above analyzers matches"
 org.apache.nifi.atlas.provenance.analyzer.CreateObscureInputDataSet

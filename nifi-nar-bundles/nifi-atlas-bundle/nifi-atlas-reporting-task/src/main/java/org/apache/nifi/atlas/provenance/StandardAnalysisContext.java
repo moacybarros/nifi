@@ -62,9 +62,7 @@ public class StandardAnalysisContext implements AnalysisContext {
         return clusterResolver;
     }
 
-    @Override
-    public ComputeLineageResult queryLineage(long eventId) {
-        final ComputeLineageSubmission submission = provenanceRepository.submitLineageComputation(eventId, NIFI_USER);
+    private ComputeLineageResult getLineageResult(long eventId, ComputeLineageSubmission submission) {
         final ComputeLineageResult result = submission.getResult();
         try {
             if (result.awaitCompletion(10, TimeUnit.SECONDS)) {
@@ -78,6 +76,17 @@ public class StandardAnalysisContext implements AnalysisContext {
         }
 
         return null;
+    }
+
+    @Override
+    public ComputeLineageResult queryLineage(long eventId) {
+        final ComputeLineageSubmission submission = provenanceRepository.submitLineageComputation(eventId, NIFI_USER);
+        return getLineageResult(eventId, submission);
+    }
+
+    public ComputeLineageResult findParents(long eventId) {
+        final ComputeLineageSubmission submission = provenanceRepository.submitExpandParents(eventId, NIFI_USER);
+        return getLineageResult(eventId, submission);
     }
 
     // NOTE: This user is required to avoid NullPointerException at PersistentProvenanceRepository.submitLineageComputation

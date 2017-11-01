@@ -108,7 +108,7 @@ d3.json("/api/atlas/v2/debug/lineage/", function(error, lineage) {
       .attr("text-anchor", "start");
 
   node.append("title")
-      .text(function(d) { return d.type + "\n" + d.name; });
+      .text(function(d) { return d.type + "\n" + d.name + "\n" + d.qualifiedName; });
 });
 
 </script>

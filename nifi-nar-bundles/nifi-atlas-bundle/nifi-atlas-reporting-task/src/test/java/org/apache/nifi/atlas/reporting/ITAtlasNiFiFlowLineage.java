@@ -34,6 +34,7 @@ import org.apache.nifi.provenance.lineage.ComputeLineageSubmission;
 import org.apache.nifi.provenance.lineage.EdgeNode;
 import org.apache.nifi.provenance.lineage.EventNode;
 import org.apache.nifi.provenance.lineage.LineageEdge;
+import org.apache.nifi.provenance.lineage.LineageNode;
 import org.apache.nifi.reporting.EventAccess;
 import org.apache.nifi.reporting.InitializationException;
 import org.apache.nifi.reporting.ReportingContext;
@@ -64,16 +65,25 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.Stack;
 import java.util.function.BiConsumer;
 
 import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.ATLAS_NIFI_URL;
 import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.ATLAS_URLS;
+import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.LINEAGE_STRATEGY_COMPLETE_PATH;
+import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.LINEAGE_STRATEGY_SIMPLE_PATH;
+import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.NIFI_LINEAGE_STRATEGY;
 import static org.apache.nifi.atlas.reporting.SimpleProvenanceRecord.pr;
+import static org.apache.nifi.provenance.ProvenanceEventType.ATTRIBUTES_MODIFIED;
 import static org.apache.nifi.provenance.ProvenanceEventType.CREATE;
+import static org.apache.nifi.provenance.ProvenanceEventType.DROP;
+import static org.apache.nifi.provenance.ProvenanceEventType.FORK;
+import static org.apache.nifi.provenance.ProvenanceEventType.JOIN;
 import static org.apache.nifi.provenance.ProvenanceEventType.RECEIVE;
 import static org.apache.nifi.provenance.ProvenanceEventType.REMOTE_INVOCATION;
 import static org.apache.nifi.provenance.ProvenanceEventType.SEND;
@@ -379,51 +389,67 @@ public class ITAtlasNiFiFlowLineage {
 
     private static String TARGET_ATLAS_URL = "http://localhost:21000";
 
-    private Stack<Long> lineageSubmissionEventIds = new Stack<>();
+    private Stack<Long> requestedLineageComputationIds = new Stack<>();
+    private Stack<Long> requestedExpandParentsIds = new Stack<>();
 
-    private void test(ProcessGroupStatus rootPgStatus, List<ProvenanceEventRecord> provenanceRecords)
-            throws InitializationException, IOException {
-        test(rootPgStatus, provenanceRecords, Collections.emptyMap());
+    private class TestConfiguration {
+        private final ProcessGroupStatus rootPgStatus;
+        private final Map<PropertyDescriptor, String> properties = new HashMap<>();
+        private final ProvenanceRecords provenanceRecords = new ProvenanceRecords();
+        private final Map<Long, ComputeLineageResult> lineageResults = new HashMap<>();
+        private final Map<Long, ComputeLineageResult> parentLineageResults = new HashMap<>();
+
+        private TestConfiguration(String templateName) {
+            this.rootPgStatus = loadTemplate(templateName);
+        }
+
+        private void addLineage(ComputeLineageResult lineage) {
+            lineage.getNodes().forEach(n -> lineageResults.put(Long.parseLong(n.getIdentifier()), lineage));
+        }
     }
 
-    private void test(ProcessGroupStatus rootPgStatus, List<ProvenanceEventRecord> provenanceRecords,
-                      Map<Long, ComputeLineageResult> lineageResults)
-            throws InitializationException, IOException {
+    private void test(TestConfiguration tc) throws InitializationException, IOException {
         final AtlasNiFiFlowLineage reportingTask = new AtlasNiFiFlowLineage();
         final MockComponentLog logger = new MockComponentLog("reporting-task-id", reportingTask);
-        final Map<PropertyDescriptor, String> properties = new HashMap<>();
 
         final ReportingInitializationContext initializationContext = mock(ReportingInitializationContext.class);
         when(initializationContext.getLogger()).thenReturn(logger);
-        final ConfigurationContext configurationContext = new MockConfigurationContext(properties, null);
+        final ConfigurationContext configurationContext = new MockConfigurationContext(tc.properties, null);
         final ValidationContext validationContext = mock(ValidationContext.class);
-        when(validationContext.getProperty(any())).then(invocation -> new MockPropertyValue(properties.get(invocation.getArguments()[0])));
+        when(validationContext.getProperty(any())).then(invocation -> new MockPropertyValue(tc.properties.get(invocation.getArguments()[0])));
         final ReportingContext reportingContext = mock(ReportingContext.class);
         final MockStateManager stateManager = new MockStateManager(reportingTask);
         final EventAccess eventAccess = mock(EventAccess.class);
-        when(reportingContext.getProperties()).thenReturn(properties);
-        when(reportingContext.getProperty(any())).then(invocation -> new MockPropertyValue(properties.get(invocation.getArguments()[0])));
+        when(reportingContext.getProperties()).thenReturn(tc.properties);
+        when(reportingContext.getProperty(any())).then(invocation -> new MockPropertyValue(tc.properties.get(invocation.getArguments()[0])));
         when(reportingContext.getStateManager()).thenReturn(stateManager);
         when(reportingContext.getEventAccess()).thenReturn(eventAccess);
-        when(eventAccess.getGroupStatus(eq("root"))).thenReturn(rootPgStatus);
+        when(eventAccess.getGroupStatus(eq("root"))).thenReturn(tc.rootPgStatus);
 
         final ProvenanceRepository provenanceRepository = mock(ProvenanceRepository.class);
         when(eventAccess.getProvenanceRepository()).thenReturn(provenanceRepository);
-        when(eventAccess.getProvenanceEvents(eq(-1L), anyInt())).thenReturn(provenanceRecords);
-        when(provenanceRepository.getMaxEventId()).thenReturn((long) provenanceRecords.size() - 1);
-        when(provenanceRepository.getEvent(anyLong())).then(invocation -> provenanceRecords.get(((Long) invocation.getArguments()[0]).intValue()));
+        when(eventAccess.getProvenanceEvents(eq(-1L), anyInt())).thenReturn(tc.provenanceRecords);
+        when(provenanceRepository.getMaxEventId()).thenReturn((long) tc.provenanceRecords.size() - 1);
+        when(provenanceRepository.getEvent(anyLong())).then(invocation -> tc.provenanceRecords.get(((Long) invocation.getArguments()[0]).intValue()));
 
         // To mock this async method invocations, keep the requested event ids in a stack.
-        final ComputeLineageSubmission lineageSubmission = mock(ComputeLineageSubmission.class);
+        final ComputeLineageSubmission lineageComputationSubmission = mock(ComputeLineageSubmission.class);
         when(provenanceRepository.submitLineageComputation(anyLong(), any())).thenAnswer(invocation -> {
-            lineageSubmissionEventIds.push((Long) invocation.getArguments()[0]);
-            return lineageSubmission;
+            requestedLineageComputationIds.push((Long) invocation.getArguments()[0]);
+            return lineageComputationSubmission;
         });
-        when(lineageSubmission.getResult()).then(invocation -> lineageResults.get(lineageSubmissionEventIds.pop()));
+        when(lineageComputationSubmission.getResult()).then(invocation -> tc.lineageResults.get(requestedLineageComputationIds.pop()));
 
-        properties.put(ATLAS_NIFI_URL, "http://localhost:8080/nifi");
-        properties.put(ATLAS_URLS, TARGET_ATLAS_URL);
-        properties.put(new PropertyDescriptor.Builder().name("hostnamePattern.example").dynamic(true).build(), ".*");
+        final ComputeLineageSubmission expandParentsSubmission = mock(ComputeLineageSubmission.class);
+        when(provenanceRepository.submitExpandParents(anyLong(), any())).thenAnswer(invocation -> {
+            requestedExpandParentsIds.push(((Long) invocation.getArguments()[0]));
+            return expandParentsSubmission;
+        });
+        when(expandParentsSubmission.getResult()).then(invocation -> tc.parentLineageResults.get(requestedExpandParentsIds.pop()));
+
+        tc.properties.put(ATLAS_NIFI_URL, "http://localhost:8080/nifi");
+        tc.properties.put(ATLAS_URLS, TARGET_ATLAS_URL);
+        tc.properties.put(new PropertyDescriptor.Builder().name("hostnamePattern.example").dynamic(true).build(), ".*");
 
 
         reportingTask.initialize(initializationContext);
@@ -489,22 +515,21 @@ public class ITAtlasNiFiFlowLineage {
 
     @Test
     public void testSimplestPath() throws Exception {
-        final ProcessGroupStatus rootPgStatus = loadTemplate("SimplestFlowPath");
-        final ProvenanceRecords prs = new ProvenanceRecords();
-        test(rootPgStatus, prs);
+        final TestConfiguration tc = new TestConfiguration("SimplestFlowPath");
+        test(tc);
 
         final Lineage lineage = getLineage();
         lineage.assertLink("nifi_flow", "SimplestFlowPath", "SimplestFlowPath",
-                "nifi_flow_path", "GenerateFlowFile, LogAttribute", "d270e6f0-c5e0-38b9-0000-000000000000");
+                "nifi_flow_path", "GenerateFlowFile, LogAttribute", "d270e6f0-c5e0-38b9");
     }
 
     @Test
     public void testSingleFlowPath() throws Exception {
-        final ProcessGroupStatus rootPgStatus = loadTemplate("SingleFlowPath");
-        final ProvenanceRecords prs = new ProvenanceRecords();
-        prs.add(pr("2e9a2852-228f-379b-0000-000000000000", "ConsumeKafka_0_11", RECEIVE, "PLAINTEXT://0.kafka.example.com:6667/topic-a"));
-        prs.add(pr("5a56149a-d82a-3242-0000-000000000000", "PublishKafka_0_11", SEND, "PLAINTEXT://0.kafka.example.com:6667/topic-b"));
-        test(rootPgStatus, prs);
+        final TestConfiguration tc = new TestConfiguration("SingleFlowPath");
+        final ProvenanceRecords prs = tc.provenanceRecords;
+        prs.add(pr("2e9a2852-228f-379b", "ConsumeKafka_0_11", RECEIVE, "PLAINTEXT://0.kafka.example.com:6667/topic-a"));
+        prs.add(pr("5a56149a-d82a-3242", "PublishKafka_0_11", SEND, "PLAINTEXT://0.kafka.example.com:6667/topic-b"));
+        test(tc);
 
         waitNotificationsGetDelivered();
 
@@ -512,7 +537,7 @@ public class ITAtlasNiFiFlowLineage {
         final Node flow = lineage.findNode("nifi_flow", "SingleFlowPath", "SingleFlowPath");
         final Node path = lineage.findNode("nifi_flow_path",
                 "ConsumeKafka_0_11, UpdateAttribute, ConvertJSONToSQL, PutSQL, PublishKafka_0_11",
-                "2e9a2852-228f-379b-0000-000000000000");
+                "2e9a2852-228f-379b");
         final Node topicA = lineage.findNode("kafka_topic", "topic-a@example");
         final Node topicB = lineage.findNode("kafka_topic", "topic-b@example");
         lineage.assertLink(flow, path);
@@ -522,11 +547,11 @@ public class ITAtlasNiFiFlowLineage {
 
     @Test
     public void testMultipleProcessGroups() throws Exception {
-        final ProcessGroupStatus rootPgStatus = loadTemplate("MultipleProcessGroups");
-        final ProvenanceRecords prs = new ProvenanceRecords();
-        prs.add(pr("989dabb7-54b9-3c78-0000-000000000000", "ConsumeKafka_0_11", RECEIVE, "PLAINTEXT://0.kafka.example.com:6667/nifi-test"));
-        prs.add(pr("767c7bd6-75e3-3f32-0000-000000000000", "PutHDFS", SEND, "hdfs://nn1.example.com:8020/user/nifi/5262553828219"));
-        test(rootPgStatus, prs);
+        final TestConfiguration tc = new TestConfiguration("MultipleProcessGroups");
+        final ProvenanceRecords prs = tc.provenanceRecords;
+        prs.add(pr("989dabb7-54b9-3c78", "ConsumeKafka_0_11", RECEIVE, "PLAINTEXT://0.kafka.example.com:6667/nifi-test"));
+        prs.add(pr("767c7bd6-75e3-3f32", "PutHDFS", SEND, "hdfs://nn1.example.com:8020/user/nifi/5262553828219"));
+        test(tc);
 
         waitNotificationsGetDelivered();
 
@@ -535,7 +560,7 @@ public class ITAtlasNiFiFlowLineage {
         final Node flow = lineage.findNode("nifi_flow", "MultipleProcessGroups", "MultipleProcessGroups");
         final Node path = lineage.findNode("nifi_flow_path",
                 "ConsumeKafka_0_11, UpdateAttribute, PutHDFS",
-                "989dabb7-54b9-3c78-0000-000000000000");
+                "989dabb7-54b9-3c78");
         final Node kafkaTopic = lineage.findNode("kafka_topic", "nifi-test@example");
         final Node hdfsPath = lineage.findNode("hdfs_path", "/user/nifi/5262553828219@example");
         lineage.assertLink(flow, path);
@@ -559,53 +584,72 @@ public class ITAtlasNiFiFlowLineage {
         final ComputeLineageResult lineage = mock(ComputeLineageResult.class);
         when(lineage.awaitCompletion(anyLong(), any())).thenReturn(true);
         final List<LineageEdge> edges = new ArrayList<>();
+        final Set<LineageNode> nodes = new LinkedHashSet<>();
         for (int i = 0; i < indices.length - 1; i++) {
-            edges.add(createEdge(prs, indices[i], indices[i + 1]));
+            final EdgeNode edge = createEdge(prs, indices[i], indices[i + 1]);
+            edges.add(edge);
+            nodes.add(edge.getSource());
+            nodes.add(edge.getDestination());
         }
         when(lineage.getEdges()).thenReturn(edges);
+        when(lineage.getNodes()).thenReturn(new ArrayList<>(nodes));
+        return lineage;
+    }
+
+    private ComputeLineageResult compositeLineages(ComputeLineageResult ... results) throws InterruptedException {
+        final ComputeLineageResult lineage = mock(ComputeLineageResult.class);
+        when(lineage.awaitCompletion(anyLong(), any())).thenReturn(true);
+        final List<LineageEdge> edges = new ArrayList<>();
+        final Set<LineageNode> nodes = new LinkedHashSet<>();
+        for (int i = 0; i < results.length; i++) {
+            edges.addAll(results[i].getEdges());
+            nodes.addAll(results[i].getNodes());
+        }
+        when(lineage.getEdges()).thenReturn(edges);
+        when(lineage.getNodes()).thenReturn(new ArrayList<>(nodes));
         return lineage;
     }
 
     /**
      * A client NiFi sends FlowFiles to a remote NiFi.
      */
-    @Test
-    public void testS2SSend() throws Exception {
-        final ProcessGroupStatus rootPgStatus = loadTemplate("S2SSend");
-        final ProvenanceRecords prs = new ProvenanceRecords();
-        prs.add(pr("ca71e4d9-2a4f-3970-0000-000000000000", "Generate A", CREATE));
-        prs.add(pr("c439cdca-e989-3491-0000-000000000000", "Generate C", CREATE));
-        prs.add(pr("b775b657-5a5b-3708-0000-000000000000", "GetTwitter", CREATE));
+    private void testS2SSend(TestConfiguration tc) throws Exception {
+        final ProvenanceRecords prs = tc.provenanceRecords;
+        prs.add(pr("ca71e4d9-2a4f-3970", "Generate A", CREATE));
+        prs.add(pr("c439cdca-e989-3491", "Generate C", CREATE));
+        prs.add(pr("b775b657-5a5b-3708", "GetTwitter", CREATE));
 
-        prs.add((pr("77919f59-533e-35a3-0000-000000000000", "Remote Input Port", SEND,
+        prs.add(pr("77919f59-533e-35a3", "Remote Input Port", SEND,
                 "http://nifi.example.com:8080/nifi-api/data-transfer/input-ports" +
-                        "/77919f59-533e-35a3-0000-000000000000/transactions/tx-1/flow-files")));
+                        "/77919f59-533e-35a3/transactions/tx-1/flow-files"));
 
-        prs.add((pr("77919f59-533e-35a3-0000-000000000000", "Remote Input Port", SEND,
+        prs.add(pr("77919f59-533e-35a3", "Remote Input Port", SEND,
                 "http://nifi.example.com:8080/nifi-api/data-transfer/input-ports" +
-                        "/77919f59-533e-35a3-0000-000000000000/transactions/tx-2/flow-files")));
+                        "/77919f59-533e-35a3/transactions/tx-2/flow-files"));
 
-        Map<Long, ComputeLineageResult> lineages = new HashMap<>();
+        prs.add(pr("77919f59-533e-35a3", "Remote Input Port", DROP)); // C
+        prs.add(pr("77919f59-533e-35a3", "Remote Input Port", DROP)); // Twitter
+
         // Generate C created a FlowFile, then it's sent via S2S
-        lineages.put(3L, createLineage(prs, 1, 3));
+        tc.addLineage(createLineage(prs, 1, 3, 5));
         // GetTwitter created a FlowFile, then it's sent via S2S
-        lineages.put(4L, createLineage(prs, 2, 4));
+        tc.addLineage(createLineage(prs, 2, 4, 6));
 
-        test(rootPgStatus, prs, lineages);
+        test(tc);
 
         waitNotificationsGetDelivered();
 
         final Lineage lineage = getLineage();
 
         final Node flow = lineage.findNode("nifi_flow", "S2SSend", "S2SSend");
-        final Node pathA = lineage.findNode("nifi_flow_path", "Generate A", "ca71e4d9-2a4f-3970-0000-000000000000");
-        final Node pathB = lineage.findNode("nifi_flow_path", "Generate B", "333255b6-eb02-3056-0000-000000000000");
-        final Node pathC = lineage.findNode("nifi_flow_path", "Generate C", "c439cdca-e989-3491-0000-000000000000");
-        final Node pathT = lineage.findNode("nifi_flow_path", "GetTwitter", "b775b657-5a5b-3708-0000-000000000000");
-        final Node pathI = lineage.findNode("nifi_flow_path", "InactiveProcessor", "7033f311-ac68-3cab-0000-000000000000");
+        final Node pathA = lineage.findNode("nifi_flow_path", "Generate A", "ca71e4d9-2a4f-3970");
+        final Node pathB = lineage.findNode("nifi_flow_path", "Generate B", "333255b6-eb02-3056");
+        final Node pathC = lineage.findNode("nifi_flow_path", "Generate C", "c439cdca-e989-3491");
+        final Node pathT = lineage.findNode("nifi_flow_path", "GetTwitter", "b775b657-5a5b-3708");
+        final Node pathI = lineage.findNode("nifi_flow_path", "InactiveProcessor", "7033f311-ac68-3cab");
         // UpdateAttribute has multiple incoming paths, so it generates a queue to receive those.
-        final Node queueU = lineage.findNode("nifi_queue", "queue", "c5392447-e9f1-33ad-0000-000000000000");
-        final Node pathU = lineage.findNode("nifi_flow_path", "UpdateAttribute", "c5392447-e9f1-33ad-0000-000000000000");
+        final Node queueU = lineage.findNode("nifi_queue", "queue", "c5392447-e9f1-33ad");
+        final Node pathU = lineage.findNode("nifi_flow_path", "UpdateAttribute", "c5392447-e9f1-33ad");
 
         // These are starting paths.
         lineage.assertLink(flow, pathA);
@@ -620,18 +664,37 @@ public class ITAtlasNiFiFlowLineage {
         lineage.assertLink(queueU, pathU);
 
         // Generate C and GetTwitter have reported proper SEND lineage to the input port.
-        final Node remoteInputPort = lineage.findNode("nifi_input_port", "input", "77919f59-533e-35a3-0000-000000000000");
+        final Node remoteInputPort = lineage.findNode("nifi_input_port", "input", "77919f59-533e-35a3");
         lineage.assertLink(pathC, remoteInputPort);
         lineage.assertLink(pathT, remoteInputPort);
 
         // nifi_data is created for each obscure input processor.
-        final Node genA = lineage.findNode("nifi_data", "Generate A", "ca71e4d9-2a4f-3970-0000-000000000000");
-        final Node genC = lineage.findNode("nifi_data", "Generate C", "c439cdca-e989-3491-0000-000000000000");
-        final Node genT = lineage.findNode("nifi_data", "GetTwitter", "b775b657-5a5b-3708-0000-000000000000");
-        lineage.assertLink(genA, pathA);
+        final Node genC = lineage.findNode("nifi_data", "Generate C", "c439cdca-e989-3491");
+        final Node genT = lineage.findNode("nifi_data", "GetTwitter", "b775b657-5a5b-3708");
         lineage.assertLink(genC, pathC);
         lineage.assertLink(genT, pathT);
+    }
 
+    @Test
+    public void testS2SSendSimple() throws Exception {
+        final TestConfiguration tc = new TestConfiguration("S2SSend");
+
+        testS2SSend(tc);
+
+        final Lineage lineage = getLineage();
+
+        // The FlowFile created by Generate A has not been finished (by DROP event, but SIMPLE_PATH strategy can report it.
+        final Node pathA = lineage.findNode("nifi_flow_path", "Generate A", "ca71e4d9-2a4f-3970");
+        final Node genA = lineage.findNode("nifi_data", "Generate A", "ca71e4d9-2a4f-3970");
+        lineage.assertLink(genA, pathA);
+    }
+
+    @Test
+    public void testS2SSendComplete() throws Exception {
+        final TestConfiguration tc = new TestConfiguration("S2SSend");
+        tc.properties.put(NIFI_LINEAGE_STRATEGY, LINEAGE_STRATEGY_COMPLETE_PATH.getValue());
+
+        testS2SSend(tc);
     }
 
     /**
@@ -639,23 +702,23 @@ public class ITAtlasNiFiFlowLineage {
      */
     @Test
     public void testS2SGet() throws Exception {
-        final ProcessGroupStatus rootPgStatus = loadTemplate("S2SGet");
-        final ProvenanceRecords prs = new ProvenanceRecords();
-        prs.add(pr("392e7343-3950-329b-0000-000000000000", "Remote Output Port", RECEIVE,
+        final TestConfiguration tc = new TestConfiguration("S2SGet");
+        final ProvenanceRecords prs = tc.provenanceRecords;
+        prs.add(pr("392e7343-3950-329b", "Remote Output Port", RECEIVE,
                 "http://nifi.example.com:8080/nifi-api/data-transfer/input-ports" +
-                        "/392e7343-3950-329b-0000-000000000000/transactions/tx-1/flow-files"));
+                        "/392e7343-3950-329b/transactions/tx-1/flow-files"));
 
-        test(rootPgStatus, prs);
+        test(tc);
 
         waitNotificationsGetDelivered();
 
         final Lineage lineage = getLineage();
 
         final Node flow = lineage.findNode("nifi_flow", "S2SGet", "S2SGet");
-        final Node pathL = lineage.findNode("nifi_flow_path", "LogAttribute", "97cc5b27-22f3-3c3b-0000-000000000000");
-        final Node pathP = lineage.findNode("nifi_flow_path", "PutFile", "4f3bfa4c-6427-3aac-0000-000000000000");
-        final Node pathU = lineage.findNode("nifi_flow_path", "UpdateAttribute", "bb530e58-ee14-3cac-0000-000000000000");
-        final Node remoteOutputPort = lineage.findNode("nifi_output_port", "output", "392e7343-3950-329b-0000-000000000000");
+        final Node pathL = lineage.findNode("nifi_flow_path", "LogAttribute", "97cc5b27-22f3-3c3b");
+        final Node pathP = lineage.findNode("nifi_flow_path", "PutFile", "4f3bfa4c-6427-3aac");
+        final Node pathU = lineage.findNode("nifi_flow_path", "UpdateAttribute", "bb530e58-ee14-3cac");
+        final Node remoteOutputPort = lineage.findNode("nifi_output_port", "output", "392e7343-3950-329b");
 
         lineage.assertLink(flow, pathL);
         lineage.assertLink(flow, pathP);
@@ -673,17 +736,16 @@ public class ITAtlasNiFiFlowLineage {
      */
     @Test
     public void testS2STransfer() throws Exception {
-        final ProcessGroupStatus rootPgStatus = loadTemplate("S2STransfer");
-        final ProvenanceRecords prs = new ProvenanceRecords();
-        test(rootPgStatus, prs);
+        final TestConfiguration tc = new TestConfiguration("S2STransfer");
+        test(tc);
 
         waitNotificationsGetDelivered();
 
         final Lineage lineage = getLineage();
 
         final Node flow = lineage.findNode("nifi_flow", "S2STransfer", "S2STransfer");
-        final Node path = lineage.findNode("nifi_flow_path", "GenerateFlowFile", "1b9f81db-a0fd-389a-0000-000000000000");
-        final Node outputPort = lineage.findNode("nifi_output_port", "output", "392e7343-3950-329b-0000-000000000000");
+        final Node path = lineage.findNode("nifi_flow_path", "GenerateFlowFile", "1b9f81db-a0fd-389a");
+        final Node outputPort = lineage.findNode("nifi_output_port", "output", "392e7343-3950-329b");
 
         lineage.assertLink(flow, path);
         lineage.assertLink(path, outputPort);
@@ -695,17 +757,16 @@ public class ITAtlasNiFiFlowLineage {
      */
     @Test
     public void testS2SReceive() throws Exception {
-        final ProcessGroupStatus rootPgStatus = loadTemplate("S2SReceive");
-        final ProvenanceRecords prs = new ProvenanceRecords();
-        test(rootPgStatus, prs);
+        final TestConfiguration tc = new TestConfiguration("S2SReceive");
+        test(tc);
 
         waitNotificationsGetDelivered();
 
         final Lineage lineage = getLineage();
 
         final Node flow = lineage.findNode("nifi_flow", "S2SReceive", "S2SReceive");
-        final Node path = lineage.findNode("nifi_flow_path", "UpdateAttribute", "67834454-5a13-3872-0000-000000000000");
-        final Node inputPort = lineage.findNode("nifi_input_port", "input", "77919f59-533e-35a3-0000-000000000000");
+        final Node path = lineage.findNode("nifi_flow_path", "UpdateAttribute", "67834454-5a13-3872");
+        final Node inputPort = lineage.findNode("nifi_input_port", "input", "77919f59-533e-35a3");
 
         lineage.assertLink(flow, path);
         lineage.assertLink(flow, inputPort);
@@ -716,15 +777,15 @@ public class ITAtlasNiFiFlowLineage {
     @Test
     public void testS2SReceiveAndSendCombination() throws Exception {
         testS2SReceive();
-        testS2SSend();
+        testS2SSendSimple();
 
         final Lineage lineage = getLineage();
 
         final Node remoteFlow = lineage.findNode("nifi_flow", "S2SReceive", "S2SReceive");
         final Node localFlow = lineage.findNode("nifi_flow", "S2SSend", "S2SSend");
-        final Node inputPort = lineage.findNode("nifi_input_port", "input", "77919f59-533e-35a3-0000-000000000000");
-        final Node pathC = lineage.findNode("nifi_flow_path", "Generate C", "c439cdca-e989-3491-0000-000000000000");
-        final Node pathT = lineage.findNode("nifi_flow_path", "GetTwitter", "b775b657-5a5b-3708-0000-000000000000");
+        final Node inputPort = lineage.findNode("nifi_input_port", "input", "77919f59-533e-35a3");
+        final Node pathC = lineage.findNode("nifi_flow_path", "Generate C", "c439cdca-e989-3491");
+        final Node pathT = lineage.findNode("nifi_flow_path", "GetTwitter", "b775b657-5a5b-3708");
 
         // Remote flow owns the inputPort.
         lineage.assertLink(remoteFlow, inputPort);
@@ -746,11 +807,11 @@ public class ITAtlasNiFiFlowLineage {
 
         final Node remoteFlow = lineage.findNode("nifi_flow", "S2STransfer", "S2STransfer");
         final Node localFlow = lineage.findNode("nifi_flow", "S2SGet", "S2SGet");
-        final Node remoteGen = lineage.findNode("nifi_flow_path", "GenerateFlowFile", "1b9f81db-a0fd-389a-0000-000000000000");
-        final Node outputPort = lineage.findNode("nifi_output_port", "output", "392e7343-3950-329b-0000-000000000000");
-        final Node pathL = lineage.findNode("nifi_flow_path", "LogAttribute", "97cc5b27-22f3-3c3b-0000-000000000000");
-        final Node pathP = lineage.findNode("nifi_flow_path", "PutFile", "4f3bfa4c-6427-3aac-0000-000000000000");
-        final Node pathU = lineage.findNode("nifi_flow_path", "UpdateAttribute", "bb530e58-ee14-3cac-0000-000000000000");
+        final Node remoteGen = lineage.findNode("nifi_flow_path", "GenerateFlowFile", "1b9f81db-a0fd-389a");
+        final Node outputPort = lineage.findNode("nifi_output_port", "output", "392e7343-3950-329b");
+        final Node pathL = lineage.findNode("nifi_flow_path", "LogAttribute", "97cc5b27-22f3-3c3b");
+        final Node pathP = lineage.findNode("nifi_flow_path", "PutFile", "4f3bfa4c-6427-3aac");
+        final Node pathU = lineage.findNode("nifi_flow_path", "UpdateAttribute", "bb530e58-ee14-3cac");
 
         // Remote flow owns the outputPort and transfer data generated by GenerateFlowFile.
         lineage.assertLink(remoteFlow, remoteGen);
@@ -771,8 +832,8 @@ public class ITAtlasNiFiFlowLineage {
      */
     @Test
     public void testS2SDirect() throws Exception {
-        final ProcessGroupStatus rootPgStatus = loadTemplate("S2SDirect");
-        final ProvenanceRecords prs = new ProvenanceRecords();
+        final TestConfiguration tc = new TestConfiguration("S2SDirect");
+        final ProvenanceRecords prs = tc.provenanceRecords;
 
         prs.add(pr("015f1040-dcd7-17bd-5c1f-e31afe0a09a4", "Remote Output Port", RECEIVE,
                 "http://nifi.example.com:8080/nifi-api/data-transfer/input-ports" +
@@ -783,12 +844,12 @@ public class ITAtlasNiFiFlowLineage {
                         "/015f101e-dcd7-17bd-8899-1a723733521a/transactions/tx-2/flow-files")));
 
         // This provenance should not reported (by being linked to root flow_path).
-        prs.add((pr("00000000-0000-0000-0000-000000000000", "Unknown", CREATE)));
+        prs.add((pr("00000000-0000-0000", "Unknown", CREATE)));
 
-        Map<Long, ComputeLineageResult> lineages = new HashMap<>();
+        Map<Long, ComputeLineageResult> lineages = tc.lineageResults;
         // Received from remote output port, then sent it via remote input port
         lineages.put(1L, createLineage(prs, 0, 1));
-        test(rootPgStatus, prs, lineages);
+        test(tc);
 
         waitNotificationsGetDelivered();
 
@@ -807,12 +868,12 @@ public class ITAtlasNiFiFlowLineage {
 
     @Test
     public void testRemoteInvocation() throws Exception {
-        final ProcessGroupStatus rootPgStatus = loadTemplate("RemoteInvocation");
-        final ProvenanceRecords prs = new ProvenanceRecords();
-        prs.add(pr("2607ed95-c6ef-3636-0000-000000000000", "DeleteHDFS", REMOTE_INVOCATION, "hdfs://nn1.example.com:8020/test/2017-10-23"));
-        prs.add(pr("2607ed95-c6ef-3636-0000-000000000000", "DeleteHDFS", REMOTE_INVOCATION, "hdfs://nn1.example.com:8020/test/2017-10-24"));
-        prs.add(pr("2607ed95-c6ef-3636-0000-000000000000", "DeleteHDFS", REMOTE_INVOCATION, "hdfs://nn1.example.com:8020/test/2017-10-25"));
-        test(rootPgStatus, prs);
+        final TestConfiguration tc = new TestConfiguration("RemoteInvocation");
+        final ProvenanceRecords prs = tc.provenanceRecords;
+        prs.add(pr("2607ed95-c6ef-3636", "DeleteHDFS", REMOTE_INVOCATION, "hdfs://nn1.example.com:8020/test/2017-10-23"));
+        prs.add(pr("2607ed95-c6ef-3636", "DeleteHDFS", REMOTE_INVOCATION, "hdfs://nn1.example.com:8020/test/2017-10-24"));
+        prs.add(pr("2607ed95-c6ef-3636", "DeleteHDFS", REMOTE_INVOCATION, "hdfs://nn1.example.com:8020/test/2017-10-25"));
+        test(tc);
 
         waitNotificationsGetDelivered();
 
@@ -821,7 +882,7 @@ public class ITAtlasNiFiFlowLineage {
         final Node flow = lineage.findNode("nifi_flow", "RemoteInvocation", "RemoteInvocation");
         final Node path = lineage.findNode("nifi_flow_path",
                 "DeleteHDFS",
-                "2607ed95-c6ef-3636-0000-000000000000");
+                "2607ed95-c6ef-3636");
         final Node hdfsPath23 = lineage.findNode("hdfs_path", "/test/2017-10-23@example");
         final Node hdfsPath24 = lineage.findNode("hdfs_path", "/test/2017-10-24@example");
         final Node hdfsPath25 = lineage.findNode("hdfs_path", "/test/2017-10-25@example");
@@ -831,5 +892,194 @@ public class ITAtlasNiFiFlowLineage {
         lineage.assertLink(path, hdfsPath25);
 
     }
+
+    @Test
+    public void testSimpleEventLevelByPath() throws Exception {
+        final TestConfiguration tc = new TestConfiguration("SimpleEventLevel");
+        final ProvenanceRecords prs = tc.provenanceRecords;
+        prs.add(pr("d9257f7e-b78c-349a", "Generate A", CREATE));
+        prs.add(pr("d84b9bdc-5e42-3b3b", "Generate B", CREATE));
+
+        prs.add((pr("eaf013c1-aec5-39b0", "PutFile", SEND, "file:/tmp/nifi/a.txt")));
+        prs.add((pr("eaf013c1-aec5-39b0", "PutFile", SEND, "file:/tmp/nifi/b.txt")));
+
+        Map<Long, ComputeLineageResult> lineages = tc.lineageResults;
+//        // Generate C created a FlowFile, then it's sent via S2S
+//        lineages.put(3L, createLineage(prs, 1, 3));
+//        // GetTwitter created a FlowFile, then it's sent via S2S
+//        lineages.put(4L, createLineage(prs, 2, 4));
+
+        test(tc);
+
+        waitNotificationsGetDelivered();
+
+        final Lineage lineage = getLineage();
+
+//        final Node flow = lineage.findNode("nifi_flow", "S2SSend", "S2SSend");
+//        final Node pathA = lineage.findNode("nifi_flow_path", "Generate A", "ca71e4d9-2a4f-3970");
+//        final Node pathB = lineage.findNode("nifi_flow_path", "Generate B", "333255b6-eb02-3056");
+//        final Node pathC = lineage.findNode("nifi_flow_path", "Generate C", "c439cdca-e989-3491");
+//        final Node pathT = lineage.findNode("nifi_flow_path", "GetTwitter", "b775b657-5a5b-3708");
+//        final Node pathI = lineage.findNode("nifi_flow_path", "InactiveProcessor", "7033f311-ac68-3cab");
+//        // UpdateAttribute has multiple incoming paths, so it generates a queue to receive those.
+//        final Node queueU = lineage.findNode("nifi_queue", "queue", "c5392447-e9f1-33ad");
+//        final Node pathU = lineage.findNode("nifi_flow_path", "UpdateAttribute", "c5392447-e9f1-33ad");
+//
+//        // These are starting paths.
+//        lineage.assertLink(flow, pathA);
+//        lineage.assertLink(flow, pathB);
+//        lineage.assertLink(flow, pathC);
+//        lineage.assertLink(flow, pathT);
+//        lineage.assertLink(flow, pathI);
+
+        // Multiple paths connected to the same path.
+//        lineage.assertLink(pathB, queueU);
+//        lineage.assertLink(pathC, queueU);
+//        lineage.assertLink(queueU, pathU);
+
+//        // Generate C and GetTwitter have reported proper SEND lineage to the input port.
+//        final Node remoteInputPort = lineage.findNode("nifi_input_port", "input", "77919f59-533e-35a3");
+//        lineage.assertLink(pathC, remoteInputPort);
+//        lineage.assertLink(pathT, remoteInputPort);
+//
+//        // nifi_data is created for each obscure input processor.
+//        final Node genA = lineage.findNode("nifi_data", "Generate A", "ca71e4d9-2a4f-3970");
+//        final Node genC = lineage.findNode("nifi_data", "Generate C", "c439cdca-e989-3491");
+//        final Node genT = lineage.findNode("nifi_data", "GetTwitter", "b775b657-5a5b-3708");
+//        lineage.assertLink(genA, pathA);
+//        lineage.assertLink(genC, pathC);
+//        lineage.assertLink(genT, pathT);
+
+    }
+
+    @Test
+    public void testSimpleEventLevel() throws Exception {
+        final TestConfiguration tc = new TestConfiguration("SimpleEventLevel");
+        final ProvenanceRecords prs = tc.provenanceRecords;
+
+        String flowFileUUIDA = "A0000000-0000-0000";
+        String flowFileUUIDB = "B0000000-0000-0000";
+        prs.add(pr("d9257f7e-b78c-349a", "Generate A", CREATE, flowFileUUIDA));
+        prs.add(pr("d84b9bdc-5e42-3b3b", "Generate B", CREATE, flowFileUUIDB));
+
+        prs.add((pr("eaf013c1-aec5-39b0", "PutFile", SEND, "file:/tmp/nifi/a.txt", flowFileUUIDA)));
+        prs.add((pr("eaf013c1-aec5-39b0", "PutFile", SEND, "file:/tmp/nifi/b.txt", flowFileUUIDB)));
+
+        prs.add(pr("bfc30bc3-48cf-332a", "LogAttribute", DROP, flowFileUUIDA));
+        prs.add(pr("bfc30bc3-48cf-332a", "LogAttribute", DROP, flowFileUUIDB));
+
+        Map<Long, ComputeLineageResult> lineages = tc.lineageResults;
+        lineages.put(4L, createLineage(prs, 0, 2, 4));
+        lineages.put(5L, createLineage(prs, 1, 3, 5));
+
+        test(tc);
+
+        waitNotificationsGetDelivered();
+
+        final Lineage lineage = getLineage();
+
+        // TODO: assert
+    }
+
+    @Test
+    public void testMergedEvents() throws Exception {
+        final TestConfiguration tc = new TestConfiguration("MergedEvents");
+        final ProvenanceRecords prs = tc.provenanceRecords;
+        final String flowFileUUIDA = "A0000000-0000-0000";
+        final String flowFileUUIDB = "B0000000-0000-0000";
+        final String flowFileUUIDC = "C0000000-0000-0000";
+        final String flowFileUUIDD = "D0000000-0000-0000";
+        // Merged B and C.
+        final String flowFileUUIDBC = "BC000000-0000-0000";
+        prs.add(pr("f585d83b-2a03-37cf", "Generate A", CREATE, flowFileUUIDA)); // 0
+        prs.add(pr("59a7c1f9-9a73-3cc6", "Generate B", CREATE, flowFileUUIDB)); // 1
+        prs.add(pr("d6c3f282-e03d-316c", "Generate C", CREATE, flowFileUUIDC)); // 2
+        prs.add(pr("f9593a5a-f0d5-3e87", "Generate D", CREATE, flowFileUUIDD)); // 3
+        // Original files are dropped.
+        prs.add(pr("c77dd033-bb9e-39ea", "MergeContent", JOIN, flowFileUUIDBC)); // 4
+        prs.add(pr("c77dd033-bb9e-39ea", "MergeContent", DROP, flowFileUUIDB)); // 5
+        prs.add(pr("c77dd033-bb9e-39ea", "MergeContent", DROP, flowFileUUIDC)); // 6
+
+        prs.add((pr("93f8ad14-6ee6-34c1", "PutFile", SEND, "file:/tmp/nifi/a.txt", flowFileUUIDA))); // 7
+        prs.add((pr("93f8ad14-6ee6-34c1", "PutFile", SEND, "file:/tmp/nifi/bc.txt", flowFileUUIDBC))); // 8
+        prs.add((pr("93f8ad14-6ee6-34c1", "PutFile", SEND, "file:/tmp/nifi/d.txt", flowFileUUIDD))); // 9
+
+        prs.add(pr("bfc30bc3-48cf-332a", "LogAttribute", DROP, flowFileUUIDA)); // 10
+        prs.add(pr("bfc30bc3-48cf-332a", "LogAttribute", DROP, flowFileUUIDBC)); // 11
+        prs.add(pr("bfc30bc3-48cf-332a", "LogAttribute", DROP, flowFileUUIDD)); // 12
+
+        Map<Long, ComputeLineageResult> lineages = tc.lineageResults;
+        final ComputeLineageResult lineageB = createLineage(prs, 1, 4, 5);
+        final ComputeLineageResult lineageC = createLineage(prs, 2, 4, 6);
+        lineages.put(5L, lineageB); // B
+        lineages.put(6L, lineageC); // C
+
+        lineages.put(10L, createLineage(prs, 0, 7, 10)); // A
+        lineages.put(11L, createLineage(prs, 4, 8, 11)); // BC
+        lineages.put(12L, createLineage(prs, 3, 9, 12)); // D
+
+        Map<Long, ComputeLineageResult> parents = new HashMap<>();
+        parents.put(4L, compositeLineages(lineageB, lineageC));
+
+        test(tc);
+
+        waitNotificationsGetDelivered();
+
+        final Lineage lineage = getLineage();
+
+        // TODO: assert
+    }
+
+    @Test
+    public void testRecordAndDataSetLevel() throws Exception {
+        final TestConfiguration tc = new TestConfiguration("RecordAndDataSetLevel");
+        final ProvenanceRecords prs = tc.provenanceRecords;
+
+        // Publish part
+        final String ffIdA1 = "A1000000";
+        final String ffIdB1 = "B1000000";
+        prs.add(pr("22be62d9-c4a1-3056", "GetFile", RECEIVE, "file:/tmp/input/A1.csv", ffIdA1)); // 0
+        prs.add(pr("22be62d9-c4a1-3056", "GetFile", RECEIVE, "file:/tmp/input/B1.csv", ffIdB1)); // 1
+
+        prs.add(pr("eaf013c1-aec5-39b0", "PutFile", SEND, "file:/tmp/output/A1.csv", ffIdA1)); // 2
+        prs.add(pr("eaf013c1-aec5-39b0", "PutFile", SEND, "file:/tmp/output/B1.csv", ffIdB1)); // 3
+
+        prs.add(pr("97641de3-fb76-3d95", "PublishKafkaRecord_0_10", SEND, "PLAINTEXT://localhost:9092/nifi-test", ffIdA1)); // 4
+        prs.add(pr("97641de3-fb76-3d95", "PublishKafkaRecord_0_10", SEND, "PLAINTEXT://localhost:9092/nifi-test", ffIdB1)); // 5
+
+        prs.add(pr("97641de3-fb76-3d95", "PublishKafkaRecord_0_10", DROP, ffIdA1)); // 6
+        prs.add(pr("97641de3-fb76-3d95", "PublishKafkaRecord_0_10", DROP, ffIdB1)); // 7
+
+        // Consume part
+        final String ffIdK1 = "K1000000";
+        final String ffIdA2 = "A2000000"; // Forked children
+        final String ffIdB2 = "B2000000"; // Forked children
+        prs.add(pr("529e6722-9b49-3b66", "ConsumeKafkaRecord_0_10", RECEIVE, "PLAINTEXT://localhost:9092/nifi-test", ffIdK1)); // 8
+        prs.add(pr("529e6722-9b49-3b66", "ConsumeKafkaRecord_0_10", FORK, ffIdK1)); // 9
+        prs.add(pr("db8bb12c-5cd3-3011", "UpdateAttribute", ATTRIBUTES_MODIFIED, ffIdA2)); // 10
+        prs.add(pr("db8bb12c-5cd3-3011", "UpdateAttribute", ATTRIBUTES_MODIFIED, ffIdB2)); // 11
+        prs.add(pr("062caf95-da40-3a57", "PutFile", SEND, "file:/tmp/consumed/A_20171101_100701.csv", ffIdA2)); // 12
+        prs.add(pr("062caf95-da40-3a57", "PutFile", SEND, "file:/tmp/consumed/B_20171101_100701.csv", ffIdB2)); // 13
+        prs.add(pr("062caf95-da40-3a57", "PutFile", DROP, ffIdA2)); // 14
+        prs.add(pr("062caf95-da40-3a57", "PutFile", DROP, ffIdB2)); // 15
+
+
+        Map<Long, ComputeLineageResult> lineages = tc.lineageResults;
+        Map<Long, ComputeLineageResult> parents = new HashMap<>();
+        lineages.put(6L, createLineage(prs, 0, 2, 4, 6)); // Publish A1
+        lineages.put(7L, createLineage(prs, 1, 3, 5, 7)); // Publish B1
+        parents.put(9L, createLineage(prs, 8, 9)); // Consumed and Forked K1
+        lineages.put(14L, createLineage(prs, 9, 10, 12, 14)); // Processed A2
+        lineages.put(15L, createLineage(prs, 9, 11, 13, 15)); // Processed B2
+
+        test(tc);
+
+        waitNotificationsGetDelivered();
+
+        final Lineage lineage = getLineage();
+
+        // TODO: assert
+    }
+
 
 }

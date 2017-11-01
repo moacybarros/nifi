@@ -39,6 +39,9 @@ public class NiFiFlowPath implements AtlasProcess {
     public NiFiFlowPath(String id) {
         this.id = id;
     }
+    public NiFiFlowPath(String id, long lineageHash) {
+        this.id =  id + "::" + lineageHash;
+    }
 
     public String getName() {
         return name;
@@ -82,6 +85,16 @@ public class NiFiFlowPath implements AtlasProcess {
 
     public Set<NiFiFlowPath> getOutgoingPaths() {
         return outgoingPaths;
+    }
+
+    public String createDeepLinkURL(String nifiUrl) {
+        // Remove lineage hash part.
+        final String componentId = id.split("::")[0];
+        return componentId.equals(groupId)
+                // This path represents the root path of a process group.
+                ? String.format("%s?processGroupId=%s", nifiUrl, groupId)
+                // This path represents a partial flow within a process group consists of processors.
+                : String.format("%s?processGroupId=%s&componentIds=%s", nifiUrl, groupId, componentId);
     }
 
     @Override

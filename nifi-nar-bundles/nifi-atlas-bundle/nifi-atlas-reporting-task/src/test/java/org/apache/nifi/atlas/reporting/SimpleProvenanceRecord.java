@@ -28,18 +28,23 @@ public class SimpleProvenanceRecord implements ProvenanceEventRecord {
     private String componentId;
     private String componentType;
     private String transitUri;
+    private String flowFileUUID;
     private ProvenanceEventType eventType;
     private Map<String, String> attributes = new HashMap<>();
 
     public static SimpleProvenanceRecord pr(String componentId, String componentType, ProvenanceEventType eventType) {
-        return pr(componentId, componentType, eventType, null);
+        return pr(componentId, componentType, eventType, null, null);
     }
     public static SimpleProvenanceRecord pr(String componentId, String componentType, ProvenanceEventType eventType, String transitUri) {
+        return pr(componentId, componentType, eventType, transitUri, null);
+    }
+    public static SimpleProvenanceRecord pr(String componentId, String componentType, ProvenanceEventType eventType, String transitUri, String flowFileUUID) {
         final SimpleProvenanceRecord pr = new SimpleProvenanceRecord();
-        pr.componentId = componentId;
+        pr.componentId = componentId.length() == 18 ? componentId + "-0000-000000000000" : componentId;
         pr.componentType = componentType;
         pr.transitUri = transitUri;
         pr.eventType = eventType;
+        pr.flowFileUUID = flowFileUUID;
         return pr;
     }
 

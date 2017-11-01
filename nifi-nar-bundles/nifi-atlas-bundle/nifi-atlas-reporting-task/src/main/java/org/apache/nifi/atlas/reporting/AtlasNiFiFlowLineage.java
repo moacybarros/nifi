@@ -17,7 +17,6 @@
 package org.apache.nifi.atlas.reporting;
 
 import org.apache.atlas.AtlasServiceException;
-import org.apache.atlas.typesystem.Referenceable;
 import org.apache.nifi.annotation.behavior.DynamicProperty;
 import org.apache.nifi.annotation.behavior.Stateful;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
@@ -28,15 +27,15 @@ import org.apache.nifi.atlas.NiFIAtlasHook;
 import org.apache.nifi.atlas.NiFiAtlasClient;
 import org.apache.nifi.atlas.NiFiFlow;
 import org.apache.nifi.atlas.NiFiFlowAnalyzer;
-import org.apache.nifi.atlas.NiFiFlowPath;
 import org.apache.nifi.atlas.provenance.AnalysisContext;
-import org.apache.nifi.atlas.provenance.DataSetRefs;
-import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzer;
-import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzerFactory;
+import org.apache.nifi.atlas.provenance.lineage.CompleteFlowPathLineage;
+import org.apache.nifi.atlas.provenance.lineage.LineageStrategy;
 import org.apache.nifi.atlas.provenance.StandardAnalysisContext;
+import org.apache.nifi.atlas.provenance.lineage.SimpleFlowPathLineage;
 import org.apache.nifi.atlas.resolver.ClusterResolver;
 import org.apache.nifi.atlas.resolver.ClusterResolvers;
 import org.apache.nifi.atlas.resolver.RegexClusterResolver;
+import org.apache.nifi.components.AllowableValue;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.components.PropertyValue;
 import org.apache.nifi.components.ValidationContext;
@@ -67,25 +66,13 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.Properties;
 import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 import static org.apache.commons.lang3.StringUtils.isEmpty;
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_NIFI_FLOW;
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_URL;
-import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW;
-import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW_PATH;
-import static org.apache.nifi.provenance.ProvenanceEventType.CREATE;
-import static org.apache.nifi.provenance.ProvenanceEventType.FETCH;
-import static org.apache.nifi.provenance.ProvenanceEventType.RECEIVE;
-import static org.apache.nifi.provenance.ProvenanceEventType.REMOTE_INVOCATION;
-import static org.apache.nifi.provenance.ProvenanceEventType.SEND;
+import static org.apache.nifi.provenance.ProvenanceEventType.DROP;
 import static org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer.PROVENANCE_BATCH_SIZE;
 import static org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer.PROVENANCE_START_POSITION;
 
@@ -181,6 +168,19 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
             .build();
 
+    // TODO: doc
+    static final AllowableValue LINEAGE_STRATEGY_SIMPLE_PATH = new AllowableValue("SimplePath", "Simple Path", "");
+    static final AllowableValue LINEAGE_STRATEGY_COMPLETE_PATH = new AllowableValue("CompletePath", "Complete Path", "");
+
+    static final PropertyDescriptor NIFI_LINEAGE_STRATEGY = new PropertyDescriptor.Builder()
+            .name("nifi-lineage-strategy")
+            .displayName("NiFi Lineage Strategy")
+            .description("Specifies what granularity the data should be sent to Atlas.")
+            .required(true)
+            .allowableValues(LINEAGE_STRATEGY_SIMPLE_PATH, LINEAGE_STRATEGY_COMPLETE_PATH)
+            .defaultValue(LINEAGE_STRATEGY_SIMPLE_PATH.getValue())
+            .build();
+
     private static final String ATLAS_PROPERTIES_FILENAME = "atlas-application.properties";
     private static final String ATLAS_PROPERTY_CLUSTER_NAME = "atlas.cluster.name";
     private static final String ATLAS_PROPERTY_KAFKA_BOOTSTRAP_SERVERS = "atlas.kafka.bootstrap.servers";
@@ -193,6 +193,7 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
     private volatile ProvenanceEventConsumer consumer;
     private volatile ClusterResolvers clusterResolvers;
     private volatile NiFIAtlasHook nifiAtlasHook;
+    private volatile LineageStrategy lineageStrategy;
 
     private static PropertyDescriptor[] propertiesOnlyToCreateAtlasConf = new PropertyDescriptor[] {
             ATLAS_KAFKA_BOOTSTRAP_SERVERS
@@ -213,6 +214,7 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         properties.add(ATLAS_CONF_DIR);
         properties.add(ATLAS_NIFI_URL);
         properties.add(ATLAS_DEFAULT_CLUSTER_NAME);
+        properties.add(NIFI_LINEAGE_STRATEGY);
         properties.add(PROVENANCE_START_POSITION);
         properties.add(PROVENANCE_BATCH_SIZE);
 
@@ -287,10 +289,21 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
     public void setup(ConfigurationContext context) throws IOException {
         // initAtlasClient has to be done first as it loads AtlasProperty.
         initAtlasClient(context);
-        initProvenanceConsumer(context);
+        initLineageStrategy(context);
         initClusterResolvers(context);
+    }
 
+    private void initLineageStrategy(ConfigurationContext context) throws IOException {
         nifiAtlasHook = new NiFIAtlasHook();
+        final String strategy = context.getProperty(NIFI_LINEAGE_STRATEGY).getValue();
+        if (LINEAGE_STRATEGY_SIMPLE_PATH.equals(strategy)) {
+            lineageStrategy = new SimpleFlowPathLineage();
+        } else if (LINEAGE_STRATEGY_COMPLETE_PATH.equals(strategy)) {
+            lineageStrategy = new CompleteFlowPathLineage();
+        }
+
+        lineageStrategy.setLineageContext(nifiAtlasHook);
+        initProvenanceConsumer(context);
     }
 
     private void initClusterResolvers(ConfigurationContext context) {
@@ -382,7 +395,7 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         consumer = new ProvenanceEventConsumer();
         consumer.setStartPositionValue(context.getProperty(PROVENANCE_START_POSITION).getValue());
         consumer.setBatchSize(context.getProperty(PROVENANCE_BATCH_SIZE).asInteger());
-        consumer.addTargetEventType(CREATE, FETCH, RECEIVE, SEND, REMOTE_INVOCATION);
+        consumer.addTargetEventType(lineageStrategy.getTargetEventTypes());
         consumer.setLogger(getLogger());
         consumer.setScheduled(true);
     }
@@ -462,53 +475,16 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         consumer.consumeEvents(eventAccess, context.getStateManager(), events -> {
             for (ProvenanceEventRecord event : events) {
                 try {
-                    final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(event.getComponentType(), event.getTransitUri(), event.getEventType());
-                    if (getLogger().isDebugEnabled()) {
-                        getLogger().debug("Analyzer {} is found for event: {}", new Object[]{analyzer, event});
-                    }
-                    if (analyzer == null) {
-                        continue;
-                    }
-                    final DataSetRefs refs = analyzer.analyze(analysisContext, event);
-                    if (refs == null || (refs.isEmpty())) {
-                        continue;
-                    }
-
-                    final Set<NiFiFlowPath> flowPaths = refs.getComponentIds().stream()
-                            .map(componentId -> {
-                                final NiFiFlowPath flowPath = nifiFlow.findPath(componentId, refs.isReferableFromRootPath());
-                                if (flowPath == null) {
-                                    getLogger().warn("FlowPath for {} was not found.", new Object[]{event.getComponentId()});
-                                }
-                                return flowPath;
-                            })
-                            .filter(Objects::nonNull)
-                            .collect(Collectors.toSet());
-
-                    // create reference to NiFi flow path.
-                    final Referenceable flowRef = new Referenceable(TYPE_NIFI_FLOW);
-                    flowRef.set(ATTR_NAME, nifiFlow.getFlowName());
-                    flowRef.set(ATTR_QUALIFIED_NAME, nifiFlow.getId().getUniqueAttributes().get(ATTR_QUALIFIED_NAME));
-                    flowRef.set(ATTR_URL, nifiFlow.getUrl());
-
-                    for (NiFiFlowPath flowPath : flowPaths) {
-                        final Referenceable flowPathRef = new Referenceable(TYPE_NIFI_FLOW_PATH);
-                        flowPathRef.set(ATTR_NAME, flowPath.getName());
-                        flowPathRef.set(ATTR_QUALIFIED_NAME, flowPath.getId());
-                        flowPathRef.set(ATTR_NIFI_FLOW, flowRef);
-                        flowPathRef.set(ATTR_URL, nifiFlow.getUrl());
-
-                        nifiAtlasHook.addDataSetRefs(refs, flowPathRef);
-                    }
-
+                    lineageStrategy.processEvent(analysisContext, nifiFlow, event);
                 } catch (Exception e) {
                     // If something went wrong, log it and continue with other records.
-                    getLogger().error("Skipping failed analyzing event {} due to {}.", new Object[]{event, e}, e);
+                    getLogger().error("Skipping failed analyzing event {} due to {}.", new Object[]{event, e, e});
                 }
             }
             nifiAtlasHook.commitMessages();
         });
     }
+
 
 
 }
