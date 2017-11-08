@@ -19,6 +19,9 @@
     </parent>
     <artifactId>nifi-azure-processors</artifactId>
     <packaging>jar</packaging>
+    <properties>
+        <azure-eventhubs.version>0.14.2</azure-eventhubs.version>
+    </properties>
     <dependencies>
         <dependency>
             <groupId>org.apache.nifi</groupId>
@@ -31,7 +34,12 @@
         <dependency>
             <groupId>com.microsoft.azure</groupId>
             <artifactId>azure-eventhubs</artifactId>
-            <version>0.14.2</version>
+            <version>${azure-eventhubs.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.microsoft.azure</groupId>
+            <artifactId>azure-eventhubs-eph</artifactId>
+            <version>${azure-eventhubs.version}</version>
         </dependency>
         <dependency>
             <groupId>com.microsoft.azure</groupId>
