@@ -24,7 +24,14 @@ import com.microsoft.azure.eventprocessorhost.IEventProcessor;
 import com.microsoft.azure.eventprocessorhost.IEventProcessorFactory;
 import com.microsoft.azure.eventprocessorhost.PartitionContext;
 import com.microsoft.azure.servicebus.ConnectionStringBuilder;
+import org.apache.nifi.annotation.behavior.InputRequirement;
+import org.apache.nifi.annotation.behavior.TriggerSerially;
+import org.apache.nifi.annotation.behavior.WritesAttribute;
+import org.apache.nifi.annotation.behavior.WritesAttributes;
+import org.apache.nifi.annotation.documentation.CapabilityDescription;
+import org.apache.nifi.annotation.documentation.Tags;
 import org.apache.nifi.annotation.lifecycle.OnStopped;
+import org.apache.nifi.components.AllowableValue;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.processor.AbstractSessionFactoryProcessor;
@@ -37,6 +44,7 @@ import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.nifi.processors.azure.AzureConstants;
 import org.apache.nifi.util.StopWatch;
 
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -47,10 +55,19 @@ import java.util.concurrent.TimeUnit;
 
 import static org.apache.nifi.util.StringUtils.isEmpty;
 
-// TODO: Capability description, tag ... etc
-// TODO: Input not allowed.
-// TODO: Trigger serially.
-// TODO: Record.
+// TODO: Support Demarcater.
+// TODO: Support Record writer.
+@Tags({"azure", "microsoft", "cloud", "eventhub", "events", "streaming", "streams"})
+@CapabilityDescription("Receives messages from a Microsoft Azure Event Hub, writing the contents of the Azure message to the content of the FlowFile.")
+@InputRequirement(InputRequirement.Requirement.INPUT_FORBIDDEN)
+@TriggerSerially
+@WritesAttributes({
+        @WritesAttribute(attribute = "eventhub.enqueued.timestamp", description = "The time (in milliseconds since epoch, UTC) at which the message was enqueued in the Azure Event Hub"),
+        @WritesAttribute(attribute = "eventhub.offset", description = "The offset into the partition at which the message was stored"),
+        @WritesAttribute(attribute = "eventhub.sequence", description = "The Azure Sequence number associated with the message"),
+        @WritesAttribute(attribute = "eventhub.name", description = "The name of the Event Hub from which the message was pulled"),
+        @WritesAttribute(attribute = "eventhub.partition", description = "The name of the Azure Partition from which the message was pulled")
+})
 public class ConsumeAzureEventHub extends AbstractSessionFactoryProcessor {
 
     private volatile EventProcessorHost eventProcessorHost;
@@ -110,6 +127,19 @@ public class ConsumeAzureEventHub extends AbstractSessionFactoryProcessor {
             .expressionLanguageSupported(true)
             .required(false)
             .build();
+    static final AllowableValue INITIAL_OFFSET_START_OF_STREAM = new AllowableValue(
+            "start-of-stream", "Start of stream", "Read from the oldest message retained in the stream.");
+    static final AllowableValue INITIAL_OFFSET_END_OF_STREAM = new AllowableValue(
+            "end-of-stream", "End of stream",
+            "Ignore old retained messages even if exist, start reading new ones from now.");
+    static final PropertyDescriptor INITIAL_OFFSET = new PropertyDescriptor.Builder()
+            .name("event-hub-initial-offset")
+            .displayName("Initial Offset")
+            .description("Specify where to start receiving messages if offset is not stored in Azure Storage.")
+            .required(true)
+            .allowableValues(INITIAL_OFFSET_START_OF_STREAM, INITIAL_OFFSET_END_OF_STREAM)
+            .defaultValue(INITIAL_OFFSET_END_OF_STREAM.getValue())
+            .build();
     static final PropertyDescriptor PREFETCH_COUNT = new PropertyDescriptor.Builder()
             .name("event-hub-prefetch-count")
             .displayName("Prefetch Count")
@@ -132,6 +162,15 @@ public class ConsumeAzureEventHub extends AbstractSessionFactoryProcessor {
                     " The higher number, the higher throughput, but possibly less consistent.")
             .defaultValue("10")
             .addValidator(StandardValidators.POSITIVE_INTEGER_VALIDATOR)
+            .expressionLanguageSupported(true)
+            .required(true)
+            .build();
+    static final PropertyDescriptor RECEIVE_TIMEOUT = new PropertyDescriptor.Builder()
+            .name("event-hub-message-receive-timeout")
+            .displayName("Message Receive Timeout")
+            .description("The amount of time this consumer should wait to receive the Prefetch Count before returning.")
+            .defaultValue("1 min")
+            .addValidator(StandardValidators.TIME_PERIOD_VALIDATOR)
             .expressionLanguageSupported(true)
             .required(true)
             .build();
@@ -161,7 +200,6 @@ public class ConsumeAzureEventHub extends AbstractSessionFactoryProcessor {
             .expressionLanguageSupported(true)
             .required(false)
             .build();
-    // TODO: Support initial offset so that only new messages can be consumed even if there're old ones.
 
 
     static final Relationship REL_SUCCESS = new Relationship.Builder()
@@ -175,7 +213,7 @@ public class ConsumeAzureEventHub extends AbstractSessionFactoryProcessor {
     static {
         PROPERTIES = Collections.unmodifiableList(Arrays.asList(
                 NAMESPACE, EVENT_HUB_NAME, ACCESS_POLICY_NAME, POLICY_PRIMARY_KEY, CONSUMER_GROUP, CONSUMER_HOSTNAME,
-                PREFETCH_COUNT, BATCH_SIZE,
+                INITIAL_OFFSET, PREFETCH_COUNT, BATCH_SIZE, RECEIVE_TIMEOUT,
                 STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, STORAGE_CONTAINER_NAME
         ));
     }
@@ -262,7 +300,6 @@ public class ConsumeAzureEventHub extends AbstractSessionFactoryProcessor {
 
         @Override
         public void onError(PartitionContext context, Throwable e) {
-            // TODO: what's the difference between this and Exception Notification??
             getLogger().error("An error occurred while receiving messages from Azure Event hub {} at partition {}," +
                             " consumerGroupName={}, exception={}",
                     new Object[]{context.getEventHubPath(), context.getPartitionId(), context.getConsumerGroupName(), e}, e);
@@ -333,8 +370,29 @@ public class ConsumeAzureEventHub extends AbstractSessionFactoryProcessor {
                 eventHubName);
 
 
+        final EventProcessorOptions options = new EventProcessorOptions();
+        final String initialOffset = context.getProperty(INITIAL_OFFSET).getValue();
+        if (INITIAL_OFFSET_START_OF_STREAM.getValue().equals(initialOffset)) {
+            options.setInitialOffsetProvider(options.new StartOfStreamInitialOffsetProvider());
+        } else if (INITIAL_OFFSET_END_OF_STREAM.getValue().equals(initialOffset)){
+            options.setInitialOffsetProvider(options.new EndOfStreamInitialOffsetProvider());
+        } else {
+            throw new IllegalArgumentException("Initial offset " + initialOffset + " is not allowed.");
+        }
+
         final Integer prefetchCount = context.getProperty(PREFETCH_COUNT).evaluateAttributeExpressions().asInteger();
+        if (prefetchCount != null && prefetchCount > 0) {
+            options.setPrefetchCount(prefetchCount);
+        }
+
         final Integer batchSize = context.getProperty(BATCH_SIZE).evaluateAttributeExpressions().asInteger();
+        if (batchSize != null && batchSize > 0) {
+            options.setMaxBatchSize(batchSize);
+        }
+
+        final Long receiveTimeoutMillis = context.getProperty(RECEIVE_TIMEOUT)
+                .evaluateAttributeExpressions().asTimePeriod(TimeUnit.MILLISECONDS);
+        options.setReceiveTimeOut(Duration.ofMillis(receiveTimeoutMillis));
 
         final String storageConnectionString = String.format(AzureConstants.FORMAT_DEFAULT_CONNECTION_STRING, storageAccountName, storageAccountKey);
 
@@ -342,21 +400,12 @@ public class ConsumeAzureEventHub extends AbstractSessionFactoryProcessor {
 
         eventProcessorHost = new EventProcessorHost(consumerHostname, eventHubName, consumerGroupName, eventHubConnectionString.toString(), storageConnectionString, containerName);
 
-        EventProcessorOptions options = new EventProcessorOptions();
         options.setExceptionNotification(e -> {
-            // TODO: error handling.
             getLogger().error("An error occurred while receiving messages from Azure Event hub {}" +
                             " at consumer group {} and partition {}, action={}, hostname={}, exception={}",
                     new Object[]{eventHubName, consumerGroupName, e.getPartitionId(), e.getAction(), e.getHostname()}, e.getException());
         });
 
-        if (prefetchCount != null && prefetchCount > 0) {
-            options.setPrefetchCount(prefetchCount);
-        }
-
-        if (batchSize != null && batchSize > 0) {
-            options.setMaxBatchSize(batchSize);
-        }
 
         eventProcessorHost.registerEventProcessorFactory(new EventProcessorFactory(), options).get();
     }
