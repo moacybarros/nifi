@@ -21,25 +21,29 @@ import com.microsoft.azure.eventprocessorhost.CloseReason;
 import com.microsoft.azure.eventprocessorhost.EventProcessorHost;
 import com.microsoft.azure.eventprocessorhost.EventProcessorOptions;
 import com.microsoft.azure.eventprocessorhost.IEventProcessor;
+import com.microsoft.azure.eventprocessorhost.IEventProcessorFactory;
 import com.microsoft.azure.eventprocessorhost.PartitionContext;
 import com.microsoft.azure.servicebus.ConnectionStringBuilder;
 import org.apache.nifi.annotation.lifecycle.OnStopped;
 import org.apache.nifi.components.PropertyDescriptor;
+import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.processor.AbstractSessionFactoryProcessor;
 import org.apache.nifi.processor.ProcessContext;
+import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.ProcessSessionFactory;
 import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.nifi.processors.azure.AzureConstants;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.nifi.util.StopWatch;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import static org.apache.nifi.util.StringUtils.isEmpty;
 
@@ -51,6 +55,8 @@ public class ConsumeAzureEventHub extends AbstractSessionFactoryProcessor {
 
     private volatile EventProcessorHost eventProcessorHost;
     private volatile ProcessSessionFactory processSessionFactory;
+    // The namespace name can not be retrieved from a PartitionContext at EventProcessor.onEvents, so keep it here.
+    private volatile String namespaceName;
 
     static final PropertyDescriptor NAMESPACE = new PropertyDescriptor.Builder()
             .name("event-hub-namespace")
@@ -104,6 +110,31 @@ public class ConsumeAzureEventHub extends AbstractSessionFactoryProcessor {
             .expressionLanguageSupported(true)
             .required(false)
             .build();
+    static final PropertyDescriptor PREFETCH_COUNT = new PropertyDescriptor.Builder()
+            .name("event-hub-prefetch-count")
+            .displayName("Prefetch Count")
+            .defaultValue("The number of messages to fetch from Event Hub before processing." +
+                    " This parameter affects throughput." +
+                    " The more prefetch count, the better throughput in general, but consumes more resources (RAM).")
+            .addValidator(StandardValidators.POSITIVE_INTEGER_VALIDATOR)
+            .defaultValue("300")
+            .expressionLanguageSupported(true)
+            .required(true)
+            .build();
+    static final PropertyDescriptor BATCH_SIZE = new PropertyDescriptor.Builder()
+            .name("event-hub-batch-size")
+            .displayName("Batch Size")
+            .description("The number of messages to process within a NiFi session." +
+                    " This parameter affects throughput and consistency." +
+                    " NiFi commits its session and Event Hub checkpoint after processing this number of messages." +
+                    " If NiFi session is committed, but failed to create an Event Hub checkpoint," +
+                    " then it is possible that the same messages to be retrieved again." +
+                    " The higher number, the higher throughput, but possibly less consistent.")
+            .defaultValue("10")
+            .addValidator(StandardValidators.POSITIVE_INTEGER_VALIDATOR)
+            .expressionLanguageSupported(true)
+            .required(true)
+            .build();
     static final PropertyDescriptor STORAGE_ACCOUNT_NAME = new PropertyDescriptor.Builder()
             .name("storage-account-name")
             .displayName("Storage Account Name")
@@ -144,6 +175,7 @@ public class ConsumeAzureEventHub extends AbstractSessionFactoryProcessor {
     static {
         PROPERTIES = Collections.unmodifiableList(Arrays.asList(
                 NAMESPACE, EVENT_HUB_NAME, ACCESS_POLICY_NAME, POLICY_PRIMARY_KEY, CONSUMER_GROUP, CONSUMER_HOSTNAME,
+                PREFETCH_COUNT, BATCH_SIZE,
                 STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY, STORAGE_CONTAINER_NAME
         ));
     }
@@ -158,30 +190,80 @@ public class ConsumeAzureEventHub extends AbstractSessionFactoryProcessor {
         return RELATIONSHIPS;
     }
 
-    public static class EventProcessor implements IEventProcessor {
+    public class EventProcessorFactory implements IEventProcessorFactory {
+        @Override
+        public IEventProcessor createEventProcessor(PartitionContext context) throws Exception {
+            final EventProcessor eventProcessor = new EventProcessor();
+            return eventProcessor;
+        }
+    }
 
-        private static Logger logger = LoggerFactory.getLogger(EventProcessor.class);
+    public class EventProcessor implements IEventProcessor {
 
         @Override
         public void onOpen(PartitionContext context) throws Exception {
-            logger.info("Consumer group {} opened partition {} of {}", context.getConsumerGroupName(), context.getPartitionId(), context.getEventHubPath());
+            getLogger().info("Consumer group {} opened partition {} of {}",
+                    new Object[]{context.getConsumerGroupName(), context.getPartitionId(), context.getEventHubPath()});
         }
 
         @Override
         public void onClose(PartitionContext context, CloseReason reason) throws Exception {
-            logger.info("Consumer group {} closed partition {} of {}. reason={}", context.getConsumerGroupName(), context.getPartitionId(), context.getEventHubPath(), reason);
+            getLogger().info("Consumer group {} closed partition {} of {}. reason={}",
+                    new Object[]{context.getConsumerGroupName(), context.getPartitionId(), context.getEventHubPath(), reason});
         }
 
         @Override
         public void onEvents(PartitionContext context, Iterable<EventData> messages) throws Exception {
-            // TODO: implement consuming logic here.
-            messages.forEach(m -> logger.info("Message: {}", new Object[]{new String(m.getBytes(), StandardCharsets.UTF_8)}));
+            final ProcessSession session = processSessionFactory.createSession();
+
+            try {
+                final String eventHubName = context.getEventHubPath();
+                final String partitionId = context.getPartitionId();
+                final String consumerGroup = context.getConsumerGroupName();
+
+                final StopWatch stopWatch = new StopWatch(true);
+                messages.forEach(eventData -> {
+                    // TODO: Share logic with GetAzureEventHub.
+                    final Map<String, String> attributes = new HashMap<>();
+                    FlowFile flowFile = session.create();
+                    final EventData.SystemProperties systemProperties = eventData.getSystemProperties();
+
+                    if (null != systemProperties) {
+                        attributes.put("eventhub.enqueued.timestamp", String.valueOf(systemProperties.getEnqueuedTime()));
+                        attributes.put("eventhub.offset", systemProperties.getOffset());
+                        attributes.put("eventhub.sequence", String.valueOf(systemProperties.getSequenceNumber()));
+                    }
+
+                    attributes.put("eventhub.name", eventHubName);
+                    attributes.put("eventhub.partition", partitionId);
+
+
+                    flowFile = session.putAllAttributes(flowFile, attributes);
+                    flowFile = session.write(flowFile, out -> {
+                        out.write(eventData.getBytes());
+                    });
+
+                    session.transfer(flowFile, REL_SUCCESS);
+                    final String transitUri = "amqps://" + namespaceName + ".servicebus.windows.net/" + eventHubName + "/ConsumerGroups/" + consumerGroup + "/Partitions/" + partitionId;
+                    session.getProvenanceReporter().receive(flowFile, transitUri, stopWatch.getElapsed(TimeUnit.MILLISECONDS));
+                });
+
+                // Commit NiFi first.
+                session.commit();
+                // If creating an Event Hub checkpoint failed, then the same message can be retrieved again.
+                context.checkpoint();
+
+            } catch (Exception e) {
+                getLogger().error("Unable to fully process received message due to " + e, e);
+                session.rollback();
+            }
+
         }
 
         @Override
         public void onError(PartitionContext context, Throwable e) {
             // TODO: what's the difference between this and Exception Notification??
-            logger.error("An error occurred while receiving messages from Azure Event hub {} at partition {}," +
+            getLogger().error("An error occurred while receiving messages from Azure Event hub {} at partition {}," +
                             " consumerGroupName={}, exception={}",
                     new Object[]{context.getEventHubPath(), context.getPartitionId(), context.getConsumerGroupName(), e}, e);
         }
@@ -213,6 +295,7 @@ public class ConsumeAzureEventHub extends AbstractSessionFactoryProcessor {
             try {
                 eventProcessorHost.unregisterEventProcessor();
                 eventProcessorHost = null;
+                processSessionFactory = null;
             } catch (Exception e) {
                 throw new RuntimeException("Failed to unregister the event processor due to " + e, e);
             }
@@ -224,7 +307,7 @@ public class ConsumeAzureEventHub extends AbstractSessionFactoryProcessor {
         final String consumerGroupName = context.getProperty(CONSUMER_GROUP).evaluateAttributeExpressions().getValue();
         validateRequiredProperty(CONSUMER_GROUP, consumerGroupName);
 
-        final String namespaceName = context.getProperty(NAMESPACE).evaluateAttributeExpressions().getValue();
+        namespaceName = context.getProperty(NAMESPACE).evaluateAttributeExpressions().getValue();
         validateRequiredProperty(NAMESPACE, namespaceName);
 
         final String eventHubName = context.getProperty(EVENT_HUB_NAME).evaluateAttributeExpressions().getValue();
@@ -249,6 +332,10 @@ public class ConsumeAzureEventHub extends AbstractSessionFactoryProcessor {
         final String containerName = orDefault(context.getProperty(STORAGE_CONTAINER_NAME).evaluateAttributeExpressions().getValue(),
                 eventHubName);
 
+
+        final Integer prefetchCount = context.getProperty(PREFETCH_COUNT).evaluateAttributeExpressions().asInteger();
+        final Integer batchSize = context.getProperty(BATCH_SIZE).evaluateAttributeExpressions().asInteger();
+
         final String storageConnectionString = String.format(AzureConstants.FORMAT_DEFAULT_CONNECTION_STRING, storageAccountName, storageAccountKey);
 
         final ConnectionStringBuilder eventHubConnectionString = new ConnectionStringBuilder(namespaceName, eventHubName, sasName, sasKey);
@@ -262,7 +349,16 @@ public class ConsumeAzureEventHub extends AbstractSessionFactoryProcessor {
                             " at consumer group {} and partition {}, action={}, hostname={}, exception={}",
                     new Object[]{eventHubName, consumerGroupName, e.getPartitionId(), e.getAction(), e.getHostname()}, e.getException());
         });
-        eventProcessorHost.registerEventProcessor(EventProcessor.class, options).get();
+
+        if (prefetchCount != null && prefetchCount > 0) {
+            options.setPrefetchCount(prefetchCount);
+        }
+
+        if (batchSize != null && batchSize > 0) {
+            options.setMaxBatchSize(batchSize);
+        }
+
+        eventProcessorHost.registerEventProcessorFactory(new EventProcessorFactory(), options).get();
     }
 
     private String orDefault(String value, String defaultValue) {
@@ -274,4 +370,5 @@ public class ConsumeAzureEventHub extends AbstractSessionFactoryProcessor {
             throw new IllegalArgumentException(String.format("'%s' is required, but not specified.", property.getDisplayName()));
         }
     }
+
 }
