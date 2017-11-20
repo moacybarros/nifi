@@ -26,14 +26,17 @@ import org.apache.nifi.provenance.ProvenanceEventType;
 import org.apache.nifi.provenance.lineage.ComputeLineageResult;
 import org.apache.nifi.provenance.lineage.LineageNode;
 import org.apache.nifi.provenance.lineage.LineageNodeType;
+import org.apache.nifi.util.Tuple;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.CRC32;
@@ -67,8 +70,15 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
         analyzeLineagePath(analysisContext, lineagePath);
 
         // Input and output data set are both required to report lineage.
+        List<Tuple<NiFiFlowPath, DataSetRefs>> createdFlowPaths = new ArrayList<>();
         if (lineagePath.isComplete()) {
-            addDataSetRefs(nifiFlow, lineagePath);
+            addDataSetRefs(nifiFlow, lineagePath, createdFlowPaths);
+            for (Tuple<NiFiFlowPath, DataSetRefs> createdFlowPath : createdFlowPaths) {
+                final NiFiFlowPath flowPath = createdFlowPath.getKey();
+                createEntity(toReferenceable(flowPath, nifiFlow));
+                addDataSetRefs(nifiFlow, Collections.singleton(flowPath), createdFlowPath.getValue());
+            }
+            createdFlowPaths.clear();
         }
     }
 
@@ -88,6 +98,7 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
         lineagePath.getEvents().add(lastEvent);
         List<LineageNode> parentEvents = findParentEvents(lineageTree, lastEvent);
 
+        final boolean createSeparateParentPath;
         if (parentEvents == null || parentEvents.isEmpty()) {
 
             switch (lastEvent.getEventType()) {
@@ -103,21 +114,21 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
                         logger.debug("Expanded parents from {} but couldn't find any.", lastEvent);
                         return;
                     }
+
+                    // With these events, always create separate parents regardless of the number of parents.
+                    createSeparateParentPath = true;
                     break;
 
                 default:
                     return;
             }
-        }
-
-        if (parentEvents.size() == 1) {
-            final ProvenanceEventRecord parentEvent = context.getProvenanceEvent(Long.parseLong(parentEvents.get(0).getIdentifier()));
-            if (parentEvent != null) {
-                extractLineagePaths(context, lineageTree, lineagePath, parentEvent);
-            }
 
         } else {
-            // If there are multiple parents, treat those as separated lineage_path
+            createSeparateParentPath = parentEvents.size() > 1;
+        }
+
+        if (createSeparateParentPath) {
+            // Treat those as separated lineage_path
             parentEvents.stream()
                     .map(parentEvent -> context.getProvenanceEvent(Long.parseLong(parentEvent.getIdentifier())))
                     .filter(Objects::nonNull)
@@ -126,6 +137,12 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
                         lineagePath.getParents().add(parentPath);
                         extractLineagePaths(context, lineageTree, parentPath, parent);
                     });
+        } else {
+            // Simply traverse upwards.
+            final ProvenanceEventRecord parentEvent = context.getProvenanceEvent(Long.parseLong(parentEvents.get(0).getIdentifier()));
+            if (parentEvent != null) {
+                extractLineagePaths(context, lineageTree, lineagePath, parentEvent);
+            }
         }
     }
 
@@ -154,7 +171,7 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
                         .add(edge.getSource()));
     }
 
-    private void addDataSetRefs(NiFiFlow nifiFlow, LineagePath lineagePath) {
+    private void addDataSetRefs(NiFiFlow nifiFlow, LineagePath lineagePath, List<Tuple<NiFiFlowPath, DataSetRefs>> createdFlowPaths) {
 
         final List<ProvenanceEventRecord> events = lineagePath.getEvents();
         Collections.reverse(events);
@@ -165,45 +182,62 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
         // Process parents first for two reasons.
         // First, this lineagePath needs parent reference.
         // Second, as parents are significant to distinguish a path from another.
-        // For example, even if two lineagePath path have identical componentIds/inputs/outputs,
-        // if those parents have different inputs, those should be treated as different.
+        // For example, even if two lineagePaths have identical componentIds/inputs/outputs,
+        // if those parents have different inputs, those should be treated as different paths.
+        Referenceable queueBetweenParent = null;
         if (!lineagePath.getParents().isEmpty()) {
             // Add queue between this lineage path and parent.
-            Referenceable queue = new Referenceable(TYPE_NIFI_QUEUE);
+            queueBetweenParent = new Referenceable(TYPE_NIFI_QUEUE);
             // The first event knows why this lineage has parents, e.g. FORK or JOIN.
             final String firstEventType = events.get(0).getEventType().name();
-            queue.set(ATTR_NAME, firstEventType);
-            queue.set(ATTR_QUALIFIED_NAME, firstComponentId + "::" + firstEventType);
-            lineagePath.getRefs().addInput(queue);
+            queueBetweenParent.set(ATTR_NAME, firstEventType);
+            lineagePath.getRefs().addInput(queueBetweenParent);
 
-            lineagePath.getParents().forEach(parent -> {
-                parent.getRefs().addOutput(queue);
-                addDataSetRefs(nifiFlow, parent);
-            });
+            for (LineagePath parent : lineagePath.getParents()) {
+                parent.getRefs().addOutput(queueBetweenParent);
+                addDataSetRefs(nifiFlow, parent, createdFlowPaths);
+            }
         }
 
         // Create a variant path.
         // Calculate a hash from component_ids and input and output resource ids.
-        final List<String> ioIds = Stream.concat(lineagePath.getRefs().getInputs().stream(), lineagePath.getRefs().getOutputs().stream())
-                .map(ref -> ref.getTypeName() + "::" + ref.get(ATTR_QUALIFIED_NAME))
-                .collect(Collectors.toList());
+        final Stream<String> ioIds = Stream.concat(lineagePath.getRefs().getInputs().stream(), lineagePath.getRefs().getOutputs()
+                .stream()).map(ref -> ref.getTypeName() + "::" + ref.get(ATTR_QUALIFIED_NAME));
 
+        final Stream<String> parentHashes = lineagePath.getParents().stream().map(p -> String.valueOf(p.getLineagePathHash()));
         final CRC32 crc32 = new CRC32();
-        crc32.update(Stream.concat(componentIds.stream(), ioIds.stream())
+        // TODO: add parent hash to hash
+        crc32.update(Stream.of(componentIds.stream(), ioIds, parentHashes).reduce(Stream::concat).orElseGet(Stream::empty)
+                .sorted().distinct()
                 .collect(Collectors.joining(",")).getBytes(StandardCharsets.UTF_8));
 
-        final NiFiFlowPath flowPath = new NiFiFlowPath(firstComponentId, crc32.getValue());
+        final long hash = crc32.getValue();
+        lineagePath.setLineagePathHash(hash);
+        final NiFiFlowPath flowPath = new NiFiFlowPath(firstComponentId, hash);
 
+        // In order to differentiate a queue between parents and this flow_path, add the hash into the queue qname.
+        // E.g, FF1 and FF2 read from dirA were merged, vs FF3 and FF4 read from dirB were merged then passed here, these two should be different queue.
+        if (queueBetweenParent != null) {
+            queueBetweenParent.set(ATTR_QUALIFIED_NAME, firstComponentId + "::" + hash);
+        }
+
+        // Different componentIds can identify the same flow_path, so make it unique here.
+        final Set<String> uniquePathIds = new HashSet<>();
         final String pathName = componentIds.stream()
-                .map(componentId -> nifiFlow.findPath(componentId)).filter(Objects::nonNull)
-                // Different componentIds can identify the same flow_path, so make it unique here.
-                .collect(Collectors.toSet()).stream()
-                .map(path -> path.getName()).collect(Collectors.joining(" -> "));
+                .map(componentId -> nifiFlow.findPath(componentId))
+                .filter(Objects::nonNull)
+                // Skip a path if it's already added to the name.
+                .filter(path -> !uniquePathIds.contains(path.getId()))
+                .map(path -> {
+                    uniquePathIds.add(path.getId());
+                    return path.getName();
+                })
+                .collect(Collectors.joining(" -> "));
 
         flowPath.setName(pathName);
         flowPath.setGroupId(nifiFlow.findPath(firstComponentId).getGroupId());
 
-        createEntity(toReferenceable(flowPath, nifiFlow));
-        addDataSetRefs(nifiFlow, Collections.singleton(flowPath), lineagePath.getRefs());
+        // To defer send notification until entire lineagePath analysis gets finished, just add the instance into a buffer.
+        createdFlowPaths.add(new Tuple<>(flowPath, lineagePath.getRefs()));
     }
 }

@@ -162,7 +162,9 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             .name("atlas-kafka-bootstrap-servers")
             .displayName("Atlas Kafka Bootstrap Servers")
             .description("Kafka Bootstrap Servers to send Atlas hook notification messages based on NiFi provenance events." +
-                    " E.g. 'localhost:9092'")
+                    " E.g. 'localhost:9092'" +
+                    " NOTE: Once this reporting task has started, restarting NiFi is required to changed this property" +
+                    " as Atlas library holds a unmodifiable static reference to Kafka client.")
             .required(false)
             .expressionLanguageSupported(true)
             .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
@@ -320,9 +322,9 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         List<String> urls = new ArrayList<>();
         parseAtlasUrls(context.getProperty(ATLAS_URLS), url -> urls.add(url));
 
-        final String user = context.getProperty(ATLAS_USER).getValue();
-        final String password = context.getProperty(ATLAS_PASSWORD).getValue();
-        final String confDirStr = context.getProperty(ATLAS_CONF_DIR).getValue();
+        final String user = context.getProperty(ATLAS_USER).evaluateAttributeExpressions().getValue();
+        final String password = context.getProperty(ATLAS_PASSWORD).evaluateAttributeExpressions().getValue();
+        final String confDirStr = context.getProperty(ATLAS_CONF_DIR).evaluateAttributeExpressions().getValue();
         final File confDir = confDirStr != null && !confDirStr.isEmpty() ? new File(confDirStr) : null;
 
         atlasProperties = new Properties();

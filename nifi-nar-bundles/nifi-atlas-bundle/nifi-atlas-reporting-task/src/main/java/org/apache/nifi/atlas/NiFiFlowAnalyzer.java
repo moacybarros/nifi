@@ -116,7 +116,7 @@ public class NiFiFlowAnalyzer {
             // Ignore self relationship.
             final String sourceId = c.getSourceId();
             if (!sourceId.equals(c.getDestinationId())) {
-                if (nifiFlow.getProcessors().containsKey(sourceId)) {
+                if (nifiFlow.isProcessor(sourceId)) {
                     ids.add(sourceId);
                 } else {
                     ids.addAll(getIncomingProcessorsIds(nifiFlow, nifiFlow.getIncomingRelationShips(sourceId)));
@@ -125,6 +125,29 @@ public class NiFiFlowAnalyzer {
         });
 
         return ids;
+    }
+
+    private List<String> getNextProcessors(NiFiFlow nifiFlow, NiFiFlowPath path, String componentId) {
+        final List<ConnectionStatus> outs = nifiFlow.getOutgoingRelationShips(componentId);
+        if (outs == null || outs.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        final List<String> nextProcessors = new ArrayList<>();
+        for (ConnectionStatus out : outs) {
+            final String destinationId = out.getDestinationId();
+            if (path.getProcessorIds().contains(destinationId)) {
+                // If the connection is pointing back to current path, then skip it to avoid loop.
+                continue;
+            }
+
+            if (nifiFlow.isProcessor(destinationId)) {
+                nextProcessors.add(destinationId);
+            } else {
+                nextProcessors.addAll(getNextProcessors(nifiFlow, path, destinationId));
+            }
+        }
+        return nextProcessors;
     }
 
     private void traverse(NiFiFlow nifiFlow, List<NiFiFlowPath> paths, NiFiFlowPath path, String pid) {
@@ -164,29 +187,22 @@ public class NiFiFlowAnalyzer {
         }
 
         final List<ConnectionStatus> outs = nifiFlow.getOutgoingRelationShips(pid);
-        if (outs == null) {
+        if (outs == null || outs.isEmpty()) {
             return;
         }
 
-        // Skip non-processor outputs, go one level deeper.
-        final Predicate<ConnectionStatus> isProcessor = c -> nifiFlow.getProcessors().containsKey(c.getDestinationId());
-        outs.stream().filter(isProcessor.negate())
-                .map(c -> c.getDestinationId())
-                .forEach(destId -> traverse(nifiFlow, paths, path, destId));
-
         // Analyze destination processors.
-        outs.stream().filter(isProcessor).forEach(out -> {
-            final String destPid = out.getDestinationId();
-            if (pid.equals(destPid)) {
-                // Avoid loop.
+        final List<String> nextProcessors = getNextProcessors(nifiFlow, path, pid);
+        nextProcessors.forEach(destPid -> {
+            if (path.getProcessorIds().contains(destPid)) {
+                // Avoid loop to it self.
                 return;
             }
 
-            // Count how many incoming relationship the destination has.
-            long destIncomingConnectionCount = getIncomingProcessorsIds(nifiFlow, nifiFlow.getIncomingRelationShips(destPid)).size();
+            // If destination has more than one inputs, or there are multiple destinations, it is an independent flow path.
+            final boolean createJointPoint = nextProcessors.size() > 1 || getIncomingProcessorsIds(nifiFlow, nifiFlow.getIncomingRelationShips(destPid)).size() > 1;
 
-            if (destIncomingConnectionCount > 1) {
-                // If destination has more than one (except the destination itself), it is an independent flow path.
+            if (createJointPoint) {
                 final NiFiFlowPath newJointPoint = new NiFiFlowPath(destPid);
 
                 final boolean exists = paths.contains(newJointPoint);

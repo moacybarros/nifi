@@ -955,6 +955,7 @@ public class ITAtlasNiFiFlowLineage {
     @Test
     public void testSimpleEventLevel() throws Exception {
         final TestConfiguration tc = new TestConfiguration("SimpleEventLevel");
+        tc.properties.put(NIFI_LINEAGE_STRATEGY, LINEAGE_STRATEGY_COMPLETE_PATH.getValue());
         final ProvenanceRecords prs = tc.provenanceRecords;
 
         String flowFileUUIDA = "A0000000-0000-0000";
@@ -984,6 +985,7 @@ public class ITAtlasNiFiFlowLineage {
     @Test
     public void testMergedEvents() throws Exception {
         final TestConfiguration tc = new TestConfiguration("MergedEvents");
+        tc.properties.put(NIFI_LINEAGE_STRATEGY, LINEAGE_STRATEGY_COMPLETE_PATH.getValue());
         final ProvenanceRecords prs = tc.provenanceRecords;
         final String flowFileUUIDA = "A0000000-0000-0000";
         final String flowFileUUIDB = "B0000000-0000-0000";
@@ -1018,7 +1020,7 @@ public class ITAtlasNiFiFlowLineage {
         lineages.put(11L, createLineage(prs, 4, 8, 11)); // BC
         lineages.put(12L, createLineage(prs, 3, 9, 12)); // D
 
-        Map<Long, ComputeLineageResult> parents = new HashMap<>();
+        Map<Long, ComputeLineageResult> parents = tc.parentLineageResults;
         parents.put(4L, compositeLineages(lineageB, lineageC));
 
         test(tc);
@@ -1033,6 +1035,7 @@ public class ITAtlasNiFiFlowLineage {
     @Test
     public void testRecordAndDataSetLevel() throws Exception {
         final TestConfiguration tc = new TestConfiguration("RecordAndDataSetLevel");
+        tc.properties.put(NIFI_LINEAGE_STRATEGY, LINEAGE_STRATEGY_COMPLETE_PATH.getValue());
         final ProvenanceRecords prs = tc.provenanceRecords;
 
         // Publish part
@@ -1079,6 +1082,39 @@ public class ITAtlasNiFiFlowLineage {
         final Lineage lineage = getLineage();
 
         // TODO: assert
+    }
+
+    @Test
+    public void testMultiInAndOuts() throws Exception {
+        final TestConfiguration tc = new TestConfiguration("MultiInAndOuts");
+        final ProvenanceRecords prs = tc.provenanceRecords;
+
+        test(tc);
+
+        waitNotificationsGetDelivered();
+
+        final Lineage lineage = getLineage();
+
+        final Node gen1 = lineage.findNode("nifi_flow_path", "Gen1", "a4bfe4ec-570b-3126");
+        final Node gen2 = lineage.findNode("nifi_flow_path", "Gen2", "894218d5-dfe9-3ee5");
+        final Node ua1 = lineage.findNode("nifi_flow_path", "UA1", "5609cb4f-8a95-3b7a");
+        final Node ua2 = lineage.findNode("nifi_flow_path", "UA2", "6f88b3d9-5723-356a");
+        final Node ua3 = lineage.findNode("nifi_flow_path", "UA3, UA4, LogAttribute", "3250aeb6-4026-3969");
+        final Node ua1Q = lineage.findNode("nifi_queue", "queue", "5609cb4f-8a95-3b7a");
+        final Node ua2Q = lineage.findNode("nifi_queue", "queue", "6f88b3d9-5723-356a");
+        final Node ua3Q = lineage.findNode("nifi_queue", "queue", "3250aeb6-4026-3969");
+
+        lineage.assertLink(gen1, ua1Q);
+        lineage.assertLink(gen1, ua2Q);
+
+        lineage.assertLink(gen2, ua2Q);
+
+        lineage.assertLink(ua1Q, ua1);
+        lineage.assertLink(ua2Q, ua2);
+
+        lineage.assertLink(ua1, ua3Q);
+        lineage.assertLink(ua2, ua3Q);
+        lineage.assertLink(ua3Q, ua3);
     }
 
 

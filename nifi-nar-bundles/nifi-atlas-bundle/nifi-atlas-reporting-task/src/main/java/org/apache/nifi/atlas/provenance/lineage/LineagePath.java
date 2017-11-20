@@ -27,6 +27,7 @@ public class LineagePath {
     private List<ProvenanceEventRecord> events = new ArrayList<>();
     private List<LineagePath> parents = new ArrayList<>();
     private DataSetRefs refs;
+    private long lineagePathHash;
 
     /**
      * NOTE: The list contains provenance events in reversed order, i.e. the last one first.
@@ -57,5 +58,13 @@ public class LineagePath {
 
     public boolean hasOutput() {
         return (refs != null && !refs.getOutputs().isEmpty()) || parents.stream().anyMatch(parent -> parent.hasOutput());
+    }
+
+    public long getLineagePathHash() {
+        return lineagePathHash;
+    }
+
+    public void setLineagePathHash(long lineagePathHash) {
+        this.lineagePathHash = lineagePathHash;
     }
 }
