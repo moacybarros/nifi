@@ -49,7 +49,7 @@ public class ITNiFiAtlasClient {
 
     @Test
     public void testSearch() throws Exception {
-        final AtlasObjectId atlasObjectId = new AtlasObjectId("kafka_topic", "topic", "my-topic-01");
+        final AtlasObjectId atlasObjectId = new AtlasObjectId("kafka_topic", "topic", "nifi-test");
         final AtlasEntity.AtlasEntityWithExtInfo entityDef = atlasClient.searchEntityDef(atlasObjectId);
         logger.info("entityDef={}", entityDef);
     }

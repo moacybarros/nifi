@@ -52,4 +52,10 @@ public class NiFIAtlasHook extends AtlasHook implements LineageContext {
             messages.clear();
         }
     }
+
+    public void close() {
+        if (notificationInterface != null) {
+            notificationInterface.close();
+        }
+    }
 }

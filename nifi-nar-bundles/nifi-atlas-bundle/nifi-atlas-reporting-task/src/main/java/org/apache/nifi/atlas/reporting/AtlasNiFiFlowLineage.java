@@ -17,7 +17,11 @@
 package org.apache.nifi.atlas.reporting;
 
 import org.apache.atlas.AtlasServiceException;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.config.SslConfigs;
 import org.apache.nifi.annotation.behavior.DynamicProperty;
+import org.apache.nifi.annotation.behavior.RequiresInstanceClassLoading;
 import org.apache.nifi.annotation.behavior.Stateful;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
 import org.apache.nifi.annotation.documentation.Tags;
@@ -28,9 +32,9 @@ import org.apache.nifi.atlas.NiFiAtlasClient;
 import org.apache.nifi.atlas.NiFiFlow;
 import org.apache.nifi.atlas.NiFiFlowAnalyzer;
 import org.apache.nifi.atlas.provenance.AnalysisContext;
+import org.apache.nifi.atlas.provenance.StandardAnalysisContext;
 import org.apache.nifi.atlas.provenance.lineage.CompleteFlowPathLineage;
 import org.apache.nifi.atlas.provenance.lineage.LineageStrategy;
-import org.apache.nifi.atlas.provenance.StandardAnalysisContext;
 import org.apache.nifi.atlas.provenance.lineage.SimpleFlowPathLineage;
 import org.apache.nifi.atlas.resolver.ClusterResolver;
 import org.apache.nifi.atlas.resolver.ClusterResolvers;
@@ -41,6 +45,7 @@ import org.apache.nifi.components.PropertyValue;
 import org.apache.nifi.components.ValidationContext;
 import org.apache.nifi.components.ValidationResult;
 import org.apache.nifi.components.state.Scope;
+import org.apache.nifi.context.PropertyContext;
 import org.apache.nifi.controller.ConfigurationContext;
 import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.processor.util.StandardValidators;
@@ -50,6 +55,7 @@ import org.apache.nifi.reporting.AbstractReportingTask;
 import org.apache.nifi.reporting.EventAccess;
 import org.apache.nifi.reporting.ReportingContext;
 import org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer;
+import org.apache.nifi.ssl.SSLContextService;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -66,13 +72,13 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.function.Consumer;
 
 import static org.apache.commons.lang3.StringUtils.isEmpty;
-import static org.apache.nifi.provenance.ProvenanceEventType.DROP;
 import static org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer.PROVENANCE_BATCH_SIZE;
 import static org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer.PROVENANCE_START_POSITION;
 
@@ -83,6 +89,8 @@ import static org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer.
         " There are limitations and required configurations for both NiFi and Atlas. See 'Additional Details' for further description.")
 @Stateful(scopes = Scope.LOCAL, description = "Stores the Reporting Task's last event Id so that on restart the task knows where it left off.")
 @DynamicProperty(name = "hostnamePattern.<ClusterName>", value = "hostname Regex patterns", description = RegexClusterResolver.PATTERN_PROPERTY_PREFIX_DESC)
+// In order for each reporting task instance to have its own static objects such as KafkaNotification.
+@RequiresInstanceClassLoading
 public class AtlasNiFiFlowLineage extends AbstractReportingTask {
 
     static final PropertyDescriptor ATLAS_URLS = new PropertyDescriptor.Builder()
@@ -158,6 +166,15 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             .defaultValue("false")
             .build();
 
+    // TODO: Validation, if SSL is used for Kafka communication, this is required.
+    static final PropertyDescriptor SSL_CONTEXT_SERVICE = new PropertyDescriptor.Builder()
+            .name("ssl-context-service")
+            .displayName("SSL Context Service")
+            .description("Specifies the SSL Context Service to use for communicating with Atlas and Kafka.")
+            .required(false)
+            .identifiesControllerService(SSLContextService.class)
+            .build();
+
     static final PropertyDescriptor ATLAS_KAFKA_BOOTSTRAP_SERVERS = new PropertyDescriptor.Builder()
             .name("atlas-kafka-bootstrap-servers")
             .displayName("Atlas Kafka Bootstrap Servers")
@@ -168,6 +185,54 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             .required(false)
             .expressionLanguageSupported(true)
             .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
+            .build();
+
+    static final AllowableValue SEC_PLAINTEXT = new AllowableValue("PLAINTEXT", "PLAINTEXT", "PLAINTEXT");
+    static final AllowableValue SEC_SSL = new AllowableValue("SSL", "SSL", "SSL");
+    static final AllowableValue SEC_SASL_PLAINTEXT = new AllowableValue("SASL_PLAINTEXT", "SASL_PLAINTEXT", "SASL_PLAINTEXT");
+    static final AllowableValue SEC_SASL_SSL = new AllowableValue("SASL_SSL", "SASL_SSL", "SASL_SSL");
+    static final PropertyDescriptor ATLAS_KAFKA_SECURITY_PROTOCOL = new PropertyDescriptor.Builder()
+            .name("atlas-kafka-security-protocol")
+            .displayName("Atlas Kafka Security Protocol")
+            .description("Protocol used to communicate with Kafka brokers to send Atlas hook notification messages." +
+                    " Corresponds to Kafka's 'security.protocol' property.")
+            .required(true)
+            .expressionLanguageSupported(false)
+            .allowableValues(SEC_PLAINTEXT, SEC_SSL, SEC_SASL_PLAINTEXT, SEC_SASL_SSL)
+            .defaultValue(SEC_PLAINTEXT.getValue())
+            .build();
+
+    static final PropertyDescriptor ATLAS_KAFKA_KERBEROS_SERVICE_NAME = new PropertyDescriptor.Builder()
+            .name("atlas-kafka-sasl-kerberos-service-name")
+            .displayName("Atlas Kafka Kerberos Service Name")
+            .description("The Kerberos principal name that Kafka runs as for Atlas notification." +
+                    " This can be defined either in Kafka's JAAS config or in Kafka's config." +
+                    " Corresponds to Kafka's 'security.protocol' property." +
+                    " It is ignored unless one of the SASL options of the <Security Protocol> are selected.")
+            .required(false)
+            .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
+            .expressionLanguageSupported(false)
+            .defaultValue("kafka")
+            .build();
+    static final PropertyDescriptor ATLAS_KAFKA_KERBEROS_USER_PRINCIPAL = new PropertyDescriptor.Builder()
+            .name("atlas-kafka-sasl-kerberos-principal")
+            .displayName("Atlas Kafka Kerberos Principal")
+            .description("The Kerberos principal that will be used to connect to Kafka brokers for Atlas notification." +
+                    " If not set, it is expected to set a JAAS configuration file in the JVM properties defined in the bootstrap.conf file." +
+                    " This principal will be set into 'sasl.jaas.config' Kafka's property.")
+            .required(false)
+            .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
+            .expressionLanguageSupported(false)
+            .build();
+    static final PropertyDescriptor ATLAS_KAFKA_KERBEROS_USER_KEYTAB = new PropertyDescriptor.Builder()
+            .name("atlas-kafka-sasl-kerberos-keytab")
+            .displayName("Atlas Kafka Kerberos Keytab")
+            .description("The Kerberos keytab that will be used to connect to Kafka brokers for Atlas notification." +
+                    " If not set, it is expected to set a JAAS configuration file in the JVM properties defined in the bootstrap.conf file." +
+                    " This principal will be set into 'sasl.jaas.config' Kafka's property.")
+            .required(false)
+            .addValidator(StandardValidators.FILE_EXISTS_VALIDATOR)
+            .expressionLanguageSupported(false)
             .build();
 
     // TODO: doc
@@ -185,7 +250,9 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
 
     private static final String ATLAS_PROPERTIES_FILENAME = "atlas-application.properties";
     private static final String ATLAS_PROPERTY_CLUSTER_NAME = "atlas.cluster.name";
-    private static final String ATLAS_PROPERTY_KAFKA_BOOTSTRAP_SERVERS = "atlas.kafka.bootstrap.servers";
+    private static final String ATLAS_KAFKA_PREFIX = "atlas.kafka.";
+    private static final String ATLAS_PROPERTY_KAFKA_BOOTSTRAP_SERVERS = ATLAS_KAFKA_PREFIX + "bootstrap.servers";
+    private static final String ATLAS_PROPERTY_KAFKA_CLIENT_ID = ATLAS_KAFKA_PREFIX + ProducerConfig.CLIENT_ID_CONFIG;
     private final ServiceLoader<ClusterResolver> clusterResolverLoader = ServiceLoader.load(ClusterResolver.class);
     private volatile NiFiAtlasClient atlasClient;
     private volatile Properties atlasProperties;
@@ -198,7 +265,10 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
     private volatile LineageStrategy lineageStrategy;
 
     private static PropertyDescriptor[] propertiesOnlyToCreateAtlasConf = new PropertyDescriptor[] {
-            ATLAS_KAFKA_BOOTSTRAP_SERVERS
+            ATLAS_KAFKA_BOOTSTRAP_SERVERS,
+            ATLAS_KAFKA_KERBEROS_SERVICE_NAME,
+            ATLAS_KAFKA_KERBEROS_USER_PRINCIPAL,
+            ATLAS_KAFKA_KERBEROS_USER_KEYTAB
     };
 
     private static PropertyDescriptor[] requiredPropertiesToCreateAtlasConf = new PropertyDescriptor[] {
@@ -219,12 +289,17 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         properties.add(NIFI_LINEAGE_STRATEGY);
         properties.add(PROVENANCE_START_POSITION);
         properties.add(PROVENANCE_BATCH_SIZE);
+        properties.add(SSL_CONTEXT_SERVICE);
 
         // Following properties are required if ATLAS_CONF_CREATE is enabled.
         // Otherwise should be left blank.
         // TODO: need Kerbelized Kafka support, https://community.hortonworks.com/articles/58370/kafka-topic-creation-and-acl-configuration-for-atl.html
         properties.add(ATLAS_CONF_CREATE);
         properties.add(ATLAS_KAFKA_BOOTSTRAP_SERVERS);
+        properties.add(ATLAS_KAFKA_SECURITY_PROTOCOL);
+        properties.add(ATLAS_KAFKA_KERBEROS_SERVICE_NAME);
+        properties.add(ATLAS_KAFKA_KERBEROS_USER_PRINCIPAL);
+        properties.add(ATLAS_KAFKA_KERBEROS_USER_KEYTAB);
 
         return properties;
     }
@@ -278,7 +353,8 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             for (PropertyDescriptor p : propertiesOnlyToCreateAtlasConf) {
                 if (validationContext.getProperty(p).isSet()) {
                     results.add(new ValidationResult.Builder().subject(p.getDisplayName())
-                            .explanation(String.format("'%s' should be left blank when '%s' is disabled.",
+                            .explanation(String.format("'%s' should be left blank when '%s' is disabled," +
+                                            " or enable it to use the specified property.",
                                     p.getDisplayName(), ATLAS_CONF_CREATE.getDisplayName())).valid(false).build());
                 }
             }
@@ -370,8 +446,8 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         if (createAtlasConf) {
 
             atlasProperties.put(ATLAS_PROPERTY_CLUSTER_NAME, defaultClusterName);
-            final String kafkaBootStrapServers = context.getProperty(ATLAS_KAFKA_BOOTSTRAP_SERVERS).evaluateAttributeExpressions().getValue();
-            atlasProperties.put(ATLAS_PROPERTY_KAFKA_BOOTSTRAP_SERVERS, kafkaBootStrapServers);
+
+            setKafkaConfig(atlasProperties, context);
 
             try (FileOutputStream fos = new FileOutputStream(atlasPropertiesFile)) {
                 String ts = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX")
@@ -406,6 +482,10 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
     public void onUnscheduled() {
         if (consumer != null) {
             consumer.setScheduled(false);
+        }
+        if (nifiAtlasHook != null) {
+            nifiAtlasHook.close();
+            nifiAtlasHook = null;
         }
     }
 
@@ -487,6 +567,62 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         });
     }
 
+    private void setKafkaConfig(Map<Object, Object> mapToPopulate, PropertyContext context) {
 
+        final String kafkaBootStrapServers = context.getProperty(ATLAS_KAFKA_BOOTSTRAP_SERVERS).evaluateAttributeExpressions().getValue();
+        mapToPopulate.put(ATLAS_PROPERTY_KAFKA_BOOTSTRAP_SERVERS, kafkaBootStrapServers);
+        mapToPopulate.put(ATLAS_PROPERTY_KAFKA_CLIENT_ID, String.format("%s.%s", getName(), getIdentifier()));
+
+        final String kafkaSecurityProtocol = context.getProperty(ATLAS_KAFKA_SECURITY_PROTOCOL).getValue();
+        mapToPopulate.put(ATLAS_KAFKA_PREFIX + "security.protocol", kafkaSecurityProtocol);
+
+        // Translate SSLContext Service configuration into Kafka properties
+        final SSLContextService sslContextService = context.getProperty(SSL_CONTEXT_SERVICE).asControllerService(SSLContextService.class);
+        if (sslContextService != null && sslContextService.isKeyStoreConfigured()) {
+            mapToPopulate.put(ATLAS_KAFKA_PREFIX + SslConfigs.SSL_KEYSTORE_LOCATION_CONFIG, sslContextService.getKeyStoreFile());
+            mapToPopulate.put(ATLAS_KAFKA_PREFIX + SslConfigs.SSL_KEYSTORE_PASSWORD_CONFIG, sslContextService.getKeyStorePassword());
+            final String keyPass = sslContextService.getKeyPassword() == null ? sslContextService.getKeyStorePassword() : sslContextService.getKeyPassword();
+            mapToPopulate.put(ATLAS_KAFKA_PREFIX + SslConfigs.SSL_KEY_PASSWORD_CONFIG, keyPass);
+            mapToPopulate.put(ATLAS_KAFKA_PREFIX + SslConfigs.SSL_KEYSTORE_TYPE_CONFIG, sslContextService.getKeyStoreType());
+        }
+
+        if (sslContextService != null && sslContextService.isTrustStoreConfigured()) {
+            mapToPopulate.put(ATLAS_KAFKA_PREFIX + SslConfigs.SSL_TRUSTSTORE_LOCATION_CONFIG, sslContextService.getTrustStoreFile());
+            mapToPopulate.put(ATLAS_KAFKA_PREFIX + SslConfigs.SSL_TRUSTSTORE_PASSWORD_CONFIG, sslContextService.getTrustStorePassword());
+            mapToPopulate.put(ATLAS_KAFKA_PREFIX + SslConfigs.SSL_TRUSTSTORE_TYPE_CONFIG, sslContextService.getTrustStoreType());
+        }
+
+        if (SEC_SASL_PLAINTEXT.equals(kafkaSecurityProtocol) || SEC_SASL_SSL.equals(kafkaSecurityProtocol)) {
+            setKafkaJaasConfig(mapToPopulate, context);
+        }
+
+    }
+
+    /**
+     * Populate Kafka JAAS properties for Atlas notification.
+     * Since Atlas 0.8.1 uses Kafka client 0.10.0.0, we can not use 'sasl.jaas.config' property
+     * as it is available since 0.10.2, implemented by KAFKA-4259.
+     * Instead, this method uses old property names.
+     * @param mapToPopulate Map of configuration properties
+     * @param context Context
+     */
+    private void setKafkaJaasConfig(Map<Object, Object> mapToPopulate, PropertyContext context) {
+        String keytab = context.getProperty(ATLAS_KAFKA_KERBEROS_USER_KEYTAB).getValue();
+        String principal = context.getProperty(ATLAS_KAFKA_KERBEROS_USER_PRINCIPAL).getValue();
+        String serviceName = context.getProperty(ATLAS_KAFKA_KERBEROS_SERVICE_NAME).getValue();
+        if(StringUtils.isNotBlank(keytab) && StringUtils.isNotBlank(principal) && StringUtils.isNotBlank(serviceName)) {
+            mapToPopulate.put("atlas.jaas.KafkaClient.loginModuleControlFlag", "required");
+            mapToPopulate.put("atlas.jaas.KafkaClient.loginModuleName", "com.sun.security.auth.module.Krb5LoginModule");
+            mapToPopulate.put("atlas.jaas.KafkaClient.option.keyTab", keytab);
+            mapToPopulate.put("atlas.jaas.KafkaClient.option.principal", principal);
+            mapToPopulate.put("atlas.jaas.KafkaClient.option.serviceName", serviceName);
+            mapToPopulate.put("atlas.jaas.KafkaClient.option.storeKey", "True");
+            mapToPopulate.put("atlas.jaas.KafkaClient.option.useKeyTab", "True");
+            mapToPopulate.put("atlas.jaas.ticketBased-KafkaClient.loginModuleControlFlag", "required");
+            mapToPopulate.put("atlas.jaas.ticketBased-KafkaClient.loginModuleName", "com.sun.security.auth.module.Krb5LoginModule");
+            mapToPopulate.put("atlas.jaas.ticketBased-KafkaClient.option.useTicketCache", "true");
+            mapToPopulate.put(ATLAS_KAFKA_PREFIX + "sasl.kerberos.service.name", serviceName);
+        }
+    }
 
 }
