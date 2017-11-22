@@ -28,6 +28,7 @@ import org.apache.atlas.model.instance.EntityMutationResponse;
 import org.apache.atlas.model.typedef.AtlasEntityDef;
 import org.apache.atlas.model.typedef.AtlasStructDef.AtlasAttributeDef;
 import org.apache.atlas.model.typedef.AtlasTypesDef;
+import org.apache.nifi.atlas.security.AtlasAuthN;
 import org.apache.nifi.controller.status.ProcessorStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -83,7 +84,11 @@ public class NiFiAtlasClient {
         return nifiClient;
     }
 
-    public void initialize(final String[] baseUrls, final String user, final String password, final File atlasConfDir) {
+    public static class AtlasAuthNMethod {
+
+    }
+
+    public void initialize(final String[] baseUrls, final AtlasAuthN authN, final File atlasConfDir) {
 
         synchronized (NiFiAtlasClient.class) {
 
@@ -100,7 +105,7 @@ public class NiFiAtlasClient {
                 logger.debug("{} has been set to: {}", atlasConfProp, props.getProperty(atlasConfProp));
             }
 
-            atlasClient = new AtlasClientV2(baseUrls, new String[]{user, password});
+            atlasClient = authN.createClient(baseUrls);
 
         }
     }

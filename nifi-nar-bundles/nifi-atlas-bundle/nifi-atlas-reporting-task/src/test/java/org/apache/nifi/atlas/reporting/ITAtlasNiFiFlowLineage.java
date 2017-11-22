@@ -98,22 +98,6 @@ public class ITAtlasNiFiFlowLineage {
 
     private static final Logger logger = LoggerFactory.getLogger(ITAtlasNiFiFlowLineage.class);
 
-    private NiFiAtlasClient atlasClient;
-
-    @Before
-    public void setup() throws Exception {
-
-        atlasClient = NiFiAtlasClient.getInstance();
-        // Add your atlas server ip address into /etc/hosts as atlas.example.com
-        atlasClient.initialize(new String[]{"http://atlas.example.com:21000/"}, "admin", "admin", null);
-
-        final Properties atlasProperties = new Properties();
-        try (InputStream in = ITAtlasNiFiFlowLineage.class.getResourceAsStream("/atlas-application.properties")) {
-            atlasProperties.load(in);
-        }
-
-    }
-
     private ProcessGroupStatus loadTemplate(String name) {
 
         final SAXParserFactory saxParserFactory = SAXParserFactory.newInstance();
