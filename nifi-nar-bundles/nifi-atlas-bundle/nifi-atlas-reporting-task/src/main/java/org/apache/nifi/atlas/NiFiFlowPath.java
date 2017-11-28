@@ -24,7 +24,7 @@ import java.util.List;
 import java.util.Set;
 
 public class NiFiFlowPath implements AtlasProcess {
-    private final List<String> processorIds = new ArrayList<>();
+    private final List<String> processComponentIds = new ArrayList<>();
 
     private final String id;
     private final Set<AtlasObjectId> inputs = new HashSet<>();
@@ -60,7 +60,7 @@ public class NiFiFlowPath implements AtlasProcess {
     }
 
     public void addProcessor(String processorId) {
-        processorIds.add(processorId);
+        processComponentIds.add(processorId);
     }
 
     public Set<AtlasObjectId> getInputs() {
@@ -71,8 +71,8 @@ public class NiFiFlowPath implements AtlasProcess {
         return outputs;
     }
 
-    public List<String> getProcessorIds() {
-        return processorIds;
+    public List<String> getProcessComponentIds() {
+        return processComponentIds;
     }
 
     public String getId() {
@@ -103,7 +103,7 @@ public class NiFiFlowPath implements AtlasProcess {
                 "name='" + name + '\'' +
                 ", inputs=" + inputs +
                 ", outputs=" + outputs +
-                ", processorIds=" + processorIds +
+                ", processComponentIds=" + processComponentIds +
                 '}';
     }
 

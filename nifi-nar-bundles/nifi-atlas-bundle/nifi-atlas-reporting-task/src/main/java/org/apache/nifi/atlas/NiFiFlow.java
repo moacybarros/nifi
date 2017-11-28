@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW;
@@ -169,21 +170,23 @@ public class NiFiFlow {
         return flowPaths;
     }
 
-    public NiFiFlowPath findPath(String componentId) {
-        return findPath(componentId, false);
-    }
-
     /**
-     * Find a flow_path that contains specified compoentId.
-     * If any flow_path was not found, and is referable from root path, then return the root path.
+     * Find a flow_path that contains specified componentId.
      */
-    public NiFiFlowPath findPath(String componentId, boolean referableFromRootPath) {
+    public NiFiFlowPath findPath(String componentId) {
         for (NiFiFlowPath path: flowPaths) {
-            if (path.getProcessorIds().contains(componentId)){
+            if (path.getProcessComponentIds().contains(componentId)){
                 return path;
             }
         }
-        return referableFromRootPath ? flowPaths.get(0) : null;
+        return null;
+    }
+
+    /**
+     * Determine if a component should be reported as NiFiFlowPath.
+     */
+    public boolean isProcessComponent(String componentId) {
+        return isProcessor(componentId) || isRootInputPort(componentId) || isRootOutputPort(componentId);
     }
 
     public boolean isProcessor(String componentId) {
@@ -204,6 +207,16 @@ public class NiFiFlow {
 
     public boolean isRootOutputPort(String componentId) {
         return rootOutputPorts.containsKey(componentId);
+    }
+
+    public String getProcessComponentName(String componentId) {
+        return getProcessComponentName(componentId, () -> "unknown");
+    }
+
+    public String getProcessComponentName(String componentId, Supplier<String> unknown) {
+        return isProcessor(componentId) ? getProcessors().get(componentId).getName()
+                : isRootInputPort(componentId) ? getRootInputPorts().get(componentId).getName()
+                : isRootOutputPort(componentId) ? getRootOutputPorts().get(componentId).getName() : unknown.get();
     }
 
     public void dump() {

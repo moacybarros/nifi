@@ -66,14 +66,4 @@ public class DataSetRefs {
         return (inputs == null || inputs.isEmpty()) && (outputs == null || outputs.isEmpty());
     }
 
-    /**
-     * @return True if target DataSets can be referred from root flow_path.
-     */
-    public boolean isReferableFromRootPath() {
-        return referableFromRootPath;
-    }
-
-    public void setReferableFromRootPath(boolean referableFromRootPath) {
-        this.referableFromRootPath = referableFromRootPath;
-    }
 }

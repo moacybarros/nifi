@@ -32,11 +32,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.CRC32;
@@ -72,7 +70,7 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
         // Input and output data set are both required to report lineage.
         List<Tuple<NiFiFlowPath, DataSetRefs>> createdFlowPaths = new ArrayList<>();
         if (lineagePath.isComplete()) {
-            addDataSetRefs(nifiFlow, lineagePath, createdFlowPaths);
+            createCompleteFlowPath(nifiFlow, lineagePath, createdFlowPaths);
             for (Tuple<NiFiFlowPath, DataSetRefs> createdFlowPath : createdFlowPaths) {
                 final NiFiFlowPath flowPath = createdFlowPath.getKey();
                 createEntity(toReferenceable(flowPath, nifiFlow));
@@ -98,33 +96,27 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
         lineagePath.getEvents().add(lastEvent);
         List<LineageNode> parentEvents = findParentEvents(lineageTree, lastEvent);
 
-        final boolean createSeparateParentPath;
+        final boolean createSeparateParentPath = lineagePath.shouldCreateSeparatePath(lastEvent.getEventType());
+
+        if (createSeparateParentPath && (parentEvents == null || parentEvents.isEmpty())) {
+            // Try expanding the lineage.
+            // This is for the FlowFiles those are FORKed (or JOINed ... etc) other FlowFile(s).
+            // FlowFiles routed to 'original' may have these event types, too, however they have parents fetched together.
+
+            // For example, with these inputs: CREATE(F1), FORK (F1 -> F2, F3), DROP(F1), SEND (F2), SEND(F3), DROP(F2), DROP(F3)
+            // Then when DROP(F1) is queried, FORK(F1) and CREATE(F1) are returned.
+            // For DROP(F2), SEND(F2) and FORK(F2) are returned.
+            // For DROP(F3), SEND(F3) and FORK(F3) are returned.
+            // In this case, FORK(F2) and FORK(F3) have to query their parents again, to get CREATE(F1).
+            final ComputeLineageResult joinedParents = context.findParents(lastEvent.getEventId());
+            analyzeLineageTree(joinedParents, lineageTree);
+
+            parentEvents = findParentEvents(lineageTree, lastEvent);
+        }
+
         if (parentEvents == null || parentEvents.isEmpty()) {
-
-            switch (lastEvent.getEventType()) {
-                case JOIN:
-                case FORK:
-                    // Try expanding the lineage.
-                    final ComputeLineageResult joinedParents = context.findParents(lastEvent.getEventId());
-                    analyzeLineageTree(joinedParents, lineageTree);
-
-                    parentEvents = findParentEvents(lineageTree, lastEvent);
-
-                    if (parentEvents == null || parentEvents.isEmpty()) {
-                        logger.debug("Expanded parents from {} but couldn't find any.", lastEvent);
-                        return;
-                    }
-
-                    // With these events, always create separate parents regardless of the number of parents.
-                    createSeparateParentPath = true;
-                    break;
-
-                default:
-                    return;
-            }
-
-        } else {
-            createSeparateParentPath = parentEvents.size() > 1;
+            logger.debug("{} does not have any parent, stop extracting lineage path.", lastEvent);
+            return;
         }
 
         if (createSeparateParentPath) {
@@ -139,6 +131,11 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
                     });
         } else {
             // Simply traverse upwards.
+            if (parentEvents.size() > 1) {
+                throw new IllegalStateException(String.format("Having more than 1 parents for event type {}" +
+                                " is not expected. Should ask NiFi developer for investigation. {}",
+                        lastEvent.getEventType(), lastEvent));
+            }
             final ProvenanceEventRecord parentEvent = context.getProvenanceEvent(Long.parseLong(parentEvents.get(0).getIdentifier()));
             if (parentEvent != null) {
                 extractLineagePaths(context, lineageTree, lineagePath, parentEvent);
@@ -171,19 +168,29 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
                         .add(edge.getSource()));
     }
 
-    private void addDataSetRefs(NiFiFlow nifiFlow, LineagePath lineagePath, List<Tuple<NiFiFlowPath, DataSetRefs>> createdFlowPaths) {
+    /**
+     * Create a new FlowPath from a LineagePath. FlowPaths created by this method will have a hash in its qualified name.
+     *
+     * <p>This method processes parents first to generate a hash, as parent LineagePath hashes contribute child hash
+     * in order to distinguish FlowPaths based on the complete path for a given FlowFile.
+     * For example, even if two lineagePaths have identical componentIds/inputs/outputs,
+     * if those parents have different inputs, those should be treated as different paths.</p>
+     *
+     * @param nifiFlow A reference to current NiFiFlow
+     * @param lineagePath LineagePath from which NiFiFlowPath and DataSet refs are created and added to the {@code createdFlowPaths}.
+     * @param createdFlowPaths A list to buffer created NiFiFlowPaths,
+     *                         in order to defer sending notification to Kafka until all parent FlowPath get analyzed.
+     */
+    private void createCompleteFlowPath(NiFiFlow nifiFlow, LineagePath lineagePath, List<Tuple<NiFiFlowPath, DataSetRefs>> createdFlowPaths) {
 
         final List<ProvenanceEventRecord> events = lineagePath.getEvents();
         Collections.reverse(events);
 
         final List<String> componentIds = events.stream().map(event -> event.getComponentId()).collect(Collectors.toList());
-        final String firstComponentId = componentIds.get(0);
+        final String firstComponentId = events.get(0).getComponentId();
+        final DataSetRefs dataSetRefs = lineagePath.getRefs();
 
-        // Process parents first for two reasons.
-        // First, this lineagePath needs parent reference.
-        // Second, as parents are significant to distinguish a path from another.
-        // For example, even if two lineagePaths have identical componentIds/inputs/outputs,
-        // if those parents have different inputs, those should be treated as different paths.
+        // Process parents first.
         Referenceable queueBetweenParent = null;
         if (!lineagePath.getParents().isEmpty()) {
             // Add queue between this lineage path and parent.
@@ -191,22 +198,21 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
             // The first event knows why this lineage has parents, e.g. FORK or JOIN.
             final String firstEventType = events.get(0).getEventType().name();
             queueBetweenParent.set(ATTR_NAME, firstEventType);
-            lineagePath.getRefs().addInput(queueBetweenParent);
+            dataSetRefs.addInput(queueBetweenParent);
 
             for (LineagePath parent : lineagePath.getParents()) {
                 parent.getRefs().addOutput(queueBetweenParent);
-                addDataSetRefs(nifiFlow, parent, createdFlowPaths);
+                createCompleteFlowPath(nifiFlow, parent, createdFlowPaths);
             }
         }
 
         // Create a variant path.
         // Calculate a hash from component_ids and input and output resource ids.
-        final Stream<String> ioIds = Stream.concat(lineagePath.getRefs().getInputs().stream(), lineagePath.getRefs().getOutputs()
+        final Stream<String> ioIds = Stream.concat(dataSetRefs.getInputs().stream(), dataSetRefs.getOutputs()
                 .stream()).map(ref -> ref.getTypeName() + "::" + ref.get(ATTR_QUALIFIED_NAME));
 
         final Stream<String> parentHashes = lineagePath.getParents().stream().map(p -> String.valueOf(p.getLineagePathHash()));
         final CRC32 crc32 = new CRC32();
-        // TODO: add parent hash to hash
         crc32.update(Stream.of(componentIds.stream(), ioIds, parentHashes).reduce(Stream::concat).orElseGet(Stream::empty)
                 .sorted().distinct()
                 .collect(Collectors.joining(",")).getBytes(StandardCharsets.UTF_8));
@@ -221,23 +227,27 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
             queueBetweenParent.set(ATTR_QUALIFIED_NAME, firstComponentId + "::" + hash);
         }
 
-        // Different componentIds can identify the same flow_path, so make it unique here.
-        final Set<String> uniquePathIds = new HashSet<>();
-        final String pathName = componentIds.stream()
-                .map(componentId -> nifiFlow.findPath(componentId))
-                .filter(Objects::nonNull)
-                // Skip a path if it's already added to the name.
-                .filter(path -> !uniquePathIds.contains(path.getId()))
-                .map(path -> {
-                    uniquePathIds.add(path.getId());
-                    return path.getName();
-                })
-                .collect(Collectors.joining(" -> "));
+        // If the same components emitted multiple provenance events consecutively, merge it to come up with a simpler name.
+        String previousComponentId = null;
+        List<ProvenanceEventRecord> uniqueEventsForName = new ArrayList<>();
+        for (ProvenanceEventRecord event : events) {
+            if (!event.getComponentId().equals(previousComponentId)) {
+                uniqueEventsForName.add(event);
+            }
+            previousComponentId = event.getComponentId();
+        }
+
+        final String pathName = uniqueEventsForName.stream()
+                // Processor name can be configured by user and more meaningful if available.
+                // If the component is already removed, it may not be available here.
+                .map(event -> nifiFlow.getProcessComponentName(event.getComponentId(), () -> event.getComponentType()))
+                .collect(Collectors.joining(","));
 
         flowPath.setName(pathName);
-        flowPath.setGroupId(nifiFlow.findPath(firstComponentId).getGroupId());
+        final NiFiFlowPath staticFlowPath = nifiFlow.findPath(firstComponentId);
+        flowPath.setGroupId(staticFlowPath != null ? staticFlowPath.getGroupId() : nifiFlow.getRootProcessGroupId());
 
         // To defer send notification until entire lineagePath analysis gets finished, just add the instance into a buffer.
-        createdFlowPaths.add(new Tuple<>(flowPath, lineagePath.getRefs()));
+        createdFlowPaths.add(new Tuple<>(flowPath, dataSetRefs));
     }
 }

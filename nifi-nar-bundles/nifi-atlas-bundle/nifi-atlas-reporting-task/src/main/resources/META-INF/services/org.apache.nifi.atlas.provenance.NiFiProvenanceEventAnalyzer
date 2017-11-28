@@ -15,6 +15,7 @@
 
 # By component type:
 org.apache.nifi.atlas.provenance.analyzer.NiFiRemotePort
+org.apache.nifi.atlas.provenance.analyzer.NiFiRootGroupPort
 org.apache.nifi.atlas.provenance.analyzer.KafkaTopic
 org.apache.nifi.atlas.provenance.analyzer.PutHiveStreaming
 

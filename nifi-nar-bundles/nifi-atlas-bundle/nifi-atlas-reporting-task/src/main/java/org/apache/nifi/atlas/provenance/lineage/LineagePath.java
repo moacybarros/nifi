@@ -19,6 +19,7 @@ package org.apache.nifi.atlas.provenance.lineage;
 import org.apache.nifi.atlas.NiFiFlowPath;
 import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
+import org.apache.nifi.provenance.ProvenanceEventType;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -48,8 +49,23 @@ public class LineagePath {
         this.refs = refs;
     }
 
+    public boolean shouldCreateSeparatePath(ProvenanceEventType eventType) {
+        switch (eventType) {
+            case CLONE:
+            case JOIN:
+            case FORK:
+            case REPLAY:
+                return true;
+        }
+        return false;
+    }
+
     public boolean isComplete() {
-        return hasInput() && hasOutput();
+        // If the FlowFile is DROPed right after create child FlowFile, then the path is not worth for reporting.
+        final boolean isDroppedImmediately = events.size() == 2
+                && events.get(0).getEventType().equals(ProvenanceEventType.DROP)
+                && shouldCreateSeparatePath(events.get(1).getEventType());
+        return !isDroppedImmediately && hasInput() && hasOutput();
     }
 
     public boolean hasInput() {

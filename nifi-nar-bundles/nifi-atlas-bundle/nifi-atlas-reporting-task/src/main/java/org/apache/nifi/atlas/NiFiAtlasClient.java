@@ -248,19 +248,16 @@ public class NiFiAtlasClient {
 
             final StringBuilder name = new StringBuilder();
             final StringBuilder description = new StringBuilder();
-            if (nifiFlow.getRootProcessGroupId().equals(path.getId())) {
-                name.append(nifiFlowName);
-            } else {
-                path.getProcessorIds().forEach(pid -> {
-                    final ProcessorStatus processor = nifiFlow.getProcessors().get(pid);
-                    if (name.length() > 0) {
-                        name.append(", ");
-                        description.append(", ");
-                    }
-                    name.append(processor.getName());
-                    description.append(String.format("%s::%s", processor.getName(), pid));
-                });
-            }
+            path.getProcessComponentIds().forEach(pid -> {
+                final String componentName = nifiFlow.getProcessComponentName(pid);
+
+                if (name.length() > 0) {
+                    name.append(", ");
+                    description.append(", ");
+                }
+                name.append(componentName);
+                description.append(String.format("%s::%s", componentName, pid));
+            });
 
             path.setName(name.toString());
             pathEntity.setAttribute(ATTR_NAME, name.toString());

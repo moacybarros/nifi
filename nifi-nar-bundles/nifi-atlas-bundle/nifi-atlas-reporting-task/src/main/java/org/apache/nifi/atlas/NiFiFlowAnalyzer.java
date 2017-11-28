@@ -33,7 +33,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
-import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_DESCRIPTION;
@@ -127,80 +126,57 @@ public class NiFiFlowAnalyzer {
         return ids;
     }
 
-    private List<String> getNextProcessors(NiFiFlow nifiFlow, NiFiFlowPath path, String componentId) {
+    private List<String> getNextProcessComponent(NiFiFlow nifiFlow, NiFiFlowPath path, String componentId) {
         final List<ConnectionStatus> outs = nifiFlow.getOutgoingRelationShips(componentId);
         if (outs == null || outs.isEmpty()) {
             return Collections.emptyList();
         }
 
-        final List<String> nextProcessors = new ArrayList<>();
+        final List<String> nextProcessComponent = new ArrayList<>();
         for (ConnectionStatus out : outs) {
             final String destinationId = out.getDestinationId();
-            if (path.getProcessorIds().contains(destinationId)) {
+            if (path.getProcessComponentIds().contains(destinationId)) {
                 // If the connection is pointing back to current path, then skip it to avoid loop.
                 continue;
             }
 
-            if (nifiFlow.isProcessor(destinationId)) {
-                nextProcessors.add(destinationId);
+            if (nifiFlow.isProcessComponent(destinationId)) {
+                nextProcessComponent.add(destinationId);
             } else {
-                nextProcessors.addAll(getNextProcessors(nifiFlow, path, destinationId));
+                nextProcessComponent.addAll(getNextProcessComponent(nifiFlow, path, destinationId));
             }
         }
-        return nextProcessors;
+        return nextProcessComponent;
     }
 
-    private void traverse(NiFiFlow nifiFlow, List<NiFiFlowPath> paths, NiFiFlowPath path, String pid) {
+    private void traverse(NiFiFlow nifiFlow, List<NiFiFlowPath> paths, NiFiFlowPath path, String componentId) {
 
-        // If the pid is RootGroupPort of the same NiFi instance, then stop traversing to create separate self S2S path.
+        // If the pid is RootInputPort of the same NiFi instance, then stop traversing to create separate self S2S path.
         // E.g InputPort -> MergeContent, GenerateFlowFile -> InputPort.
-        if (nifiFlow.isRootInputPort(pid) || nifiFlow.isRootOutputPort(pid)) {
+        if (path.getProcessComponentIds().size() > 0 && nifiFlow.isRootInputPort(componentId)) {
             return;
         }
 
         // Add known inputs/outputs to/from this processor, such as RootGroupIn/Output port
-        if (nifiFlow.getProcessors().containsKey(pid)) {
-            path.addProcessor(pid);
-
-            if (nifiFlow.getIncomingRelationShips(pid) != null) {
-                nifiFlow.getIncomingRelationShips(pid).stream().forEach(c -> {
-                    final String sourceId = c.getSourceId();
-                    if (nifiFlow.isRootInputPort(sourceId)) {
-                        // This processor has incoming connection from a RootGroupInputPort.
-                        final AtlasObjectId portId = new AtlasObjectId(TYPE_NIFI_INPUT_PORT, ATTR_QUALIFIED_NAME, sourceId);
-                        path.getInputs().add(portId);
-                    }
-                });
-            }
-
-            if (nifiFlow.getOutgoingRelationShips(pid) != null) {
-                nifiFlow.getOutgoingRelationShips(pid).stream().forEach(c -> {
-                    final String destinationId = c.getDestinationId();
-                    if (nifiFlow.isRootOutputPort(destinationId)) {
-                        // This processor has outgoing connection to a RootGroupOutputPort.
-                        final AtlasObjectId portId = new AtlasObjectId(TYPE_NIFI_OUTPUT_PORT, ATTR_QUALIFIED_NAME, destinationId);
-                        path.getOutputs().add(portId);
-                    }
-                });
-            }
-
+        if (nifiFlow.isProcessComponent(componentId)) {
+            path.addProcessor(componentId);
         }
 
-        final List<ConnectionStatus> outs = nifiFlow.getOutgoingRelationShips(pid);
+        final List<ConnectionStatus> outs = nifiFlow.getOutgoingRelationShips(componentId);
         if (outs == null || outs.isEmpty()) {
             return;
         }
 
-        // Analyze destination processors.
-        final List<String> nextProcessors = getNextProcessors(nifiFlow, path, pid);
-        nextProcessors.forEach(destPid -> {
-            if (path.getProcessorIds().contains(destPid)) {
+        // Analyze destination process components.
+        final List<String> nextProcessComponents = getNextProcessComponent(nifiFlow, path, componentId);
+        nextProcessComponents.forEach(destPid -> {
+            if (path.getProcessComponentIds().contains(destPid)) {
                 // Avoid loop to it self.
                 return;
             }
 
             // If destination has more than one inputs, or there are multiple destinations, it is an independent flow path.
-            final boolean createJointPoint = nextProcessors.size() > 1 || getIncomingProcessorsIds(nifiFlow, nifiFlow.getIncomingRelationShips(destPid)).size() > 1;
+            final boolean createJointPoint = nextProcessComponents.size() > 1 || getIncomingProcessorsIds(nifiFlow, nifiFlow.getIncomingRelationShips(destPid)).size() > 1;
 
             if (createJointPoint) {
                 final NiFiFlowPath newJointPoint = new NiFiFlowPath(destPid);
@@ -253,18 +229,14 @@ public class NiFiFlowAnalyzer {
         }
         return ins.stream().allMatch(
                 in -> {
-                    // If it has incoming relationship from other processor, then return false.
+                    // If it has incoming relationship from other process components, then return false.
                     final String sourceId = in.getSourceId();
-                    if (nifiFlow.isProcessor(sourceId)) {
+                    if (nifiFlow.isProcessComponent(sourceId)) {
                         return false;
                     }
-                    // Terminate traversing if it only has incoming relationships from RootGroupPort,
-                    // or non-processor such as funnel so that it can be an individual flow path.
+                    // Check next level.
                     final List<ConnectionStatus> incomingRelationShips = nifiFlow.getIncomingRelationShips(sourceId);
-                    final boolean noFurtherInputs = incomingRelationShips == null || incomingRelationShips.isEmpty();
-                    return nifiFlow.isRootInputPort(sourceId) || nifiFlow.isRootOutputPort(sourceId) || noFurtherInputs
-                            // Check next level.
-                            || isHeadProcessor(nifiFlow, incomingRelationShips);
+                    return isHeadProcessor(nifiFlow, incomingRelationShips);
                 }
         );
     }
@@ -272,23 +244,21 @@ public class NiFiFlowAnalyzer {
     public void analyzePaths(NiFiFlow nifiFlow) {
         final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
-        // Root path is used to link DataSets those are not connected to actual flow_path,
-        // such as a flow receiving from a Remote Output Port then sending to a Remote Input Port directly.
         final String rootProcessGroupId = nifiFlow.getRootProcessGroupId();
-        final NiFiFlowPath rootPath = new NiFiFlowPath(rootProcessGroupId);
-        rootPath.setGroupId(rootProcessGroupId);
-        paths.add(rootPath);
 
         // Now let's break it into flow paths.
         final Map<String, ProcessorStatus> processors = nifiFlow.getProcessors();
-        final Set<String> headProcessors = processors.keySet().stream()
+        final Set<String> headProcessComponents = processors.keySet().stream()
                 .filter(pid -> {
                     final List<ConnectionStatus> ins = nifiFlow.getIncomingRelationShips(pid);
                     return isHeadProcessor(nifiFlow, ins);
                 })
                 .collect(Collectors.toSet());
 
-        headProcessors.forEach(startPid -> {
+        // Use RootInputPorts as headProcessors.
+        headProcessComponents.addAll(nifiFlow.getRootInputPorts().keySet());
+
+        headProcessComponents.forEach(startPid -> {
             // By using the startPid as its qualifiedName, it's guaranteed that
             // the same path will end up being the same Atlas entity.
             // However, if the first processor is replaced by another,
@@ -302,6 +272,8 @@ public class NiFiFlowAnalyzer {
             if (processors.containsKey(path.getId())) {
                 final ProcessorStatus processor = processors.get(path.getId());
                 path.setGroupId(processor.getGroupId());
+            } else {
+                path.setGroupId(rootProcessGroupId);
             }
         });
     }

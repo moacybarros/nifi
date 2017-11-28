@@ -69,7 +69,7 @@ public abstract class AbstractLineageStrategy implements LineageStrategy {
 
         final Set<NiFiFlowPath> flowPaths = refs.getComponentIds().stream()
                 .map(componentId -> {
-                    final NiFiFlowPath flowPath = nifiFlow.findPath(componentId, refs.isReferableFromRootPath());
+                    final NiFiFlowPath flowPath = nifiFlow.findPath(componentId);
                     if (flowPath == null) {
                         logger.warn("FlowPath for {} was not found.", componentId);
                     }
