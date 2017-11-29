@@ -26,4 +26,8 @@ org.apache.nifi.atlas.provenance.analyzer.HBaseTable
 org.apache.nifi.atlas.provenance.analyzer.FilePath
 
 # By event type, if none of above analyzers matches"
-org.apache.nifi.atlas.provenance.analyzer.CreateObscureInputDataSet
+org.apache.nifi.atlas.provenance.analyzer.unknown.Create
+org.apache.nifi.atlas.provenance.analyzer.unknown.Receive
+org.apache.nifi.atlas.provenance.analyzer.unknown.Fetch
+org.apache.nifi.atlas.provenance.analyzer.unknown.Send
+org.apache.nifi.atlas.provenance.analyzer.unknown.RemoteInvocation
