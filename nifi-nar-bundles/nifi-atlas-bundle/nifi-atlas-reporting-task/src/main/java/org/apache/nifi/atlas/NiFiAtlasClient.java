@@ -29,7 +29,6 @@ import org.apache.atlas.model.typedef.AtlasEntityDef;
 import org.apache.atlas.model.typedef.AtlasStructDef.AtlasAttributeDef;
 import org.apache.atlas.model.typedef.AtlasTypesDef;
 import org.apache.nifi.atlas.security.AtlasAuthN;
-import org.apache.nifi.controller.status.ProcessorStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,6 +42,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_DESCRIPTION;
@@ -220,7 +220,7 @@ public class NiFiAtlasClient {
         flowEntity.setTypeName(TYPE_NIFI_FLOW);
         flowEntity.setVersion(1L);
         flowEntity.setAttribute(ATTR_NAME, nifiFlowName);
-        flowEntity.setAttribute(ATTR_QUALIFIED_NAME, nifiFlow.getRootProcessGroupId());
+        flowEntity.setAttribute(ATTR_QUALIFIED_NAME, nifiFlow.toQualifiedName(nifiFlow.getRootProcessGroupId()));
         flowEntity.setAttribute(ATTR_URL, url);
         flowEntity.setAttribute(ATTR_DESCRIPTION, nifiFlow.getDescription());
 
@@ -244,7 +244,7 @@ public class NiFiAtlasClient {
             entities.add(pathEntity);
             pathEntity.setTypeName(TYPE_NIFI_FLOW_PATH);
             pathEntity.setVersion(1L);
-            pathEntity.setAttribute(ATTR_NIFI_FLOW, nifiFlow.getId());
+            pathEntity.setAttribute(ATTR_NIFI_FLOW, nifiFlow.getAtlasObjectId());
 
             final StringBuilder name = new StringBuilder();
             final StringBuilder description = new StringBuilder();
@@ -264,7 +264,7 @@ public class NiFiAtlasClient {
             pathEntity.setAttribute(ATTR_DESCRIPTION, description.toString());
 
             // Use first processor's id as qualifiedName.
-            pathEntity.setAttribute(ATTR_QUALIFIED_NAME, path.getId());
+            pathEntity.setAttribute(ATTR_QUALIFIED_NAME, nifiFlow.toQualifiedName(path.getId()));
 
             pathEntity.setAttribute(ATTR_URL, path.createDeepLinkURL(nifiFlow.getUrl()));
 
@@ -281,21 +281,24 @@ public class NiFiAtlasClient {
         final List<AtlasObjectId> flowPaths = new ArrayList<>();
         flowEntity.setAttribute(ATTR_FLOW_PATHS, flowPaths);
 
+        final Function<NiFiFlowPath, AtlasObjectId> toObjectId = p -> new AtlasObjectId(TYPE_NIFI_FLOW_PATH,
+                ATTR_QUALIFIED_NAME, nifiFlow.toQualifiedName(p.getId()));
+
         for (int i = 0; i < paths.size(); i++) {
             NiFiFlowPath path = paths.get(i);
 
             final AtlasEntity pathEntity = entities.get(offsetToPaths + i);
 
             final List<AtlasObjectId> incomingPaths = path.getIncomingPaths().stream()
-                    .map(p -> createObjectId(p)).collect(Collectors.toList());
+                    .map(p -> toObjectId.apply(p)).collect(Collectors.toList());
             final List<AtlasObjectId> outgoingPaths = path.getOutgoingPaths().stream()
-                    .map(p -> createObjectId(p)).collect(Collectors.toList());
+                    .map(p -> toObjectId.apply(p)).collect(Collectors.toList());
 
             pathEntity.setAttribute(ATTR_INCOMING_FLOW_PATHS, incomingPaths);
             pathEntity.setAttribute(ATTR_OUTGOING_FLOW_PATHS, outgoingPaths);
 
             // Add path reference for parent flow.
-            flowPaths.add(createObjectId(path));
+            flowPaths.add(toObjectId.apply(path));
         }
 
         flowEntity.setAttribute(ATTR_QUEUES, queues.keySet());
@@ -321,10 +324,6 @@ public class NiFiAtlasClient {
             }
         }
         logger.debug("mutation response={}", mutationResponse);
-    }
-
-    private AtlasObjectId createObjectId(NiFiFlowPath path) {
-        return new AtlasObjectId(TYPE_NIFI_FLOW_PATH, ATTR_QUALIFIED_NAME, path.getId());
     }
 
     private void activateDataSetIOLinks(AtlasProcess process, AtlasEntity entity) throws AtlasServiceException {

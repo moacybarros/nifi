@@ -50,7 +50,7 @@ public class CreateObscureInputDataSet extends AbstractNiFiProvenanceEventAnalyz
 
         final Referenceable ref = new Referenceable(TYPE);
         ref.set(ATTR_NAME, event.getComponentType());
-        ref.set(ATTR_QUALIFIED_NAME, componentId);
+        ref.set(ATTR_QUALIFIED_NAME, toQualifiedName(context.getNiFiClusterName(), componentId));
 
         // CREATE would mean creating output DataSet in general,
         // but this Analyzer creates input DataSet for NiFi.

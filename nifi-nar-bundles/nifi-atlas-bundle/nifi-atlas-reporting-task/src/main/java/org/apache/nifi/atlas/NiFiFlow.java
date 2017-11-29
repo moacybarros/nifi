@@ -44,8 +44,10 @@ public class NiFiFlow {
     private final String flowName;
     private final String rootProcessGroupId;
     private final String url;
-    private final AtlasObjectId id;
+    private String clusterName;
+    private AtlasObjectId atlasObjectId;
     private String description;
+
     private final Set<AtlasObjectId> inputs = new HashSet<>();
     private final Set<AtlasObjectId> outputs = new HashSet<>();
     private final List<NiFiFlowPath> flowPaths = new ArrayList<>();
@@ -66,19 +68,32 @@ public class NiFiFlow {
     private final Map<AtlasObjectId, AtlasEntity> rootInputPortEntities = new HashMap<>();
     private final Map<AtlasObjectId, AtlasEntity> rootOutputPortEntities = new HashMap<>();
 
+
     public NiFiFlow(String flowName, String rootProcessGroupId, String url) {
         this.flowName = flowName;
-        id = new AtlasObjectId(TYPE_NIFI_FLOW, ATTR_QUALIFIED_NAME, rootProcessGroupId);
         this.rootProcessGroupId = rootProcessGroupId;
         this.url = url;
     }
 
-    public AtlasObjectId getId() {
-        return id;
+    public AtlasObjectId getAtlasObjectId() {
+        return atlasObjectId;
     }
 
     public String getRootProcessGroupId() {
         return rootProcessGroupId;
+    }
+
+    public String getClusterName() {
+        return clusterName;
+    }
+
+    public void setClusterName(String clusterName) {
+        this.clusterName = clusterName;
+        atlasObjectId = new AtlasObjectId(TYPE_NIFI_FLOW, ATTR_QUALIFIED_NAME, getQuelifiedName());
+    }
+
+    public String getQuelifiedName() {
+        return toQualifiedName(rootProcessGroupId);
     }
 
     public String getDescription() {
@@ -217,6 +232,10 @@ public class NiFiFlow {
         return isProcessor(componentId) ? getProcessors().get(componentId).getName()
                 : isRootInputPort(componentId) ? getRootInputPorts().get(componentId).getName()
                 : isRootOutputPort(componentId) ? getRootOutputPorts().get(componentId).getName() : unknown.get();
+    }
+
+    public String toQualifiedName(String componentId) {
+        return componentId + "@" + clusterName;
     }
 
     public void dump() {

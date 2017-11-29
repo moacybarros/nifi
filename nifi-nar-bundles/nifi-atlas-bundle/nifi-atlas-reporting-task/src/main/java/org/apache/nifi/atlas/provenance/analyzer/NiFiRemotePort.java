@@ -46,23 +46,10 @@ import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_OUTPUT_PORT;
  * <li>qualifiedName=remotePortGUID (example: 35dbc0ab-015e-1000-144c-a8d71255027d)
  * <li>name=portName (example: input)
  */
-public class NiFiRemotePort extends AbstractNiFiProvenanceEventAnalyzer {
+public class NiFiRemotePort extends NiFiS2S {
 
     private static final Logger logger = LoggerFactory.getLogger(NiFiRemotePort.class);
 
-    private static final Pattern URL_REGEX = Pattern.compile(".*/nifi-api/data-transfer/(in|out)put-ports/([^/]+)/transactions/.*");
-
-    /**
-     * This analyzer queries NiFi provenance event to figure out connecting processors to a RemotePort.
-     * Then create a reference between the connecting processors (Process) and the RemotePort (DataSet).
-     *
-     * NOTE: Ideally RemotePort should be represented as a Process entity in Atlas lineage.
-     *
-     * Another challenge is to know whether a component is RemotePort, by only looking at the ConnectionStatus.
-     * That is impossible because ConnectionStatus does not have source and target type.
-     * ConnectionStatus only knows source id and target id.
-     * >> This can be overcome by looking at the connection name?? Source name and Destination name.
-     */
     @Override
     public DataSetRefs analyze(AnalysisContext context, ProvenanceEventRecord event) {
 
@@ -76,14 +63,7 @@ public class NiFiRemotePort extends AbstractNiFiProvenanceEventAnalyzer {
 
         final String remotePortId = event.getComponentId();
 
-        // TODO: remotePortId is not equal to remotePortTargetId. Need to extract from transit URL
-        final URI uri = parseUri(event.getTransitUri());
-        final Matcher uriMatcher = URL_REGEX.matcher(uri.getPath());
-        if (!uriMatcher.matches()) {
-            logger.warn("Unexpected transit URI: {}, {}", new Object[]{uri, event});
-            return null;
-        }
-        final String remotePortTargetId = uriMatcher.group(2);
+        final S2STransitUrl s2sUrl = parseTransitURL(event.getTransitUri(), context.getClusterResolver());
 
         // Find connections that connects to/from the remote port.
         final List<ConnectionStatus> connections = isRemoteInputPort
@@ -98,7 +78,7 @@ public class NiFiRemotePort extends AbstractNiFiProvenanceEventAnalyzer {
         final ConnectionStatus connection = connections.get(0);
         final Referenceable ref = new Referenceable(type);
         ref.set(ATTR_NAME, isRemoteInputPort ? connection.getDestinationName() : connection.getSourceName());
-        ref.set(ATTR_QUALIFIED_NAME, remotePortTargetId);
+        ref.set(ATTR_QUALIFIED_NAME, toQualifiedName(s2sUrl.clusterName, s2sUrl.targetPortId));
 
         return singleDataSetRef(event.getComponentId(), event.getEventType(), ref);
     }

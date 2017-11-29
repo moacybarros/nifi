@@ -58,6 +58,11 @@ public class StandardAnalysisContext implements AnalysisContext {
     }
 
     @Override
+    public String getNiFiClusterName() {
+        return nifiFlow.getClusterName();
+    }
+
+    @Override
     public ClusterResolver getClusterResolver() {
         return clusterResolver;
     }

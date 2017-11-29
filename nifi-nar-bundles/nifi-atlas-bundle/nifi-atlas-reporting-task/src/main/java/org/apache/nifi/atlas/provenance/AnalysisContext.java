@@ -24,6 +24,7 @@ import org.apache.nifi.provenance.lineage.ComputeLineageResult;
 import java.util.List;
 
 public interface AnalysisContext {
+    String getNiFiClusterName();
     ClusterResolver getClusterResolver();
     List<ConnectionStatus> findConnectionTo(String componentId);
     List<ConnectionStatus> findConnectionFrom(String componentId);

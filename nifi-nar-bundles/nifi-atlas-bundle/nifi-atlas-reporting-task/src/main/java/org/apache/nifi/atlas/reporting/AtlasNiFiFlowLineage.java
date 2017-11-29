@@ -50,6 +50,7 @@ import org.apache.nifi.components.ValidationResult;
 import org.apache.nifi.components.state.Scope;
 import org.apache.nifi.context.PropertyContext;
 import org.apache.nifi.controller.ConfigurationContext;
+import org.apache.nifi.controller.status.ProcessGroupStatus;
 import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
@@ -65,6 +66,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -155,7 +157,7 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             .displayName("NiFi URL for Atlas")
             .description("NiFi URL is used in Atlas to represent this NiFi cluster (or standalone instance)." +
                     " It is recommended to use one that can be accessible remotely instead of using 'localhost'.")
-            .required(false)
+            .required(true)
             .expressionLanguageSupported(true)
             .addValidator(StandardValidators.URL_VALIDATOR)
             .build();
@@ -569,22 +571,13 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             }
         }
 
-        final NiFiFlowAnalyzer flowAnalyzer = new NiFiFlowAnalyzer();
-
         // Regardless of whether being a primary task node, each node has to analyse NiFiFlow.
         // Assuming each node has the same flow definition, that is guaranteed by NiFi cluster management mechanism.
-        final NiFiFlow niFiFlow;
-        try {
-            niFiFlow = flowAnalyzer.analyzeProcessGroup(context);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to analyze NiFi flow. " + e, e);
-        }
-
-        flowAnalyzer.analyzePaths(niFiFlow);
+        final NiFiFlow nifiFlow = createNiFiFlow(context);
 
         if (isResponsibleForPrimaryTasks) {
             try {
-                atlasClient.registerNiFiFlow(niFiFlow);
+                atlasClient.registerNiFiFlow(nifiFlow);
             } catch (AtlasServiceException e) {
                 throw new RuntimeException("Failed to register NiFI flow. " + e, e);
             }
@@ -593,8 +586,29 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         // NOTE: There is a race condition between the primary node and other nodes.
         // If a node notifies an event related to a NiFi component which is not yet created by NiFi primary node,
         // then the notification message will fail due to having a reference to a non-existing entity.
-        consumeNiFiProvenanceEvents(context, niFiFlow);
+        consumeNiFiProvenanceEvents(context, nifiFlow);
 
+    }
+
+    private NiFiFlow createNiFiFlow(ReportingContext context) {
+        final ProcessGroupStatus rootProcessGroup = context.getEventAccess().getGroupStatus("root");
+        final String flowName = rootProcessGroup.getName();
+        final String nifiUrl = context.getProperty(ATLAS_NIFI_URL).evaluateAttributeExpressions().getValue();
+        final NiFiFlow nifiFlow = new NiFiFlow(flowName, rootProcessGroup.getId(), nifiUrl);
+
+        try {
+            final String nifiHostName = new URL(nifiUrl).getHost();
+            nifiFlow.setClusterName(clusterResolvers.fromHostNames(nifiHostName));
+        } catch (MalformedURLException e) {
+            throw new IllegalArgumentException("Failed to parse NiFi URL, " + e.getMessage(), e);
+        }
+
+        final NiFiFlowAnalyzer flowAnalyzer = new NiFiFlowAnalyzer();
+
+        flowAnalyzer.analyzeProcessGroup(nifiFlow, rootProcessGroup);
+        flowAnalyzer.analyzePaths(nifiFlow);
+
+        return nifiFlow;
     }
 
     private void consumeNiFiProvenanceEvents(ReportingContext context, NiFiFlow nifiFlow) {

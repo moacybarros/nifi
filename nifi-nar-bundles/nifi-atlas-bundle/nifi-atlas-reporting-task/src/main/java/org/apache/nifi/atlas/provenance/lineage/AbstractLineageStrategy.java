@@ -86,9 +86,11 @@ public abstract class AbstractLineageStrategy implements LineageStrategy {
     protected void addDataSetRefs(NiFiFlow nifiFlow, Set<NiFiFlowPath> flowPaths, DataSetRefs refs) {
         // create reference to NiFi flow path.
         final Referenceable flowRef = toReferenceable(nifiFlow);
+        final String clusterName = nifiFlow.getClusterName();
+        final String url = nifiFlow.getUrl();
 
         for (NiFiFlowPath flowPath : flowPaths) {
-            final Referenceable flowPathRef = toReferenceable(flowPath, flowRef);
+            final Referenceable flowPathRef = toReferenceable(flowPath, flowRef, clusterName, url);
             addDataSetRefs(refs, flowPathRef);
         }
     }
@@ -96,21 +98,22 @@ public abstract class AbstractLineageStrategy implements LineageStrategy {
     protected Referenceable toReferenceable(NiFiFlow nifiFlow) {
         final Referenceable flowRef = new Referenceable(TYPE_NIFI_FLOW);
         flowRef.set(ATTR_NAME, nifiFlow.getFlowName());
-        flowRef.set(ATTR_QUALIFIED_NAME, nifiFlow.getId().getUniqueAttributes().get(ATTR_QUALIFIED_NAME));
+        flowRef.set(ATTR_QUALIFIED_NAME, nifiFlow.getQuelifiedName());
         flowRef.set(ATTR_URL, nifiFlow.getUrl());
         return flowRef;
     }
 
     protected Referenceable toReferenceable(NiFiFlowPath flowPath, NiFiFlow nifiFlow) {
-        return toReferenceable(flowPath, toReferenceable(nifiFlow));
+        return toReferenceable(flowPath, toReferenceable(nifiFlow),
+                nifiFlow.getClusterName(), nifiFlow.getUrl());
     }
 
-    protected Referenceable toReferenceable(NiFiFlowPath flowPath, Referenceable flowRef) {
+    private Referenceable toReferenceable(NiFiFlowPath flowPath, Referenceable flowRef, String clusterName, String nifiUrl) {
         final Referenceable flowPathRef = new Referenceable(TYPE_NIFI_FLOW_PATH);
         flowPathRef.set(ATTR_NAME, flowPath.getName());
-        flowPathRef.set(ATTR_QUALIFIED_NAME, flowPath.getId());
+        flowPathRef.set(ATTR_QUALIFIED_NAME, flowPath.getId() + "@" + clusterName);
         flowPathRef.set(ATTR_NIFI_FLOW, flowRef);
-        flowPathRef.set(ATTR_URL, flowPath.createDeepLinkURL((String) flowRef.get(ATTR_URL)));
+        flowPathRef.set(ATTR_URL, flowPath.createDeepLinkURL(nifiUrl));
         return flowPathRef;
     }
 

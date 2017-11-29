@@ -22,11 +22,9 @@ import org.apache.nifi.controller.status.ConnectionStatus;
 import org.apache.nifi.controller.status.PortStatus;
 import org.apache.nifi.controller.status.ProcessGroupStatus;
 import org.apache.nifi.controller.status.ProcessorStatus;
-import org.apache.nifi.reporting.ReportingContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -42,25 +40,14 @@ import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_INPUT_PORT;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_OUTPUT_PORT;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_QUEUE;
-import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.ATLAS_NIFI_URL;
 
 public class NiFiFlowAnalyzer {
 
     private static final Logger logger = LoggerFactory.getLogger(NiFiFlowAnalyzer.class);
 
-    public NiFiFlow analyzeProcessGroup(ReportingContext context) throws IOException {
-        final ProcessGroupStatus rootProcessGroup = context.getEventAccess().getGroupStatus("root");
-
-        final String flowName = rootProcessGroup.getName();
-
-        final String nifiUrl = context.getProperty(ATLAS_NIFI_URL).evaluateAttributeExpressions().getValue();
-        final NiFiFlow nifiFlow = new NiFiFlow(flowName, rootProcessGroup.getId(), nifiUrl);
-
+    public void analyzeProcessGroup(NiFiFlow nifiFlow, ProcessGroupStatus rootProcessGroup) {
         analyzeProcessGroup(rootProcessGroup, nifiFlow);
-
         analyzeRootGroupPorts(nifiFlow, rootProcessGroup);
-
-        return nifiFlow;
     }
 
     private void analyzeRootGroupPorts(NiFiFlow nifiFlow, ProcessGroupStatus rootProcessGroup) {
@@ -70,11 +57,11 @@ public class NiFiFlowAnalyzer {
             final AtlasEntity entity = new AtlasEntity(typeName);
             final String portName = port.getName();
 
-            entity.setAttribute(ATTR_NIFI_FLOW, nifiFlow.getId());
+            entity.setAttribute(ATTR_NIFI_FLOW, nifiFlow.getAtlasObjectId());
             entity.setAttribute(ATTR_NAME, portName);
-            entity.setAttribute(ATTR_QUALIFIED_NAME, port.getId());
+            entity.setAttribute(ATTR_QUALIFIED_NAME, nifiFlow.toQualifiedName(port.getId()));
 
-            final AtlasObjectId portId = new AtlasObjectId(typeName, ATTR_QUALIFIED_NAME, port.getId());
+            final AtlasObjectId portId = new AtlasObjectId(typeName, ATTR_QUALIFIED_NAME, nifiFlow.toQualifiedName(port.getId()));
             final Map<AtlasObjectId, AtlasEntity> ports = isInput ? nifiFlow.getRootInputPortEntities() : nifiFlow.getRootOutputPortEntities();
             ports.put(portId, entity);
 
@@ -89,7 +76,7 @@ public class NiFiFlowAnalyzer {
         rootProcessGroup.getOutputPortStatus().forEach(port -> portEntityCreator.accept(port, false));
     }
 
-    private void analyzeProcessGroup(final ProcessGroupStatus processGroupStatus, final NiFiFlow nifiFlow) throws IOException {
+    private void analyzeProcessGroup(final ProcessGroupStatus processGroupStatus, final NiFiFlow nifiFlow) {
 
         processGroupStatus.getConnectionStatus().forEach(c -> nifiFlow.addConnection(c));
         processGroupStatus.getProcessorStatus().forEach(p -> nifiFlow.addProcessor(p));
@@ -199,11 +186,11 @@ public class NiFiFlowAnalyzer {
 
                     // Create an input queue DataSet because Atlas doesn't show lineage if it doesn't have in and out.
                     // This DataSet is also useful to link flowPaths together on Atlas lineage graph.
-                    final AtlasObjectId queueId = new AtlasObjectId(TYPE_NIFI_QUEUE, ATTR_QUALIFIED_NAME, destPid);
+                    final AtlasObjectId queueId = new AtlasObjectId(TYPE_NIFI_QUEUE, ATTR_QUALIFIED_NAME, nifiFlow.toQualifiedName(destPid));
 
                     final AtlasEntity queue = new AtlasEntity(TYPE_NIFI_QUEUE);
-                    queue.setAttribute(ATTR_NIFI_FLOW, nifiFlow.getId());
-                    queue.setAttribute(ATTR_QUALIFIED_NAME, destPid);
+                    queue.setAttribute(ATTR_NIFI_FLOW, nifiFlow.getAtlasObjectId());
+                    queue.setAttribute(ATTR_QUALIFIED_NAME, nifiFlow.toQualifiedName(destPid));
                     queue.setAttribute(ATTR_NAME, "queue");
                     queue.setAttribute(ATTR_DESCRIPTION, "Input queue for " + destPid);
 

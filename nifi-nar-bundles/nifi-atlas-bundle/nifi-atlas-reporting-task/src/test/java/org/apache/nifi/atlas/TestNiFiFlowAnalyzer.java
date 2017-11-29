@@ -21,13 +21,9 @@ import org.apache.nifi.controller.status.ConnectionStatus;
 import org.apache.nifi.controller.status.PortStatus;
 import org.apache.nifi.controller.status.ProcessGroupStatus;
 import org.apache.nifi.controller.status.ProcessorStatus;
-import org.apache.nifi.reporting.EventAccess;
-import org.apache.nifi.reporting.ReportingContext;
-import org.apache.nifi.util.MockPropertyValue;
 import org.apache.nifi.util.Tuple;
 import org.junit.Before;
 import org.junit.Test;
-import org.mockito.Mockito;
 
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -40,10 +36,7 @@ import java.util.stream.Collectors;
 
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_QUEUE;
-import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.ATLAS_NIFI_URL;
 import static org.junit.Assert.assertEquals;
-import static org.mockito.Matchers.matches;
-import static org.mockito.Mockito.when;
 
 /**
  * Test {@link NiFiFlowAnalyzer} with simple mock code.
@@ -51,7 +44,7 @@ import static org.mockito.Mockito.when;
  */
 public class TestNiFiFlowAnalyzer {
 
-    private static final MockPropertyValue NIFI_URL = new MockPropertyValue("http://localhost:8080/nifi");
+    private static final String NIFI_URL = "http://localhost:8080/nifi";
     private int componentId = 0;
 
     @Before
@@ -70,19 +63,12 @@ public class TestNiFiFlowAnalyzer {
 
     @Test
     public void testEmptyFlow() throws Exception {
-
-        ReportingContext reportingContext = Mockito.mock(ReportingContext.class);
-        EventAccess eventAccess = Mockito.mock(EventAccess.class);
-
         ProcessGroupStatus rootPG = createEmptyProcessGroupStatus();
-
-        when(reportingContext.getEventAccess()).thenReturn(eventAccess);
-        when(reportingContext.getProperty(ATLAS_NIFI_URL)).thenReturn(NIFI_URL);
-        when(eventAccess.getGroupStatus(matches("root"))).thenReturn(rootPG);
 
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(reportingContext);
+        final NiFiFlow nifiFlow = new NiFiFlow(rootPG.getName(), rootPG.getId(), NIFI_URL);
+        analyzer.analyzeProcessGroup(nifiFlow, rootPG);
 
         assertEquals("Flow name", nifiFlow.getFlowName());
     }
@@ -135,21 +121,14 @@ public class TestNiFiFlowAnalyzer {
     @Test
     public void testSingleProcessor() throws Exception {
 
-        ReportingContext reportingContext = Mockito.mock(ReportingContext.class);
-        EventAccess eventAccess = Mockito.mock(EventAccess.class);
-
         ProcessGroupStatus rootPG = createEmptyProcessGroupStatus();
-
-        when(reportingContext.getProperty(ATLAS_NIFI_URL)).thenReturn(NIFI_URL);
-        when(reportingContext.getEventAccess()).thenReturn(eventAccess);
-        when(eventAccess.getGroupStatus(matches("root"))).thenReturn(rootPG);
 
         final ProcessorStatus pr0 = createProcessor(rootPG, "GenerateFlowFile");
 
-
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(reportingContext);
+        final NiFiFlow nifiFlow = new NiFiFlow(rootPG.getName(), rootPG.getId(), NIFI_URL);
+        analyzer.analyzeProcessGroup(nifiFlow, rootPG);
 
         assertEquals(1, nifiFlow.getProcessors().size());
 
@@ -177,14 +156,7 @@ public class TestNiFiFlowAnalyzer {
     @Test
     public void testProcessorsWithinSinglePath() throws Exception {
 
-        ReportingContext reportingContext = Mockito.mock(ReportingContext.class);
-        EventAccess eventAccess = Mockito.mock(EventAccess.class);
-
         ProcessGroupStatus rootPG = createEmptyProcessGroupStatus();
-
-        when(reportingContext.getProperty(ATLAS_NIFI_URL)).thenReturn(NIFI_URL);
-        when(reportingContext.getEventAccess()).thenReturn(eventAccess);
-        when(eventAccess.getGroupStatus(matches("root"))).thenReturn(rootPG);
 
         final ProcessorStatus pr0 = createProcessor(rootPG, "GenerateFlowFile");
         final ProcessorStatus pr1 = createProcessor(rootPG, "UpdateAttribute");
@@ -193,7 +165,8 @@ public class TestNiFiFlowAnalyzer {
 
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(reportingContext);
+        final NiFiFlow nifiFlow = new NiFiFlow(rootPG.getName(), rootPG.getId(), NIFI_URL);
+        analyzer.analyzeProcessGroup(nifiFlow, rootPG);
 
         assertEquals(2, nifiFlow.getProcessors().size());
 
@@ -213,15 +186,7 @@ public class TestNiFiFlowAnalyzer {
     @Test
     public void testMultiPaths() throws Exception {
 
-        ReportingContext reportingContext = Mockito.mock(ReportingContext.class);
-        EventAccess eventAccess = Mockito.mock(EventAccess.class);
-
         ProcessGroupStatus rootPG = createEmptyProcessGroupStatus();
-
-        when(reportingContext.getProperty(ATLAS_NIFI_URL)).thenReturn(NIFI_URL);
-        when(reportingContext.getEventAccess()).thenReturn(eventAccess);
-        when(eventAccess.getGroupStatus(matches("root"))).thenReturn(rootPG);
-
 
         final ProcessorStatus pr0 = createProcessor(rootPG, "GenerateFlowFile");
         final ProcessorStatus pr1 = createProcessor(rootPG, "UpdateAttribute");
@@ -233,7 +198,8 @@ public class TestNiFiFlowAnalyzer {
 
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(reportingContext);
+        final NiFiFlow nifiFlow = new NiFiFlow(rootPG.getName(), rootPG.getId(), NIFI_URL);
+        analyzer.analyzeProcessGroup(nifiFlow, rootPG);
 
         assertEquals(4, nifiFlow.getProcessors().size());
 
@@ -263,14 +229,7 @@ public class TestNiFiFlowAnalyzer {
     @Test
     public void testMultiPathsJoint() throws Exception {
 
-        ReportingContext reportingContext = Mockito.mock(ReportingContext.class);
-        EventAccess eventAccess = Mockito.mock(EventAccess.class);
-
         ProcessGroupStatus rootPG = createEmptyProcessGroupStatus();
-
-        when(reportingContext.getProperty(ATLAS_NIFI_URL)).thenReturn(NIFI_URL);
-        when(reportingContext.getEventAccess()).thenReturn(eventAccess);
-        when(eventAccess.getGroupStatus(matches("root"))).thenReturn(rootPG);
 
         final ProcessorStatus pr0 = createProcessor(rootPG, "org.apache.nifi.processors.standard.GenerateFlowFile");
         final ProcessorStatus pr1 = createProcessor(rootPG, "org.apache.nifi.processors.standard.UpdateAttribute");
@@ -287,7 +246,8 @@ public class TestNiFiFlowAnalyzer {
 
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = analyzer.analyzeProcessGroup(reportingContext);
+        final NiFiFlow nifiFlow = new NiFiFlow(rootPG.getName(), rootPG.getId(), NIFI_URL);
+        analyzer.analyzeProcessGroup(nifiFlow, rootPG);
 
         assertEquals(4, nifiFlow.getProcessors().size());
 

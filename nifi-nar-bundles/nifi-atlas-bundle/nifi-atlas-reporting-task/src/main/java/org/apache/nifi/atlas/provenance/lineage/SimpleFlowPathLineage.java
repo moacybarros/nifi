@@ -63,7 +63,6 @@ public class SimpleFlowPathLineage extends AbstractLineageStrategy {
         // See NIFI-4571 for detail.
         final Referenceable remotePortDataSet = isRemoteInputPort ? analyzedRefs.getOutputs().iterator().next() :  analyzedRefs.getInputs().iterator().next();
         final String portProcessId = event.getComponentId();
-        final String portDataSetId = remotePortDataSet.get(ATTR_QUALIFIED_NAME).toString();
 
         final NiFiFlowPath remotePortProcess = new NiFiFlowPath(portProcessId);
         remotePortProcess.setName(event.getComponentType());
@@ -95,7 +94,7 @@ public class SimpleFlowPathLineage extends AbstractLineageStrategy {
             // Create a queue.
             Referenceable queueFromStaticFlowPathToRemotePortProcess = new Referenceable(TYPE_NIFI_QUEUE);
             queueFromStaticFlowPathToRemotePortProcess.set(ATTR_NAME, "queue");
-            queueFromStaticFlowPathToRemotePortProcess.set(ATTR_QUALIFIED_NAME, portProcessId);
+            queueFromStaticFlowPathToRemotePortProcess.set(ATTR_QUALIFIED_NAME, nifiFlow.toQualifiedName(portProcessId));
 
             // Create lineage: Static flow_path -> queue
             DataSetRefs staticFlowPathRefs = new DataSetRefs(previousEvent.getComponentId());
@@ -128,7 +127,7 @@ public class SimpleFlowPathLineage extends AbstractLineageStrategy {
             // Create a queue.
             Referenceable queueFromRemotePortProcessToStaticFlowPath = new Referenceable(TYPE_NIFI_QUEUE);
             queueFromRemotePortProcessToStaticFlowPath.set(ATTR_NAME, "queue");
-            queueFromRemotePortProcessToStaticFlowPath.set(ATTR_QUALIFIED_NAME, portProcessId);
+            queueFromRemotePortProcessToStaticFlowPath.set(ATTR_QUALIFIED_NAME, nifiFlow.toQualifiedName(portProcessId));
 
             // Create lineage: RemoteOutputPort dataSet -> RemoteOutputPort process -> Queue
             DataSetRefs remotePortRefs = new DataSetRefs(portProcessId);

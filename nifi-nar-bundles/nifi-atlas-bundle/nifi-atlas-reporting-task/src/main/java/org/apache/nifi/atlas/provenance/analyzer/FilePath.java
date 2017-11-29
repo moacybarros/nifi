@@ -21,6 +21,7 @@ import org.apache.nifi.atlas.provenance.AbstractNiFiProvenanceEventAnalyzer;
 import org.apache.nifi.atlas.provenance.AnalysisContext;
 import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
+import org.apache.nifi.util.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -48,10 +49,12 @@ public class FilePath extends AbstractNiFiProvenanceEventAnalyzer {
     public DataSetRefs analyze(AnalysisContext context, ProvenanceEventRecord event) {
         final Referenceable ref = new Referenceable(TYPE);
         final URI uri = parseUri(event.getTransitUri());
-        // TODO: use hostname in uri for remote path.
         final String clusterName;
         try {
-            clusterName = InetAddress.getLocalHost().getHostName();
+            // use hostname in uri if available for remote path.
+            final String uriHost = uri.getHost();
+            final String hostname = StringUtils.isEmpty(uriHost) ? InetAddress.getLocalHost().getHostName() : uriHost;
+            clusterName = context.getClusterResolver().fromHostNames(hostname);
         } catch (UnknownHostException e) {
             logger.warn("Failed to get localhost name due to " + e, e);
             return null;
