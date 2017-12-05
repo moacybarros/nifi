@@ -29,38 +29,47 @@ import org.apache.atlas.model.typedef.AtlasEntityDef;
 import org.apache.atlas.model.typedef.AtlasStructDef.AtlasAttributeDef;
 import org.apache.atlas.model.typedef.AtlasTypesDef;
 import org.apache.nifi.atlas.security.AtlasAuthN;
+import org.apache.nifi.util.StringUtils;
+import org.apache.nifi.util.Tuple;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.ws.rs.core.MultivaluedMap;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_DESCRIPTION;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_FLOW_PATHS;
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_INCOMING_FLOW_PATHS;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_GUID;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_INPUTS;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_INPUT_PORTS;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NIFI_FLOW;
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_OUTGOING_FLOW_PATHS;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_OUTPUTS;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_OUTPUT_PORTS;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUEUES;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_TYPENAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_URL;
 import static org.apache.nifi.atlas.NiFiTypes.ENTITIES;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW_PATH;
+import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_INPUT_PORT;
+import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_OUTPUT_PORT;
+import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_QUEUE;
 
 public class NiFiAtlasClient {
 
@@ -200,47 +209,205 @@ public class NiFiAtlasClient {
         return typeDefs;
     }
 
-    public void registerNiFiFlow(NiFiFlow nifiFlow) throws AtlasServiceException {
-        final String nifiFlowName = nifiFlow.getFlowName();
-        final String url = nifiFlow.getUrl();
-        final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
+    private String toStr(Object obj) {
+        return obj != null ? obj.toString() : null;
+    }
 
+    public NiFiFlow fetchNiFiFlow(String rootProcessGroupId, String clusterName) throws AtlasServiceException {
+        final String qualifiedName = rootProcessGroupId + "@" + clusterName;
+        final AtlasObjectId flowId = new AtlasObjectId(TYPE_NIFI_FLOW, ATTR_QUALIFIED_NAME, qualifiedName);
+        final AtlasEntity.AtlasEntityWithExtInfo nifiFlowExt = searchEntityDef(flowId);
+
+        if (nifiFlowExt == null || nifiFlowExt.getEntity() == null) {
+            return null;
+        }
+
+        final AtlasEntity nifiFlowEntity = nifiFlowExt.getEntity();
+        final Map<String, Object> attributes = nifiFlowEntity.getAttributes();
+        final NiFiFlow nifiFlow = new NiFiFlow(rootProcessGroupId);
+        nifiFlow.setExEntity(nifiFlowEntity);
+        nifiFlow.setFlowName(toStr(attributes.get(ATTR_NAME)));
+        nifiFlow.setClusterName(clusterName);
+        nifiFlow.setUrl(toStr(attributes.get(ATTR_URL)));
+
+        nifiFlow.getQueues().putAll(toQualifiedNameIds(toAtlasObjectIds(nifiFlowEntity.getAttribute(ATTR_QUEUES))));
+        nifiFlow.getRootInputPortEntities().putAll(toQualifiedNameIds(toAtlasObjectIds(nifiFlowEntity.getAttribute(ATTR_INPUT_PORTS))));
+        nifiFlow.getRootOutputPortEntities().putAll(toQualifiedNameIds(toAtlasObjectIds(nifiFlowEntity.getAttribute(ATTR_OUTPUTS))));
+
+        final Map<String, NiFiFlowPath> flowPaths = nifiFlow.getFlowPaths();
+        final List<AtlasObjectId> flowPathIds = toAtlasObjectIds(attributes.get(ATTR_FLOW_PATHS));
+
+        for (AtlasObjectId flowPathId : flowPathIds) {
+            final AtlasEntity.AtlasEntityWithExtInfo flowPathExt = searchEntityDef(flowPathId);
+            if (flowPathExt == null || flowPathExt.getEntity() == null) {
+                continue;
+            }
+            final AtlasEntity flowPathEntity = flowPathExt.getEntity();
+            final String[] pathQnameSplit = toStr(flowPathEntity.getAttribute(ATTR_QUALIFIED_NAME)).split("@");
+            final NiFiFlowPath flowPath = new NiFiFlowPath(pathQnameSplit[0]);
+            flowPath.setExEntity(flowPathEntity);
+            flowPath.setName(toStr(flowPathEntity.getAttribute(ATTR_NAME)));
+            flowPath.getInputs().addAll(toQualifiedNameIds(toAtlasObjectIds(flowPathEntity.getAttribute(ATTR_INPUTS))).keySet());
+            flowPath.getOutputs().addAll(toQualifiedNameIds(toAtlasObjectIds(flowPathEntity.getAttribute(ATTR_OUTPUTS))).keySet());
+            flowPaths.put(flowPath.getId(), flowPath);
+        }
+        return nifiFlow;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<AtlasObjectId> toAtlasObjectIds(Object _references) {
+        if (_references == null) {
+            return Collections.emptyList();
+        }
+        List<Map<String, Object>> references = (List<Map<String, Object>>) _references;
+        return references.stream()
+                .map(ref -> new AtlasObjectId(toStr(ref.get(ATTR_GUID)), toStr(ref.get(ATTR_TYPENAME)), ref))
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * AtlasObjectIds returned from Atlas have GUID, but do not have qualifiedName, while ones created by the reporting task
+     * do not have GUID, but qualifiedName. AtlasObjectId.equals returns false for this combination.
+     * In order to match ids correctly, this method converts input ids into ones with qualifiedName attribute.
+     * @param ids to convert
+     * @return AtlasObjectIds with qualifiedName
+     */
+    private Map<AtlasObjectId, AtlasEntity> toQualifiedNameIds(List<AtlasObjectId> ids) {
+        if (ids == null) {
+            return Collections.emptyMap();
+        }
+
+        return ids.stream().distinct().map(id -> {
+            try {
+                final AtlasEntity.AtlasEntityWithExtInfo entityExt = searchEntityDef(id);
+                final AtlasEntity entity = entityExt.getEntity();
+                final Map<String, Object> uniqueAttrs = Collections.singletonMap(ATTR_QUALIFIED_NAME, entity.getAttribute(ATTR_QUALIFIED_NAME));
+                return new Tuple<>(new AtlasObjectId(id.getGuid(), id.getTypeName(), uniqueAttrs), entity);
+            } catch (AtlasServiceException e) {
+                return null;
+            }
+        }).filter(Objects::nonNull).collect(Collectors.toMap(Tuple::getKey, Tuple::getValue));
+    }
+
+    public void registerNiFiFlow(NiFiFlow nifiFlow) throws AtlasServiceException {
+
+        // Create parent flow entity, so that common properties are taken over.
+        final AtlasEntity flowEntity = registerNiFiFlowEntity(nifiFlow);
+
+        // Create DataSet entities those are created by this NiFi flow.
+        registerDataSetEntities(nifiFlow);
+
+        // Create path entities.
+        registerFlowPathEntities(nifiFlow);
+
+        // Now loop through entities again to add relationships.
+        // TODO: If anything has been added in this cycle.
+        final Set<AtlasObjectId> pathIds = nifiFlow.getFlowPaths().values().stream()
+                .map(path -> new AtlasObjectId(path.getAtlasGuid(), TYPE_NIFI_FLOW_PATH,
+                        Collections.singletonMap(ATTR_QUALIFIED_NAME, nifiFlow.toQualifiedName(path.getId()))))
+                .collect(Collectors.toSet());
+        flowEntity.setAttribute(ATTR_FLOW_PATHS, pathIds);
+        flowEntity.setAttribute(ATTR_QUEUES, nifiFlow.getQueues().keySet());
+        flowEntity.setAttribute(ATTR_INPUT_PORTS, nifiFlow.getRootInputPortEntities().keySet());
+        flowEntity.setAttribute(ATTR_OUTPUT_PORTS, nifiFlow.getRootOutputPortEntities().keySet());
+
+        // Send updated entities.
+        final List<AtlasEntity> entities = new ArrayList<>();
+        final AtlasEntity.AtlasEntitiesWithExtInfo atlasEntities = new AtlasEntity.AtlasEntitiesWithExtInfo(entities);
+        entities.add(flowEntity);
+        try {
+            final EntityMutationResponse mutationResponse = atlasClient.createEntities(atlasEntities);
+            logger.debug("mutation response={}", mutationResponse);
+        } catch (AtlasServiceException e) {
+            if (e.getStatus().getStatusCode() == 404 && e.getMessage().contains("ATLAS-404-00-00B")) {
+                // NOTE: If previously existed nifi_flow_path entity is removed because the path is removed from NiFi,
+                // then Atlas respond with 404 even though the entity is successfully updated.
+                // Following exception is thrown in this case. Just log it.
+                // org.apache.atlas.AtlasServiceException:
+                // Metadata service API org.apache.atlas.AtlasBaseClient$APIInfo@45a37759
+                // failed with status 404 (Not Found) Response Body
+                // ({"errorCode":"ATLAS-404-00-00B","errorMessage":"Given instance is invalid/not found:
+                // Could not find entities in the repository with guids: [96d24487-cd66-4795-b552-f00b426fed26]"})
+                logger.debug("Received error response from Atlas but it should be stored." + e);
+            } else {
+                throw e;
+            }
+        }
+    }
+
+    private AtlasEntity registerNiFiFlowEntity(final NiFiFlow nifiFlow) throws AtlasServiceException {
+        final List<AtlasEntity> entities = new ArrayList<>();
+        final AtlasEntity.AtlasEntitiesWithExtInfo atlasEntities = new AtlasEntity.AtlasEntitiesWithExtInfo(entities);
+
+        // Create parent flow entity using existing NiFiFlow entity if available, so that common properties are taken over.
+        final AtlasEntity flowEntity = nifiFlow.getExEntity() != null ? new AtlasEntity(nifiFlow.getExEntity()) : new AtlasEntity();
+        flowEntity.setTypeName(TYPE_NIFI_FLOW);
+        flowEntity.setVersion(1L);
+        flowEntity.setAttribute(ATTR_NAME, nifiFlow.getFlowName());
+        flowEntity.setAttribute(ATTR_QUALIFIED_NAME, nifiFlow.toQualifiedName(nifiFlow.getRootProcessGroupId()));
+        flowEntity.setAttribute(ATTR_URL, nifiFlow.getUrl());
+        flowEntity.setAttribute(ATTR_DESCRIPTION, nifiFlow.getDescription());
+
+        // If flowEntity is not persisted yet, then store nifi_flow entity to make nifiFlowId available for other entities.
+        if (flowEntity.getGuid().startsWith("-")) {
+            entities.add(flowEntity);
+            final EntityMutationResponse mutationResponse = atlasClient.createEntities(atlasEntities);
+            logger.debug("Registered a new nifi_flow entity, mutation response={}", mutationResponse);
+            final String assignedNiFiFlowGuid = mutationResponse.getGuidAssignments().get(flowEntity.getGuid());
+            flowEntity.setGuid(assignedNiFiFlowGuid);
+            nifiFlow.setAtlasGuid(assignedNiFiFlowGuid);
+        }
+
+        return flowEntity;
+    }
+
+    private void registerDataSetEntities(final NiFiFlow nifiFlow) throws AtlasServiceException {
         final Map<AtlasObjectId, AtlasEntity> inputPorts = nifiFlow.getRootInputPortEntities();
         final Map<AtlasObjectId, AtlasEntity> outputPorts = nifiFlow.getRootOutputPortEntities();
         final Map<AtlasObjectId, AtlasEntity> queues = nifiFlow.getQueues();
 
-        // Number of entity objects before adding paths. +1 is the root flow.
-        final int offsetToPaths = 1 + inputPorts.size() + outputPorts.size() + queues.size();
-        final List<AtlasEntity> entities = new ArrayList<>(offsetToPaths + paths.size());
+        final List<AtlasEntity> entities = Stream.of(inputPorts.values().stream(), outputPorts.values().stream(), queues.values().stream()).flatMap(Function.identity())
+                .filter(entity -> entity.getGuid().startsWith("-")).collect(Collectors.toList());
         final AtlasEntity.AtlasEntitiesWithExtInfo atlasEntities = new AtlasEntity.AtlasEntitiesWithExtInfo(entities);
 
-        // Create parent flow entity.
-        final AtlasEntity flowEntity = new AtlasEntity();
-        entities.add(flowEntity);
-        flowEntity.setTypeName(TYPE_NIFI_FLOW);
-        flowEntity.setVersion(1L);
-        flowEntity.setAttribute(ATTR_NAME, nifiFlowName);
-        flowEntity.setAttribute(ATTR_QUALIFIED_NAME, nifiFlow.toQualifiedName(nifiFlow.getRootProcessGroupId()));
-        flowEntity.setAttribute(ATTR_URL, url);
-        flowEntity.setAttribute(ATTR_DESCRIPTION, nifiFlow.getDescription());
-
-        // Create nifi_flow entity to make nifiFlowId available for other entities.
-        EntityMutationResponse mutationResponse = atlasClient.createEntities(atlasEntities);
+        final EntityMutationResponse mutationResponse = atlasClient.createEntities(atlasEntities);
         logger.debug("mutation response={}", mutationResponse);
 
-        // Create DataSet entities those are created by this NiFi flow.
-        entities.addAll(inputPorts.values());
-        entities.addAll(outputPorts.values());
-        entities.addAll(queues.values());
+        final Map<String, String> guidAssignments = mutationResponse.getGuidAssignments();
+        for (AtlasEntity entity : entities) {
+            final Map<AtlasObjectId, AtlasEntity> entityMap;
+            switch (entity.getTypeName()) {
+                case TYPE_NIFI_INPUT_PORT:
+                    entityMap = nifiFlow.getRootInputPortEntities();
+                    break;
+                case TYPE_NIFI_OUTPUT_PORT:
+                    entityMap = nifiFlow.getRootOutputPortEntities();
+                    break;
+                case TYPE_NIFI_QUEUE:
+                    entityMap = nifiFlow.getQueues();
+                    break;
+                default:
+                    throw new RuntimeException(entity.getTypeName() + " is not expected.");
+            }
+            final String qualifiedName = toStr(entity.getAttribute(ATTR_QUALIFIED_NAME));
+            final Optional<AtlasObjectId> originalId = nifiFlow.findIdByQualifiedName(entityMap.keySet(), qualifiedName);
+            if (originalId.isPresent()) {
+                entityMap.remove(originalId.get());
+            }
+            final String guid = guidAssignments.get(entity.getGuid());
+            entity.setGuid(guid);
+            final AtlasObjectId idWithGuid = new AtlasObjectId(guid, entity.getTypeName(), Collections.singletonMap(ATTR_QUALIFIED_NAME, qualifiedName));
+            entityMap.put(idWithGuid, entity);
 
-        mutationResponse = atlasClient.createEntities(atlasEntities);
-        logger.debug("mutation response={}", mutationResponse);
+        }
+    }
 
-        // Create path entities.
-        for (int i = 0; i < paths.size(); i++) {
-            NiFiFlowPath path = paths.get(i);
-
-            final AtlasEntity pathEntity = new AtlasEntity();
+    private void registerFlowPathEntities(final NiFiFlow nifiFlow) throws AtlasServiceException {
+        final List<AtlasEntity> entities = new ArrayList<>();
+        final AtlasEntity.AtlasEntitiesWithExtInfo atlasEntities = new AtlasEntity.AtlasEntitiesWithExtInfo(entities);
+        for (NiFiFlowPath path : nifiFlow.getFlowPaths().values()) {
+            // Create path entities with existing path.
+            final AtlasEntity pathEntity = path.getExEntity() != null ? new AtlasEntity(path.getExEntity()) : new AtlasEntity();
             entities.add(pathEntity);
             pathEntity.setTypeName(TYPE_NIFI_FLOW_PATH);
             pathEntity.setVersion(1L);
@@ -268,82 +435,25 @@ public class NiFiAtlasClient {
 
             pathEntity.setAttribute(ATTR_URL, path.createDeepLinkURL(nifiFlow.getUrl()));
 
-            // At this point, nifi_flow is already created, so DataSet can have a pointer to nifi_flow.
-            activateDataSetIOLinks(path, pathEntity);
+            pathEntity.setAttribute(ATTR_INPUTS, path.getInputs());
+            pathEntity.setAttribute(ATTR_OUTPUTS, path.getOutputs());
         }
 
         // Create entities without relationships, Atlas doesn't allow storing ObjectId that doesn't exist.
-        mutationResponse = atlasClient.createEntities(atlasEntities);
+        final EntityMutationResponse mutationResponse = atlasClient.createEntities(atlasEntities);
         logger.debug("mutation response={}", mutationResponse);
-
-
-        // Now loop through entities again to add relationships.
-        final List<AtlasObjectId> flowPaths = new ArrayList<>();
-        flowEntity.setAttribute(ATTR_FLOW_PATHS, flowPaths);
-
-        final Function<NiFiFlowPath, AtlasObjectId> toObjectId = p -> new AtlasObjectId(TYPE_NIFI_FLOW_PATH,
-                ATTR_QUALIFIED_NAME, nifiFlow.toQualifiedName(p.getId()));
-
-        for (int i = 0; i < paths.size(); i++) {
-            NiFiFlowPath path = paths.get(i);
-
-            final AtlasEntity pathEntity = entities.get(offsetToPaths + i);
-
-            final List<AtlasObjectId> incomingPaths = path.getIncomingPaths().stream()
-                    .map(p -> toObjectId.apply(p)).collect(Collectors.toList());
-            final List<AtlasObjectId> outgoingPaths = path.getOutgoingPaths().stream()
-                    .map(p -> toObjectId.apply(p)).collect(Collectors.toList());
-
-            pathEntity.setAttribute(ATTR_INCOMING_FLOW_PATHS, incomingPaths);
-            pathEntity.setAttribute(ATTR_OUTGOING_FLOW_PATHS, outgoingPaths);
-
-            // Add path reference for parent flow.
-            flowPaths.add(toObjectId.apply(path));
-        }
-
-        flowEntity.setAttribute(ATTR_QUEUES, queues.keySet());
-        flowEntity.setAttribute(ATTR_INPUT_PORTS, inputPorts.keySet());
-        flowEntity.setAttribute(ATTR_OUTPUT_PORTS, outputPorts.keySet());
-
-        // Send updated entities.
-        try {
-            mutationResponse = atlasClient.createEntities(atlasEntities);
-        } catch (AtlasServiceException e) {
-            if (e.getStatus().getStatusCode() == 404 && e.getMessage().contains("ATLAS-404-00-00B")) {
-                // NOTE: If previously existed nifi_flow_path entity is removed because the path is removed from NiFi,
-                // then Atlas respond with 404 even though the entity is successfully updated.
-                // Following exception is thrown in this case. Just log it.
-                // org.apache.atlas.AtlasServiceException:
-                // Metadata service API org.apache.atlas.AtlasBaseClient$APIInfo@45a37759
-                // failed with status 404 (Not Found) Response Body
-                // ({"errorCode":"ATLAS-404-00-00B","errorMessage":"Given instance is invalid/not found:
-                // Could not find entities in the repository with guids: [96d24487-cd66-4795-b552-f00b426fed26]"})
-                logger.debug("Received error response from Atlas but it should be stored." + e);
-            } else {
-                throw e;
-            }
-        }
-        logger.debug("mutation response={}", mutationResponse);
-    }
-
-    private void activateDataSetIOLinks(AtlasProcess process, AtlasEntity entity) throws AtlasServiceException {
-        final Set<AtlasObjectId> inputs = process.getInputs();
-        final Set<AtlasObjectId> outputs = process.getOutputs();
-
-        for (AtlasObjectId in : inputs) {
-            if (outputs.contains(in)) {
-                throw new IllegalStateException("Looping dataset will cause infinite loop.");
-            }
-        }
-
-        entity.setAttribute(ATTR_INPUTS, inputs);
-        entity.setAttribute(ATTR_OUTPUTS, outputs);
+        // TODO: get assigned guid.
     }
 
     public AtlasEntity.AtlasEntityWithExtInfo searchEntityDef(AtlasObjectId id) throws AtlasServiceException {
+        final String guid = id.getGuid();
+        if (!StringUtils.isEmpty(guid)) {
+            return atlasClient.getEntityByGuid(guid);
+        }
         final Map<String, String> attributes = new HashMap<>();
         id.getUniqueAttributes().entrySet().stream().filter(entry -> entry.getValue() != null)
                 .forEach(entry -> attributes.put(entry.getKey(), entry.getValue().toString()));
         return atlasClient.getEntityByAttribute(id.getTypeName(), attributes);
     }
+
 }

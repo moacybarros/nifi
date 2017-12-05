@@ -39,6 +39,8 @@ public class NiFiTypes {
     public static final String TYPE_NIFI_INPUT_PORT = "nifi_input_port";
     public static final String TYPE_NIFI_OUTPUT_PORT = "nifi_output_port";
 
+    public static final String ATTR_GUID = "guid";
+    public static final String ATTR_TYPENAME = "typeName";
     public static final String ATTR_NAME = "name";
     public static final String ATTR_CLUSTER_NAME = "clusterName";
     public static final String ATTR_DESCRIPTION = "description";
@@ -53,8 +55,6 @@ public class NiFiTypes {
     public static final String ATTR_QUEUES = "queues";
     public static final String ATTR_INPUT_PORTS = "inputPorts";
     public static final String ATTR_OUTPUT_PORTS = "outputPorts";
-    public static final String ATTR_INCOMING_FLOW_PATHS = "incomingFlowPaths";
-    public static final String ATTR_OUTGOING_FLOW_PATHS = "outgoingFlowPaths";
 
     @FunctionalInterface
     interface EntityDefinition {
@@ -113,15 +113,7 @@ public class NiFiTypes {
 
         final AtlasAttributeDef url = new AtlasAttributeDef(ATTR_URL, "string");
 
-        final AtlasAttributeDef incomingPaths = new AtlasAttributeDef(ATTR_INCOMING_FLOW_PATHS, arrayOf(TYPE_NIFI_FLOW_PATH));
-        incomingPaths.setIsOptional(true);
-
-        final AtlasAttributeDef outgoingPaths = new AtlasAttributeDef(ATTR_OUTGOING_FLOW_PATHS, arrayOf(TYPE_NIFI_FLOW_PATH));
-        outgoingPaths.setIsOptional(true);
-
         attributes.add(url);
-        attributes.add(incomingPaths);
-        attributes.add(outgoingPaths);
     };
 
     private static EntityDefinition NIFI_DATA = (entity, superTypes, attributes) -> {

@@ -143,7 +143,7 @@ public class SimpleFlowPathLineage extends AbstractLineageStrategy {
             }
 
             // Add RemoteOutputPort process, so that it can be found even if it is connected to RemoteInputPort directory without any processor in between.
-            nifiFlow.getFlowPaths().add(remotePortProcess);
+            nifiFlow.getFlowPaths().put(remotePortProcess.getId(), remotePortProcess);
 
         }
 

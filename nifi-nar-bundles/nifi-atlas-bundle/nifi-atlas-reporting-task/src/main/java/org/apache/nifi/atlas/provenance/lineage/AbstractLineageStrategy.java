@@ -16,6 +16,7 @@
  */
 package org.apache.nifi.atlas.provenance.lineage;
 
+import org.apache.atlas.model.instance.AtlasObjectId;
 import org.apache.atlas.notification.hook.HookNotification;
 import org.apache.atlas.typesystem.Referenceable;
 import org.apache.nifi.atlas.NiFiFlow;
@@ -25,15 +26,19 @@ import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzer;
 import org.apache.nifi.atlas.provenance.NiFiProvenanceEventAnalyzerFactory;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
+import org.apache.nifi.util.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import static org.apache.nifi.atlas.NiFIAtlasHook.NIFI_USER;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_INPUTS;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NIFI_FLOW;
@@ -44,8 +49,6 @@ import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW_PATH;
 
 public abstract class AbstractLineageStrategy implements LineageStrategy {
-
-    private static final String NIFI_USER = "nifi";
 
     protected Logger logger = LoggerFactory.getLogger(getClass());
     private LineageContext lineageContext;
@@ -98,7 +101,7 @@ public abstract class AbstractLineageStrategy implements LineageStrategy {
     protected Referenceable toReferenceable(NiFiFlow nifiFlow) {
         final Referenceable flowRef = new Referenceable(TYPE_NIFI_FLOW);
         flowRef.set(ATTR_NAME, nifiFlow.getFlowName());
-        flowRef.set(ATTR_QUALIFIED_NAME, nifiFlow.getQuelifiedName());
+        flowRef.set(ATTR_QUALIFIED_NAME, nifiFlow.getQualifiedName());
         flowRef.set(ATTR_URL, nifiFlow.getUrl());
         return flowRef;
     }
@@ -114,7 +117,17 @@ public abstract class AbstractLineageStrategy implements LineageStrategy {
         flowPathRef.set(ATTR_QUALIFIED_NAME, flowPath.getId() + "@" + clusterName);
         flowPathRef.set(ATTR_NIFI_FLOW, flowRef);
         flowPathRef.set(ATTR_URL, flowPath.createDeepLinkURL(nifiUrl));
+        // Referenceable has to have GUID assigned, otherwise it will not be stored due to lack of required attribute.
+        // If a Referencible has GUID, Atlas does not validate all required attributes.
+        flowPathRef.set(ATTR_INPUTS, flowPath.getInputs().stream().map(this::toReferenceable).collect(Collectors.toList()));
+        flowPathRef.set(ATTR_OUTPUTS,  flowPath.getOutputs().stream().map(this::toReferenceable).collect(Collectors.toList()));
         return flowPathRef;
+    }
+
+    private Referenceable toReferenceable(AtlasObjectId id) {
+        return StringUtils.isEmpty(id.getGuid())
+                ? new Referenceable(id.getTypeName(), id.getUniqueAttributes())
+                : new Referenceable(id.getGuid(), id.getTypeName(), id.getUniqueAttributes());
     }
 
     // TODO: Refactor lineageContext and NiFiAtlasHook.
@@ -126,30 +139,42 @@ public abstract class AbstractLineageStrategy implements LineageStrategy {
     }
 
     @SuppressWarnings("unchecked")
-    protected void addDataSetRefs(Set<Referenceable> dataSetRefs, Referenceable nifiFlowPath, String targetAttribute) {
-        if (dataSetRefs != null && !dataSetRefs.isEmpty()) {
-            for (Referenceable dataSetRef : dataSetRefs) {
-                final HookNotification.EntityCreateRequest createDataSet = new HookNotification.EntityCreateRequest(NIFI_USER, dataSetRef);
-                lineageContext.addMessage(createDataSet);
-            }
+    private boolean addDataSetRefs(Set<Referenceable> refsToAdd, Referenceable nifiFlowPath, String targetAttribute) {
+        if (refsToAdd != null && !refsToAdd.isEmpty()) {
 
-            Object updatedRef = nifiFlowPath.get(targetAttribute);
-            if (updatedRef == null) {
-                updatedRef = new ArrayList(dataSetRefs);
-            } else {
-                ((Collection<Referenceable>) updatedRef).addAll(dataSetRefs);
+            // If nifiFlowPath already has a given dataSetRef, then it needs not to be created.
+            final Function<Referenceable, String> toTypedQualifiedName = ref -> ref.getTypeName() + "::" + ref.get(ATTR_QUALIFIED_NAME);
+            final Collection<Referenceable> refs = Optional.ofNullable((Collection<Referenceable>) nifiFlowPath.get(targetAttribute)).orElseGet(ArrayList::new);
+            final Set<String> existingRefTypedQualifiedNames = refs.stream().map(toTypedQualifiedName).collect(Collectors.toSet());
+
+            refsToAdd.stream().filter(ref -> !existingRefTypedQualifiedNames.contains(toTypedQualifiedName.apply(ref)))
+                    .forEach(ref -> {
+                        if (ref.getId().isUnassigned()) {
+                            // Create new entity.
+                            logger.debug("Found a new DataSet reference from {} to {}, sending an EntityCreateRequest",
+                                    new Object[]{toTypedQualifiedName.apply(nifiFlowPath), toTypedQualifiedName.apply(ref)});
+                            final HookNotification.EntityCreateRequest createDataSet = new HookNotification.EntityCreateRequest(NIFI_USER, ref);
+                            lineageContext.addMessage(createDataSet);
+                        }
+                        refs.add(ref);
+                    });
+
+            if (refs.size() > existingRefTypedQualifiedNames.size()) {
+                // Something has been added.
+                nifiFlowPath.set(targetAttribute, refs);
+                return true;
             }
-            nifiFlowPath.set(targetAttribute, updatedRef);
         }
+        return false;
     }
 
     protected void addDataSetRefs(DataSetRefs dataSetRefs, Referenceable flowPathRef) {
-        addDataSetRefs(dataSetRefs.getInputs(), flowPathRef, ATTR_INPUTS);
-        addDataSetRefs(dataSetRefs.getOutputs(), flowPathRef, ATTR_OUTPUTS);
-        // Here, EntityPartialUpdateRequest adds Process's inputs or outputs elements who does not exists in
-        // the current nifi_flow_path entity stored in Atlas.
-        lineageContext.addMessage(new HookNotification.EntityPartialUpdateRequest(NIFI_USER, TYPE_NIFI_FLOW_PATH,
-                ATTR_QUALIFIED_NAME, (String) flowPathRef.get(ATTR_QUALIFIED_NAME), flowPathRef));
+        final boolean inputsAdded = addDataSetRefs(dataSetRefs.getInputs(), flowPathRef, ATTR_INPUTS);
+        final boolean outputsAdded = addDataSetRefs(dataSetRefs.getOutputs(), flowPathRef, ATTR_OUTPUTS);
+        if (inputsAdded || outputsAdded) {
+            lineageContext.addMessage(new HookNotification.EntityPartialUpdateRequest(NIFI_USER, TYPE_NIFI_FLOW_PATH,
+                    ATTR_QUALIFIED_NAME, (String) flowPathRef.get(ATTR_QUALIFIED_NAME), flowPathRef));
+        }
     }
 
 

@@ -16,6 +16,7 @@
  */
 package org.apache.nifi.atlas;
 
+import org.apache.atlas.model.instance.AtlasEntity;
 import org.apache.atlas.model.instance.AtlasObjectId;
 
 import java.util.ArrayList;
@@ -30,17 +31,34 @@ public class NiFiFlowPath implements AtlasProcess {
     private final Set<AtlasObjectId> inputs = new HashSet<>();
     private final Set<AtlasObjectId> outputs = new HashSet<>();
 
-    private final Set<NiFiFlowPath> incomingPaths = new HashSet<>();
-    private final Set<NiFiFlowPath> outgoingPaths = new HashSet<>();
-
+    private String atlasGuid;
     private String name;
     private String groupId;
+
+    private AtlasEntity exEntity;
 
     public NiFiFlowPath(String id) {
         this.id = id;
     }
     public NiFiFlowPath(String id, long lineageHash) {
         this.id =  id + "::" + lineageHash;
+    }
+
+    public AtlasEntity getExEntity() {
+        return exEntity;
+    }
+
+    public void setExEntity(AtlasEntity exEntity) {
+        this.exEntity = exEntity;
+        this.atlasGuid = exEntity.getGuid();
+    }
+
+    public String getAtlasGuid() {
+        return atlasGuid;
+    }
+
+    public void setAtlasGuid(String atlasGuid) {
+        this.atlasGuid = atlasGuid;
     }
 
     public String getName() {
@@ -77,14 +95,6 @@ public class NiFiFlowPath implements AtlasProcess {
 
     public String getId() {
         return id;
-    }
-
-    public Set<NiFiFlowPath> getIncomingPaths() {
-        return incomingPaths;
-    }
-
-    public Set<NiFiFlowPath> getOutgoingPaths() {
-        return outgoingPaths;
     }
 
     public String createDeepLinkURL(String nifiUrl) {

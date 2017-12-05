@@ -29,10 +29,8 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Date;
-import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_QUEUE;
@@ -67,7 +65,7 @@ public class TestNiFiFlowAnalyzer {
 
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = new NiFiFlow(rootPG.getName(), rootPG.getId(), NIFI_URL);
+        final NiFiFlow nifiFlow = new NiFiFlow(rootPG.getId());
         analyzer.analyzeProcessGroup(nifiFlow, rootPG);
 
         assertEquals("Flow name", nifiFlow.getFlowName());
@@ -127,13 +125,13 @@ public class TestNiFiFlowAnalyzer {
 
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = new NiFiFlow(rootPG.getName(), rootPG.getId(), NIFI_URL);
+        final NiFiFlow nifiFlow = new NiFiFlow(rootPG.getId());
         analyzer.analyzeProcessGroup(nifiFlow, rootPG);
 
         assertEquals(1, nifiFlow.getProcessors().size());
 
         analyzer.analyzePaths(nifiFlow);
-        final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
+        final Map<String, NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
         assertEquals(2, paths.size());
 
@@ -165,13 +163,13 @@ public class TestNiFiFlowAnalyzer {
 
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = new NiFiFlow(rootPG.getName(), rootPG.getId(), NIFI_URL);
+        final NiFiFlow nifiFlow = new NiFiFlow(rootPG.getId());
         analyzer.analyzeProcessGroup(nifiFlow, rootPG);
 
         assertEquals(2, nifiFlow.getProcessors().size());
 
         analyzer.analyzePaths(nifiFlow);
-        final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
+        final Map<String, NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
         assertEquals(2, paths.size());
 
@@ -198,20 +196,19 @@ public class TestNiFiFlowAnalyzer {
 
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = new NiFiFlow(rootPG.getName(), rootPG.getId(), NIFI_URL);
+        final NiFiFlow nifiFlow = new NiFiFlow(rootPG.getId());
         analyzer.analyzeProcessGroup(nifiFlow, rootPG);
 
         assertEquals(4, nifiFlow.getProcessors().size());
 
         analyzer.analyzePaths(nifiFlow);
-        final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
+        final Map<String, NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
         assertEquals(3, paths.size());
 
         // Order is not guaranteed
-        final Map<String, NiFiFlowPath> pathMap = paths.stream().collect(Collectors.toMap(p -> p.getId(), p -> p));
-        final NiFiFlowPath pathA = pathMap.get(pr0.getId());
-        final NiFiFlowPath pathB = pathMap.get(pr2.getId());
+        final NiFiFlowPath pathA = paths.get(pr0.getId());
+        final NiFiFlowPath pathB = paths.get(pr2.getId());
         assertEquals(2, pathA.getProcessComponentIds().size());
         assertEquals(2, pathB.getProcessComponentIds().size());
 
@@ -246,21 +243,20 @@ public class TestNiFiFlowAnalyzer {
 
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
-        final NiFiFlow nifiFlow = new NiFiFlow(rootPG.getName(), rootPG.getId(), NIFI_URL);
+        final NiFiFlow nifiFlow = new NiFiFlow(rootPG.getId());
         analyzer.analyzeProcessGroup(nifiFlow, rootPG);
 
         assertEquals(4, nifiFlow.getProcessors().size());
 
         analyzer.analyzePaths(nifiFlow);
-        final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
+        final Map<String, NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
         assertEquals(4, paths.size());
 
         // Order is not guaranteed
-        final Map<String, NiFiFlowPath> pathMap = paths.stream().collect(Collectors.toMap(p -> p.getId(), p -> p));
-        final NiFiFlowPath pathA = pathMap.get(pr0.getId());
-        final NiFiFlowPath pathB = pathMap.get(pr2.getId());
-        final NiFiFlowPath pathC = pathMap.get(pr3.getId());
+        final NiFiFlowPath pathA = paths.get(pr0.getId());
+        final NiFiFlowPath pathB = paths.get(pr2.getId());
+        final NiFiFlowPath pathC = paths.get(pr3.getId());
         assertEquals(2, pathA.getProcessComponentIds().size());
         assertEquals(1, pathB.getProcessComponentIds().size());
         assertEquals(1, pathC.getProcessComponentIds().size());

@@ -22,41 +22,48 @@ import org.apache.nifi.controller.status.ConnectionStatus;
 import org.apache.nifi.controller.status.PortStatus;
 import org.apache.nifi.controller.status.ProcessorStatus;
 import org.apache.nifi.controller.status.RemoteProcessGroupStatus;
+import org.apache.nifi.util.Tuple;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_DESCRIPTION;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_NIFI_FLOW;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW;
+import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_INPUT_PORT;
+import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_OUTPUT_PORT;
+import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_QUEUE;
 
 public class NiFiFlow {
 
     private static final Logger logger = LoggerFactory.getLogger(NiFiFlow.class);
 
-    private final String flowName;
     private final String rootProcessGroupId;
-    private final String url;
+    private String flowName;
     private String clusterName;
+    private String url;
+    private String atlasGuid;
+    private AtlasEntity exEntity;
     private AtlasObjectId atlasObjectId;
     private String description;
 
-    private final Set<AtlasObjectId> inputs = new HashSet<>();
-    private final Set<AtlasObjectId> outputs = new HashSet<>();
-    private final List<NiFiFlowPath> flowPaths = new ArrayList<>();
+    private final Map<String, NiFiFlowPath> flowPaths = new HashMap<>();
     private final Map<String, ProcessorStatus> processors = new HashMap<>();
     private final Map<String, RemoteProcessGroupStatus> remoteProcessGroups = new HashMap<>();
     private final Map<String, List<ConnectionStatus>> incomingRelationShips = new HashMap<>();
     private final Map<String, List<ConnectionStatus>> outGoingRelationShips = new HashMap<>();
 
-    private final Map<AtlasObjectId, AtlasEntity> createdData = new HashMap<>();
     private final Map<AtlasObjectId, AtlasEntity> queues = new HashMap<>();
     // Any Ports.
     private final Map<String, PortStatus> inputPorts = new HashMap<>();
@@ -69,10 +76,8 @@ public class NiFiFlow {
     private final Map<AtlasObjectId, AtlasEntity> rootOutputPortEntities = new HashMap<>();
 
 
-    public NiFiFlow(String flowName, String rootProcessGroupId, String url) {
-        this.flowName = flowName;
+    public NiFiFlow(String rootProcessGroupId) {
         this.rootProcessGroupId = rootProcessGroupId;
-        this.url = url;
     }
 
     public AtlasObjectId getAtlasObjectId() {
@@ -89,10 +94,32 @@ public class NiFiFlow {
 
     public void setClusterName(String clusterName) {
         this.clusterName = clusterName;
-        atlasObjectId = new AtlasObjectId(TYPE_NIFI_FLOW, ATTR_QUALIFIED_NAME, getQuelifiedName());
+        atlasObjectId = createAtlasObjectId();
     }
 
-    public String getQuelifiedName() {
+    private AtlasObjectId createAtlasObjectId() {
+        return new AtlasObjectId(atlasGuid, TYPE_NIFI_FLOW, Collections.singletonMap(ATTR_QUALIFIED_NAME, getQualifiedName()));
+    }
+
+    public AtlasEntity getExEntity() {
+        return exEntity;
+    }
+
+    public void setExEntity(AtlasEntity exEntity) {
+        this.exEntity = exEntity;
+        this.setAtlasGuid(exEntity.getGuid());
+    }
+
+    public String getAtlasGuid() {
+        return atlasGuid;
+    }
+
+    public void setAtlasGuid(String atlasGuid) {
+        this.atlasGuid = atlasGuid;
+        atlasObjectId = createAtlasObjectId();
+    }
+
+    public String getQualifiedName() {
         return toQualifiedName(rootProcessGroupId);
     }
 
@@ -121,8 +148,16 @@ public class NiFiFlow {
         remoteProcessGroups.put(r.getId(), r);
     }
 
+    public void setFlowName(String flowName) {
+        this.flowName = flowName;
+    }
+
     public String getFlowName() {
         return flowName;
+    }
+
+    public void setUrl(String url) {
+        this.url = url;
     }
 
     public String getUrl() {
@@ -155,6 +190,7 @@ public class NiFiFlow {
 
     public void addRootInputPort(PortStatus port) {
         rootInputPorts.put(port.getId(), port);
+        createOrUpdateRootGroupPortEntity(true, toQualifiedName(port.getId()), port.getName());
     }
 
     public Map<String, PortStatus> getRootInputPorts() {
@@ -163,6 +199,7 @@ public class NiFiFlow {
 
     public void addRootOutputPort(PortStatus port) {
         rootOutputPorts.put(port.getId(), port);
+        createOrUpdateRootGroupPortEntity(false, toQualifiedName(port.getId()), port.getName());
     }
 
     public Map<String, PortStatus> getRootOutputPorts() {
@@ -173,15 +210,59 @@ public class NiFiFlow {
         return rootInputPortEntities;
     }
 
+    public Optional<AtlasObjectId> findIdByQualifiedName(Set<AtlasObjectId> ids, String qualifiedName) {
+        return ids.stream().filter(id -> qualifiedName.equals(id.getUniqueAttributes().get(ATTR_QUALIFIED_NAME))).findFirst();
+    }
+
+    private AtlasEntity createOrUpdateRootGroupPortEntity(boolean isInput, String qualifiedName, String portName) {
+        final Map<AtlasObjectId, AtlasEntity> ports = isInput ? rootInputPortEntities : rootOutputPortEntities;
+        final Optional<AtlasObjectId> existingPortId = findIdByQualifiedName(ports.keySet(), qualifiedName);
+
+        final String typeName = isInput ? TYPE_NIFI_INPUT_PORT : TYPE_NIFI_OUTPUT_PORT;
+
+        if (existingPortId.isPresent()) {
+            // TODO: Update port name and set updated flag.
+            return ports.get(existingPortId.get());
+        } else {
+            final AtlasEntity entity = new AtlasEntity(typeName);
+
+            entity.setAttribute(ATTR_NIFI_FLOW, getAtlasObjectId());
+            entity.setAttribute(ATTR_NAME, portName);
+            entity.setAttribute(ATTR_QUALIFIED_NAME, qualifiedName);
+
+            final AtlasObjectId portId = new AtlasObjectId(typeName, ATTR_QUALIFIED_NAME, qualifiedName);
+            ports.put(portId, entity);
+            return entity;
+        }
+    }
+
     public Map<AtlasObjectId, AtlasEntity> getRootOutputPortEntities() {
         return rootOutputPortEntities;
+    }
+
+    public Tuple<AtlasObjectId, AtlasEntity> getOrCreateQueue(String destinationComponentId) {
+        final String qualifiedName = toQualifiedName(destinationComponentId);
+        final Optional<AtlasObjectId> existingQueueId = findIdByQualifiedName(queues.keySet(), qualifiedName);
+
+        if (existingQueueId.isPresent()) {
+            return new Tuple<>(existingQueueId.get(), queues.get(existingQueueId.get()));
+        } else {
+            final AtlasObjectId queueId = new AtlasObjectId(TYPE_NIFI_QUEUE, ATTR_QUALIFIED_NAME, qualifiedName);
+            final AtlasEntity queue = new AtlasEntity(TYPE_NIFI_QUEUE);
+            queue.setAttribute(ATTR_NIFI_FLOW, getAtlasObjectId());
+            queue.setAttribute(ATTR_QUALIFIED_NAME, qualifiedName);
+            queue.setAttribute(ATTR_NAME, "queue");
+            queue.setAttribute(ATTR_DESCRIPTION, "Input queue for " + destinationComponentId);
+            queues.put(queueId, queue);
+            return new Tuple<>(queueId, queue);
+        }
     }
 
     public Map<AtlasObjectId, AtlasEntity> getQueues() {
         return queues;
     }
 
-    public List<NiFiFlowPath> getFlowPaths() {
+    public Map<String, NiFiFlowPath> getFlowPaths() {
         return flowPaths;
     }
 
@@ -189,7 +270,7 @@ public class NiFiFlow {
      * Find a flow_path that contains specified componentId.
      */
     public NiFiFlowPath findPath(String componentId) {
-        for (NiFiFlowPath path: flowPaths) {
+        for (NiFiFlowPath path: flowPaths.values()) {
             if (path.getProcessComponentIds().contains(componentId)){
                 return path;
             }
@@ -245,11 +326,6 @@ public class NiFiFlow {
             logger.info("{}:{} receives from {}", pid, toName.apply(pid), incomingRelationShips.get(pid));
             logger.info("{}:{} sends to {}", pid, toName.apply(pid), outGoingRelationShips.get(pid));
         });
-
-        logger.info("## Input ObjectIds");
-        inputs.forEach(in -> logger.info("{}", in));
-        logger.info("## Output ObjectIds");
-        outputs.forEach(out -> logger.info("{}", out));
     }
 
 }

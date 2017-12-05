@@ -28,7 +28,6 @@ import org.apache.nifi.context.PropertyContext;
 import org.apache.nifi.util.MockPropertyValue;
 import org.junit.Before;
 import org.junit.Test;
-import org.mockito.Mockito;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,6 +53,11 @@ public class ITNiFiAtlasClient {
         final AtlasAuthN atlasAuthN = new Basic();
         atlasAuthN.configure(propertyContext);
         atlasClient.initialize(new String[]{"http://atlas.example.com:21000/"}, atlasAuthN, null);
+    }
+
+    @Test
+    public void testFetchNiFiFlow() throws Exception {
+        final NiFiFlow nifiFlow = atlasClient.fetchNiFiFlow("1fc2e0a6-0160-1000-2660-72a0db49f37c", "DEBUG");
     }
 
     @Test
@@ -91,7 +95,5 @@ public class ITNiFiAtlasClient {
         final AtlasEntity.AtlasEntityWithExtInfo entity = client.getEntityByAttribute(atlasObjectId.getTypeName(), attributes);
         logger.info("entity={}", entity);
     }
-
-
 
 }

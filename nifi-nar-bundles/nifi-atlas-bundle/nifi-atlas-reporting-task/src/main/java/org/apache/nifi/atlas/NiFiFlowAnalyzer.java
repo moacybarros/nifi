@@ -19,9 +19,9 @@ package org.apache.nifi.atlas;
 import org.apache.atlas.model.instance.AtlasEntity;
 import org.apache.atlas.model.instance.AtlasObjectId;
 import org.apache.nifi.controller.status.ConnectionStatus;
-import org.apache.nifi.controller.status.PortStatus;
 import org.apache.nifi.controller.status.ProcessGroupStatus;
 import org.apache.nifi.controller.status.ProcessorStatus;
+import org.apache.nifi.util.Tuple;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,16 +30,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
-
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_DESCRIPTION;
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_NIFI_FLOW;
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
-import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_INPUT_PORT;
-import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_OUTPUT_PORT;
-import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_QUEUE;
 
 public class NiFiFlowAnalyzer {
 
@@ -51,29 +42,8 @@ public class NiFiFlowAnalyzer {
     }
 
     private void analyzeRootGroupPorts(NiFiFlow nifiFlow, ProcessGroupStatus rootProcessGroup) {
-        BiConsumer<PortStatus, Boolean> portEntityCreator = (port, isInput) -> {
-            final String typeName = isInput ? TYPE_NIFI_INPUT_PORT : TYPE_NIFI_OUTPUT_PORT;
-
-            final AtlasEntity entity = new AtlasEntity(typeName);
-            final String portName = port.getName();
-
-            entity.setAttribute(ATTR_NIFI_FLOW, nifiFlow.getAtlasObjectId());
-            entity.setAttribute(ATTR_NAME, portName);
-            entity.setAttribute(ATTR_QUALIFIED_NAME, nifiFlow.toQualifiedName(port.getId()));
-
-            final AtlasObjectId portId = new AtlasObjectId(typeName, ATTR_QUALIFIED_NAME, nifiFlow.toQualifiedName(port.getId()));
-            final Map<AtlasObjectId, AtlasEntity> ports = isInput ? nifiFlow.getRootInputPortEntities() : nifiFlow.getRootOutputPortEntities();
-            ports.put(portId, entity);
-
-            if (isInput) {
-                nifiFlow.addRootInputPort(port);
-            } else {
-                nifiFlow.addRootOutputPort(port);
-            }
-        };
-
-        rootProcessGroup.getInputPortStatus().forEach(port -> portEntityCreator.accept(port, true));
-        rootProcessGroup.getOutputPortStatus().forEach(port -> portEntityCreator.accept(port, false));
+        rootProcessGroup.getInputPortStatus().forEach(port -> nifiFlow.addRootInputPort(port));
+        rootProcessGroup.getOutputPortStatus().forEach(port -> nifiFlow.addRootOutputPort(port));
     }
 
     private void analyzeProcessGroup(final ProcessGroupStatus processGroupStatus, final NiFiFlow nifiFlow) {
@@ -136,7 +106,7 @@ public class NiFiFlowAnalyzer {
         return nextProcessComponent;
     }
 
-    private void traverse(NiFiFlow nifiFlow, List<NiFiFlowPath> paths, NiFiFlowPath path, String componentId) {
+    private void traverse(NiFiFlow nifiFlow, Map<String, NiFiFlowPath> paths, NiFiFlowPath path, String componentId) {
 
         // If the pid is RootInputPort of the same NiFi instance, then stop traversing to create separate self S2S path.
         // E.g InputPort -> MergeContent, GenerateFlowFile -> InputPort.
@@ -166,41 +136,19 @@ public class NiFiFlowAnalyzer {
             final boolean createJointPoint = nextProcessComponents.size() > 1 || getIncomingProcessorsIds(nifiFlow, nifiFlow.getIncomingRelationShips(destPid)).size() > 1;
 
             if (createJointPoint) {
-                final NiFiFlowPath newJointPoint = new NiFiFlowPath(destPid);
+                // Get existing or create new one.
+                final NiFiFlowPath jointPoint = paths.computeIfAbsent(destPid, k -> new NiFiFlowPath(destPid));
 
-                final boolean exists = paths.contains(newJointPoint);
-                final NiFiFlowPath jointPoint = exists ? paths.stream()
-                        .filter(p -> p.equals(newJointPoint)).findFirst().get() : newJointPoint;
+                // Create an input queue DataSet because Atlas doesn't show lineage if it doesn't have in and out.
+                // This DataSet is also useful to link flowPaths together on Atlas lineage graph.
+                final Tuple<AtlasObjectId, AtlasEntity> queueTuple = nifiFlow.getOrCreateQueue(destPid);
 
-                // Link together.
-                path.getOutgoingPaths().add(jointPoint);
-                jointPoint.getIncomingPaths().add(path);
+                final AtlasObjectId queueId = queueTuple.getKey();
+                jointPoint.getInputs().add(queueId);
+                path.getOutputs().add(queueId);
 
-                if (exists) {
-                    // Link existing incoming queue of the joint point.
-                    path.getOutputs().add(jointPoint.getInputs().iterator().next());
-
-                } else {
-                    // Add jointPoint only if it doesn't exist, to avoid adding the same jointPoint again.
-                    paths.add(jointPoint);
-
-                    // Create an input queue DataSet because Atlas doesn't show lineage if it doesn't have in and out.
-                    // This DataSet is also useful to link flowPaths together on Atlas lineage graph.
-                    final AtlasObjectId queueId = new AtlasObjectId(TYPE_NIFI_QUEUE, ATTR_QUALIFIED_NAME, nifiFlow.toQualifiedName(destPid));
-
-                    final AtlasEntity queue = new AtlasEntity(TYPE_NIFI_QUEUE);
-                    queue.setAttribute(ATTR_NIFI_FLOW, nifiFlow.getAtlasObjectId());
-                    queue.setAttribute(ATTR_QUALIFIED_NAME, nifiFlow.toQualifiedName(destPid));
-                    queue.setAttribute(ATTR_NAME, "queue");
-                    queue.setAttribute(ATTR_DESCRIPTION, "Input queue for " + destPid);
-
-                    nifiFlow.getQueues().put(queueId, queue);
-                    newJointPoint.getInputs().add(queueId);
-                    path.getOutputs().add(queueId);
-
-                    // Start traversing as a new joint point.
-                    traverse(nifiFlow, paths, jointPoint, destPid);
-                }
+                // Start traversing as a new joint point.
+                traverse(nifiFlow, paths, jointPoint, destPid);
 
             } else {
                 // Normal relation, continue digging.
@@ -229,7 +177,7 @@ public class NiFiFlowAnalyzer {
     }
 
     public void analyzePaths(NiFiFlow nifiFlow) {
-        final List<NiFiFlowPath> paths = nifiFlow.getFlowPaths();
+        final Map<String, NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
         final String rootProcessGroupId = nifiFlow.getRootProcessGroupId();
 
@@ -250,12 +198,11 @@ public class NiFiFlowAnalyzer {
             // the same path will end up being the same Atlas entity.
             // However, if the first processor is replaced by another,
             // the flow path will have a different id, and the old path is logically deleted.
-            final NiFiFlowPath path = new NiFiFlowPath(startPid);
-            paths.add(path);
+            final NiFiFlowPath path = nifiFlow.getFlowPaths().computeIfAbsent(startPid, k -> new NiFiFlowPath(startPid));
             traverse(nifiFlow, paths, path, startPid);
         });
 
-        paths.forEach(path -> {
+        paths.values().forEach(path -> {
             if (processors.containsKey(path.getId())) {
                 final ProcessorStatus processor = processors.get(path.getId());
                 path.setGroupId(processor.getGroupId());
