@@ -25,10 +25,6 @@ import org.apache.nifi.atlas.resolver.ClusterResolvers;
 import org.apache.nifi.controller.status.ConnectionStatus;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
 import org.apache.nifi.provenance.ProvenanceEventType;
-import org.apache.nifi.provenance.lineage.ComputeLineageResult;
-import org.apache.nifi.provenance.lineage.LineageEdge;
-import org.apache.nifi.provenance.lineage.LineageNode;
-import org.apache.nifi.provenance.lineage.LineageNodeType;
 import org.junit.Test;
 import org.mockito.Mockito;
 
@@ -39,12 +35,9 @@ import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_INPUT_PORT;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_OUTPUT_PORT;
-import static org.apache.nifi.provenance.lineage.LineageNodeType.FLOWFILE_NODE;
-import static org.apache.nifi.provenance.lineage.LineageNodeType.PROVENANCE_EVENT_NODE;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.Matchers.eq;
 import static org.mockito.Matchers.matches;
 import static org.mockito.Mockito.when;
 
@@ -65,12 +58,6 @@ public class TestNiFiRemotePort {
         when(sendEvent.getTransitUri()).thenReturn(transitUri);
         when(sendEvent.getEventType()).thenReturn(ProvenanceEventType.SEND);
 
-        final ProvenanceEventRecord createEvent = Mockito.mock(ProvenanceEventRecord.class);
-        when(createEvent.getEventId()).thenReturn(456L);
-        when(createEvent.getComponentId()).thenReturn("processor-guid");
-        when(createEvent.getComponentType()).thenReturn("GenerateFlowFile");
-        when(createEvent.getEventType()).thenReturn(ProvenanceEventType.CREATE);
-
         final ClusterResolvers clusterResolvers = Mockito.mock(ClusterResolvers.class);
         when(clusterResolvers.fromHostNames(matches(".+\\.example\\.com"))).thenReturn("cluster1");
 
@@ -83,19 +70,6 @@ public class TestNiFiRemotePort {
         final AnalysisContext context = Mockito.mock(AnalysisContext.class);
         when(context.getClusterResolver()).thenReturn(clusterResolvers);
         when(context.findConnectionTo(matches("port-guid"))).thenReturn(connections);
-        when(context.getProvenanceEvent(eq(456L))).thenReturn(createEvent);
-
-        final ComputeLineageResult lineage = Mockito.mock(ComputeLineageResult.class);
-        when(context.queryLineage(eq(123L))).thenReturn(lineage);
-
-        final LineageNode sendEventNode = createLineageNode(PROVENANCE_EVENT_NODE, "123");
-        final LineageNode flowFileNode = createLineageNode(FLOWFILE_NODE, "flowfile-uuid-1234");
-        final LineageNode createEventNode = createLineageNode(PROVENANCE_EVENT_NODE, "456");
-
-        final List<LineageEdge> edges = new ArrayList<>();
-        edges.add(createLineageEdge(createEventNode, flowFileNode));
-        edges.add(createLineageEdge(flowFileNode, sendEventNode));
-        when(lineage.getEdges()).thenReturn(edges);
 
         final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(componentType, transitUri, sendEvent.getEventType());
         assertNotNull(analyzer);
@@ -105,26 +79,12 @@ public class TestNiFiRemotePort {
         assertEquals(1, refs.getOutputs().size());
         assertEquals(1, refs.getComponentIds().size());
         // Should report connected componentId.
-        assertTrue(refs.getComponentIds().contains("processor-guid"));
+        assertTrue(refs.getComponentIds().contains("port-guid"));
 
         Referenceable ref = refs.getOutputs().iterator().next();
         assertEquals(TYPE_NIFI_INPUT_PORT, ref.getTypeName());
         assertEquals("inputPortA", ref.get(ATTR_NAME));
-        assertEquals("port-guid", ref.get(ATTR_QUALIFIED_NAME));
-    }
-
-    private LineageNode createLineageNode(LineageNodeType type, String id) {
-        final LineageNode node = Mockito.mock(LineageNode.class);
-        when(node.getNodeType()).thenReturn(type);
-        when(node.getIdentifier()).thenReturn(id);
-        return node;
-    }
-
-    private LineageEdge createLineageEdge(LineageNode from, LineageNode to) {
-        final LineageEdge edge = Mockito.mock(LineageEdge.class);
-        when(edge.getSource()).thenReturn(from);
-        when(edge.getDestination()).thenReturn(to);
-        return edge;
+        assertEquals("port-guid@cluster1", ref.get(ATTR_QUALIFIED_NAME));
     }
 
     @Test
@@ -159,7 +119,7 @@ public class TestNiFiRemotePort {
         Referenceable ref = refs.getInputs().iterator().next();
         assertEquals(TYPE_NIFI_OUTPUT_PORT, ref.getTypeName());
         assertEquals("outputPortA", ref.get(ATTR_NAME));
-        assertEquals("port-guid", ref.get(ATTR_QUALIFIED_NAME));
+        assertEquals("port-guid@cluster1", ref.get(ATTR_QUALIFIED_NAME));
     }
 
 

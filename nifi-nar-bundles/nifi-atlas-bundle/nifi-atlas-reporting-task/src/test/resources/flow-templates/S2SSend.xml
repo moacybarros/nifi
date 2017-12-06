@@ -55,7 +55,7 @@
           <backPressureObjectThreshold>10000</backPressureObjectThreshold>
           <destination>
             <groupId>18474287-6326-311a-0000-000000000000</groupId>
-            <id>77919f59-533e-35a3-0000-000000000000</id>
+            <id>f31a6b53-3077-4c59-0000-000000000000</id>
             <type>REMOTE_INPUT_PORT</type>
           </destination>
           <flowFileExpiration>0 sec</flowFileExpiration>
@@ -97,7 +97,7 @@
           <backPressureObjectThreshold>10000</backPressureObjectThreshold>
           <destination>
             <groupId>18474287-6326-311a-0000-000000000000</groupId>
-            <id>77919f59-533e-35a3-0000-000000000000</id>
+            <id>f31a6b53-3077-4c59-0000-000000000000</id>
             <type>REMOTE_INPUT_PORT</type>
           </destination>
           <flowFileExpiration>0 sec</flowFileExpiration>
@@ -118,7 +118,7 @@
           <backPressureObjectThreshold>10000</backPressureObjectThreshold>
           <destination>
             <groupId>18474287-6326-311a-0000-000000000000</groupId>
-            <id>77919f59-533e-35a3-0000-000000000000</id>
+            <id>f31a6b53-3077-4c59-0000-000000000000</id>
             <type>REMOTE_INPUT_PORT</type>
           </destination>
           <flowFileExpiration>0 sec</flowFileExpiration>
@@ -799,7 +799,8 @@ then NiFi will not report the lineage to Atlas because it hasn't happened.</labe
               <concurrentlySchedulableTaskCount>1</concurrentlySchedulableTaskCount>
               <connected>true</connected>
               <exists>true</exists>
-              <id>77919f59-533e-35a3-0000-000000000000</id>
+              <id>f31a6b53-3077-4c59-0000-000000000000</id>
+              <targetId>77919f59-533e-35a3-0000-000000000000</targetId>
               <name>input</name>
               <targetRunning>true</targetRunning>
               <transmitting>true</transmitting>

@@ -20,11 +20,6 @@ import org.apache.atlas.typesystem.Referenceable;
 import org.apache.nifi.atlas.provenance.AnalysisContext;
 import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
-import org.apache.nifi.provenance.ProvenanceEventType;
-
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_DESCRIPTION;
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 
 public abstract class UnknownInput extends UnknownDataSet {
 

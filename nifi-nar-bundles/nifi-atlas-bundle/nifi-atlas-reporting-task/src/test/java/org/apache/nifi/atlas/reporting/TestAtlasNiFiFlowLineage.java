@@ -17,11 +17,9 @@
 package org.apache.nifi.atlas.reporting;
 
 import org.apache.atlas.model.instance.AtlasObjectId;
-import org.apache.nifi.atlas.NiFiTypes;
 import org.apache.nifi.components.ValidationResult;
 import org.apache.nifi.util.MockProcessContext;
 import org.apache.nifi.util.MockValidationContext;
-import org.junit.Assert;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,11 +30,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_QUEUE;
+import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.ATLAS_NIFI_URL;
 import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.ATLAS_PASSWORD;
 import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.ATLAS_URLS;
 import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.ATLAS_USER;
@@ -53,6 +51,7 @@ public class TestAtlasNiFiFlowLineage {
         final MockProcessContext processContext = new MockProcessContext(reportingTask);
         final MockValidationContext validationContext = new MockValidationContext(processContext);
 
+        processContext.setProperty(ATLAS_NIFI_URL, "http://nifi.example.com:8080/nifi");
         processContext.setProperty(ATLAS_USER, "admin");
         processContext.setProperty(ATLAS_PASSWORD, "admin");
 

@@ -33,8 +33,6 @@ import org.apache.nifi.atlas.NiFIAtlasHook;
 import org.apache.nifi.atlas.NiFiAtlasClient;
 import org.apache.nifi.atlas.NiFiFlow;
 import org.apache.nifi.atlas.NiFiFlowAnalyzer;
-import org.apache.nifi.atlas.NiFiFlowPath;
-import org.apache.nifi.atlas.NiFiTypes;
 import org.apache.nifi.atlas.provenance.AnalysisContext;
 import org.apache.nifi.atlas.provenance.StandardAnalysisContext;
 import org.apache.nifi.atlas.provenance.lineage.CompleteFlowPathLineage;
@@ -335,8 +333,8 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         final String atlasUrlsStr = atlasUrlsProp.evaluateAttributeExpressions().getValue();
         if (atlasUrlsStr != null && !atlasUrlsStr.isEmpty()) {
             Arrays.stream(atlasUrlsStr.split(","))
-                    .map(s -> s.trim())
-                    .forEach(input -> urlStrConsumer.accept(input));
+                    .map(String::trim)
+                    .forEach(urlStrConsumer);
         }
     }
 
@@ -434,7 +432,7 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
 
     private void initAtlasClient(ConfigurationContext context) throws IOException {
         List<String> urls = new ArrayList<>();
-        parseAtlasUrls(context.getProperty(ATLAS_URLS), url -> urls.add(url));
+        parseAtlasUrls(context.getProperty(ATLAS_URLS), urls::add);
         final boolean isAtlasApiSecure = urls.stream().anyMatch(url -> url.toLowerCase().startsWith("https"));
         final String atlasAuthNMethod = context.getProperty(ATLAS_AUTHN_METHOD).getValue();
 

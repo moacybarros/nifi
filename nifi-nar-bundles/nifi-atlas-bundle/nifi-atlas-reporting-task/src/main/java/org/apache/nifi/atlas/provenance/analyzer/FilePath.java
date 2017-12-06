@@ -29,7 +29,7 @@ import java.net.InetAddress;
 import java.net.URI;
 import java.net.UnknownHostException;
 
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_CLUSTER_NAME;
+import static org.apache.nifi.atlas.AtlasUtils.toQualifiedName;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_PATH;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;

@@ -40,6 +40,7 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 
 import static org.apache.atlas.notification.hook.HookNotification.HookNotificationType.ENTITY_PARTIAL_UPDATE;
+import static org.apache.nifi.atlas.AtlasUtils.toTypedQualifiedName;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_GUID;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_INPUTS;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_OUTPUTS;
@@ -62,9 +63,9 @@ public class NiFIAtlasHook extends AtlasHook implements LineageContext {
     private final NiFiAtlasClient atlasClient;
 
     /**
-     * An index to resolve a qualifiedName from a typeName::GUID.
+     * An index to resolve a qualifiedName from a GUID.
      */
-    private final Map<String, String> typedGuidToQualifiedName;
+    private final Map<String, String> guidToQualifiedName;
     /**
      * An index to resolve a Referenceable from a typeName::qualifiedName.
      */
@@ -84,7 +85,7 @@ public class NiFIAtlasHook extends AtlasHook implements LineageContext {
         this.atlasClient = atlasClient;
 
         final int qualifiedNameCacheSize = 10_000;
-        this.typedGuidToQualifiedName = createCache(qualifiedNameCacheSize);
+        this.guidToQualifiedName = createCache(qualifiedNameCacheSize);
 
         final int dataSetRefCacheSize = 1_000;
         this.typedQualifiedNameToRef = createCache(dataSetRefCacheSize);
@@ -107,20 +108,20 @@ public class NiFIAtlasHook extends AtlasHook implements LineageContext {
         final long startedAt = System.currentTimeMillis();
         int totalMessages;
         int partialNiFiFlowPathUpdates;
-        int dedupedpartialNiFiFlowPathUpdates;
+        int dedupedPartialNiFiFlowPathUpdates;
         int otherMessages;
         int flowPathSearched;
         int dataSetSearched;
         int dataSetCacheHit;
         private void log(String message) {
             logger.debug(String.format("%s, %d ms passed, totalMessages=%d," +
-                    " partialNiFiFlowPathUpdates=%d, dedupedpartialNiFiFlowPathUpdates=%d, otherMessage=%d," +
+                    " partialNiFiFlowPathUpdates=%d, dedupedPartialNiFiFlowPathUpdates=%d, otherMessage=%d," +
                     " flowPathSearched=%d, dataSetSearched=%d, dataSetCacheHit=%s," +
-                    " typedGuidToQualifiedName.size=%d, typedQualifiedNameToRef.size=%d",
+                    " guidToQualifiedName.size=%d, typedQualifiedNameToRef.size=%d",
                     message, System.currentTimeMillis() - startedAt, totalMessages,
-                    partialNiFiFlowPathUpdates, dedupedpartialNiFiFlowPathUpdates, otherMessages,
+                    partialNiFiFlowPathUpdates, dedupedPartialNiFiFlowPathUpdates, otherMessages,
                     flowPathSearched, dataSetSearched, dataSetCacheHit,
-                    typedGuidToQualifiedName.size(), typedQualifiedNameToRef.size()));
+                    guidToQualifiedName.size(), typedQualifiedNameToRef.size()));
         }
     }
 
@@ -193,9 +194,11 @@ public class NiFIAtlasHook extends AtlasHook implements LineageContext {
                         flowPathRef.set(ATTR_OUTPUTS, new ArrayList<>(distinctOutputs.values()));
                         return new EntityPartialUpdateRequest(NIFI_USER, TYPE_NIFI_FLOW_PATH,
                                 ATTR_QUALIFIED_NAME, flowPathQualifiedName, flowPathRef);
-                    }).collect(Collectors.toList());
+                    })
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
 
-            metrics.dedupedpartialNiFiFlowPathUpdates = deduplicatedMessages.size();
+            metrics.dedupedPartialNiFiFlowPathUpdates = deduplicatedMessages.size();
             notifyEntities(deduplicatedMessages);
         } finally {
             metrics.log("Committed");
@@ -204,11 +207,11 @@ public class NiFIAtlasHook extends AtlasHook implements LineageContext {
     }
 
     /**
-     * Convert inputs or outputs of a nifi_flow_path to a map of Referenceable keyed by qualifiedName.
-     * Atlas removes references those are not specified when a collection attribute is updated.
-     * In order to preserve existing DataSet references, existing elements should be passed within a partial update message.
-     * This method also populates cached indices for subsequent lookups.
-     * @param _refs Contains references from nifi_flow_path inputs or outputs.
+     * <p>Convert nifi_flow_path inputs or outputs to a map of Referenceable keyed by qualifiedName.</p>
+     * <p>Atlas removes existing references those are not specified when a collection attribute is updated.
+     * In order to preserve existing DataSet references, existing elements should be passed within a partial update message.</p>
+     * <p>This method also populates entity cache for subsequent lookups.</p>
+     * @param _refs Contains references from an existin nifi_flow_path entity inputs or outputs attribute.
      * @return A map of Referenceables keyed by qualifiedName.
      */
     @SuppressWarnings("unchecked")
@@ -220,20 +223,20 @@ public class NiFIAtlasHook extends AtlasHook implements LineageContext {
 
         final List<Map<String, Object>> refs = (List<Map<String, Object>>) _refs;
         return refs.stream().map(ref -> {
+            // Existing reference should has a GUID.
             final String typeName = (String) ref.get(ATTR_TYPENAME);
             final String guid = (String) ref.get(ATTR_GUID);
-            final String typedGuid = typeName + "::" + guid;
 
-            if (typedGuidToQualifiedName.containsKey(typedGuid)) {
+            if (guidToQualifiedName.containsKey(guid)) {
                 metrics.dataSetCacheHit++;
             }
 
-            final String refQualifiedName = typedGuidToQualifiedName.computeIfAbsent(typedGuid, k -> {
+            final String refQualifiedName = guidToQualifiedName.computeIfAbsent(guid, k -> {
                 try {
                     metrics.dataSetSearched++;
                     final AtlasEntity.AtlasEntityWithExtInfo refExt = atlasClient.searchEntityDef(new AtlasObjectId(guid, typeName));
                     final String qualifiedName = (String) refExt.getEntity().getAttribute(ATTR_QUALIFIED_NAME);
-                    typedQualifiedNameToRef.put(typeName + "::" + qualifiedName, new Referenceable(guid, typeName, Collections.EMPTY_MAP));
+                    typedQualifiedNameToRef.put(toTypedQualifiedName(typeName, qualifiedName), new Referenceable(guid, typeName, Collections.EMPTY_MAP));
                     return qualifiedName;
                 } catch (AtlasServiceException e) {
                     if (ClientResponse.Status.NOT_FOUND.equals(e.getStatus())) {
@@ -248,11 +251,12 @@ public class NiFIAtlasHook extends AtlasHook implements LineageContext {
             if (refQualifiedName == null) {
                 return null;
             }
-            return new Tuple<>(refQualifiedName, typedQualifiedNameToRef.get(typeName + "::" + refQualifiedName));
+            return new Tuple<>(refQualifiedName, typedQualifiedNameToRef.get(toTypedQualifiedName(typeName, refQualifiedName)));
         }).filter(Objects::nonNull).filter(tuple -> tuple.getValue() != null)
                 .collect(Collectors.toMap(Tuple::getKey, Tuple::getValue));
     }
 
+    @SuppressWarnings("unchecked")
     private Map<String, Referenceable> fromReferenceable(Object _refs, Metrics metrics) {
         if (_refs == null) {
             return Collections.emptyMap();
@@ -266,13 +270,12 @@ public class NiFIAtlasHook extends AtlasHook implements LineageContext {
             final String typeName = ref.getTypeName();
             final Id id = ref.getId();
             final String refQualifiedName = (String) ref.get(ATTR_QUALIFIED_NAME);
-            final String typedRefQualifiedName = typeName + "::" + refQualifiedName;
+            final String typedRefQualifiedName = toTypedQualifiedName(typeName, refQualifiedName);
 
             final Referenceable refFromCacheIfAvailable = typedQualifiedNameToRef.computeIfAbsent(typedRefQualifiedName, k -> {
                 if (id.isAssigned()) {
                     // If this referenceable has Guid assigned, then add this one to cache.
-                    final String typedGuid = typeName + "::" + id._getId();
-                    typedGuidToQualifiedName.put(typedGuid, refQualifiedName);
+                    guidToQualifiedName.put(id._getId(), refQualifiedName);
                     typedQualifiedNameToRef.put(typedRefQualifiedName, ref);
                 }
                 return ref;

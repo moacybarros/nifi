@@ -55,10 +55,6 @@ public abstract class AbstractNiFiProvenanceEventAnalyzer implements NiFiProvena
         }
     }
 
-    protected String toQualifiedName(String clusterName, String dataSetName) {
-        return dataSetName + "@" + clusterName;
-    }
-
     protected DataSetRefs singleDataSetRef(String componentId, ProvenanceEventType eventType, Referenceable ref) {
         final DataSetRefs refs = new DataSetRefs(componentId);
         switch (eventType) {

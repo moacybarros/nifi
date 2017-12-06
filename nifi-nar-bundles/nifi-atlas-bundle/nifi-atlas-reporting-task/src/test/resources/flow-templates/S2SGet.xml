@@ -42,7 +42,7 @@
           <name></name>
           <source>
             <groupId>c6acb687-616a-3d36-0000-000000000000</groupId>
-            <id>392e7343-3950-329b-0000-000000000000</id>
+            <id>7375f8f6-4604-468d-0000-000000000000</id>
             <type>REMOTE_OUTPUT_PORT</type>
           </source>
           <zIndex>0</zIndex>
@@ -62,7 +62,7 @@
           <name></name>
           <source>
             <groupId>c6acb687-616a-3d36-0000-000000000000</groupId>
-            <id>392e7343-3950-329b-0000-000000000000</id>
+            <id>7375f8f6-4604-468d-0000-000000000000</id>
             <type>REMOTE_OUTPUT_PORT</type>
           </source>
           <zIndex>0</zIndex>
@@ -82,7 +82,7 @@
           <name></name>
           <source>
             <groupId>c6acb687-616a-3d36-0000-000000000000</groupId>
-            <id>392e7343-3950-329b-0000-000000000000</id>
+            <id>7375f8f6-4604-468d-0000-000000000000</id>
             <type>REMOTE_OUTPUT_PORT</type>
           </source>
           <zIndex>0</zIndex>
@@ -420,7 +420,8 @@
               <concurrentlySchedulableTaskCount>1</concurrentlySchedulableTaskCount>
               <connected>true</connected>
               <exists>true</exists>
-              <id>392e7343-3950-329b-0000-000000000000</id>
+              <id>7375f8f6-4604-468d-0000-000000000000</id>
+              <targetId>392e7343-3950-329b-0000-000000000000</targetId>
               <name>output</name>
               <targetRunning>true</targetRunning>
               <transmitting>true</transmitting>

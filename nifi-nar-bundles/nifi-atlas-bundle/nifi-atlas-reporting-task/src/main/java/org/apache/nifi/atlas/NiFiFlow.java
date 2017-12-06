@@ -370,7 +370,7 @@ public class NiFiFlow {
     }
 
     public String toQualifiedName(String componentId) {
-        return AtlasUtils.toQualifiedName(componentId, clusterName);
+        return AtlasUtils.toQualifiedName(clusterName, componentId);
     }
 
     public enum EntityChangeType {

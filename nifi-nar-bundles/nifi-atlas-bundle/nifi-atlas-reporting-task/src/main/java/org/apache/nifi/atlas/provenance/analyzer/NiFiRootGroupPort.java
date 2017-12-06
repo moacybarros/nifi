@@ -27,6 +27,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
+import static org.apache.nifi.atlas.AtlasUtils.toQualifiedName;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_INPUT_PORT;
@@ -55,7 +56,7 @@ public class NiFiRootGroupPort extends NiFiS2S {
 
         final S2STransitUrl s2sUrl = parseTransitURL(event.getTransitUri(), context.getClusterResolver());
 
-        // Find connections that connects to/from the remote port.
+        // Find connections connecting to/from the remote port.
         final List<ConnectionStatus> connections = isInputPort
                 ? context.findConnectionFrom(rootPortId)
                 : context.findConnectionTo(rootPortId);

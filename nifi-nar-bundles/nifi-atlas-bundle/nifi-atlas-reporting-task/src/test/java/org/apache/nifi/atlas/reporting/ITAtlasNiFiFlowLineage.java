@@ -16,7 +16,6 @@
  */
 package org.apache.nifi.atlas.reporting;
 
-import org.apache.nifi.atlas.NiFiAtlasClient;
 import org.apache.nifi.atlas.emulator.AtlasAPIV2ServerEmulator;
 import org.apache.nifi.atlas.emulator.Lineage;
 import org.apache.nifi.atlas.emulator.Node;
@@ -63,20 +62,19 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
 import java.util.Set;
 import java.util.Stack;
 import java.util.function.BiConsumer;
 
 import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.ATLAS_NIFI_URL;
+import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.ATLAS_PASSWORD;
 import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.ATLAS_URLS;
+import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.ATLAS_USER;
 import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.LINEAGE_STRATEGY_COMPLETE_PATH;
-import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.LINEAGE_STRATEGY_SIMPLE_PATH;
 import static org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage.NIFI_LINEAGE_STRATEGY;
 import static org.apache.nifi.atlas.reporting.SimpleProvenanceRecord.pr;
 import static org.apache.nifi.provenance.ProvenanceEventType.ATTRIBUTES_MODIFIED;
@@ -433,6 +431,8 @@ public class ITAtlasNiFiFlowLineage {
 
         tc.properties.put(ATLAS_NIFI_URL, "http://localhost:8080/nifi");
         tc.properties.put(ATLAS_URLS, TARGET_ATLAS_URL);
+        tc.properties.put(ATLAS_USER, "admin");
+        tc.properties.put(ATLAS_PASSWORD, "admin");
         tc.properties.put(new PropertyDescriptor.Builder().name("hostnamePattern.example").dynamic(true).build(), ".*");
 
 
@@ -503,7 +503,7 @@ public class ITAtlasNiFiFlowLineage {
         test(tc);
 
         final Lineage lineage = getLineage();
-        lineage.assertLink("nifi_flow", "SimplestFlowPath", "SimplestFlowPath",
+        lineage.assertLink("nifi_flow", "SimplestFlowPath", "SimplestFlowPath@example",
                 "nifi_flow_path", "GenerateFlowFile, LogAttribute", "d270e6f0-c5e0-38b9");
     }
 
@@ -518,7 +518,7 @@ public class ITAtlasNiFiFlowLineage {
         waitNotificationsGetDelivered();
 
         final Lineage lineage = getLineage();
-        final Node flow = lineage.findNode("nifi_flow", "SingleFlowPath", "SingleFlowPath");
+        final Node flow = lineage.findNode("nifi_flow", "SingleFlowPath", "SingleFlowPath@example");
         final Node path = lineage.findNode("nifi_flow_path",
                 "ConsumeKafka_0_11, UpdateAttribute, ConvertJSONToSQL, PutSQL, PublishKafka_0_11",
                 "2e9a2852-228f-379b");
@@ -541,7 +541,7 @@ public class ITAtlasNiFiFlowLineage {
 
         final Lineage lineage = getLineage();
 
-        final Node flow = lineage.findNode("nifi_flow", "MultipleProcessGroups", "MultipleProcessGroups");
+        final Node flow = lineage.findNode("nifi_flow", "MultipleProcessGroups", "MultipleProcessGroups@example");
         final Node path = lineage.findNode("nifi_flow_path",
                 "ConsumeKafka_0_11, UpdateAttribute, PutHDFS",
                 "989dabb7-54b9-3c78");
@@ -603,16 +603,17 @@ public class ITAtlasNiFiFlowLineage {
         prs.add(pr("c439cdca-e989-3491", "Generate C", CREATE));
         prs.add(pr("b775b657-5a5b-3708", "GetTwitter", CREATE));
 
-        prs.add(pr("77919f59-533e-35a3", "Remote Input Port", SEND,
+        // The remote port GUID is different than the Remote Input Ports.
+        prs.add(pr("f31a6b53-3077-4c59", "Remote Input Port", SEND,
                 "http://nifi.example.com:8080/nifi-api/data-transfer/input-ports" +
-                        "/77919f59-533e-35a3/transactions/tx-1/flow-files"));
+                        "/77919f59-533e-35a3-0000-000000000000/transactions/tx-1/flow-files"));
 
-        prs.add(pr("77919f59-533e-35a3", "Remote Input Port", SEND,
+        prs.add(pr("f31a6b53-3077-4c59", "Remote Input Port", SEND,
                 "http://nifi.example.com:8080/nifi-api/data-transfer/input-ports" +
-                        "/77919f59-533e-35a3/transactions/tx-2/flow-files"));
+                        "/77919f59-533e-35a3-0000-000000000000/transactions/tx-2/flow-files"));
 
-        prs.add(pr("77919f59-533e-35a3", "Remote Input Port", DROP)); // C
-        prs.add(pr("77919f59-533e-35a3", "Remote Input Port", DROP)); // Twitter
+        prs.add(pr("f31a6b53-3077-4c59", "Remote Input Port", DROP)); // C
+        prs.add(pr("f31a6b53-3077-4c59", "Remote Input Port", DROP)); // Twitter
 
         // Generate C created a FlowFile, then it's sent via S2S
         tc.addLineage(createLineage(prs, 1, 3, 5));
@@ -625,7 +626,7 @@ public class ITAtlasNiFiFlowLineage {
 
         final Lineage lineage = getLineage();
 
-        final Node flow = lineage.findNode("nifi_flow", "S2SSend", "S2SSend");
+        final Node flow = lineage.findNode("nifi_flow", "S2SSend", "S2SSend@example");
         final Node pathA = lineage.findNode("nifi_flow_path", "Generate A", "ca71e4d9-2a4f-3970");
         final Node pathB = lineage.findNode("nifi_flow_path", "Generate B", "333255b6-eb02-3056");
         final Node pathC = lineage.findNode("nifi_flow_path", "Generate C", "c439cdca-e989-3491");
@@ -647,16 +648,6 @@ public class ITAtlasNiFiFlowLineage {
         lineage.assertLink(pathC, queueU);
         lineage.assertLink(queueU, pathU);
 
-        // Generate C and GetTwitter have reported proper SEND lineage to the input port.
-        final Node remoteInputPort = lineage.findNode("nifi_input_port", "input", "77919f59-533e-35a3");
-        lineage.assertLink(pathC, remoteInputPort);
-        lineage.assertLink(pathT, remoteInputPort);
-
-        // nifi_data is created for each obscure input processor.
-        final Node genC = lineage.findNode("nifi_data", "Generate C", "c439cdca-e989-3491");
-        final Node genT = lineage.findNode("nifi_data", "GetTwitter", "b775b657-5a5b-3708");
-        lineage.assertLink(genC, pathC);
-        lineage.assertLink(genT, pathT);
     }
 
     @Test
@@ -671,6 +662,24 @@ public class ITAtlasNiFiFlowLineage {
         final Node pathA = lineage.findNode("nifi_flow_path", "Generate A", "ca71e4d9-2a4f-3970");
         final Node genA = lineage.findNode("nifi_data", "Generate A", "ca71e4d9-2a4f-3970");
         lineage.assertLink(genA, pathA);
+
+        final Node pathC = lineage.findNode("nifi_flow_path", "Generate C", "c439cdca-e989-3491");
+        final Node pathT = lineage.findNode("nifi_flow_path", "GetTwitter", "b775b657-5a5b-3708");
+
+        // Generate C and GetTwitter have reported proper SEND lineage to the input port.
+        final Node remoteInputPortD = lineage.findNode("nifi_input_port", "input", "77919f59-533e-35a3");
+        final Node remoteInputPortP = lineage.findNode("nifi_flow_path", "Remote Input Port", "f31a6b53-3077-4c59");
+        final Node remoteInputPortQ = lineage.findNode("nifi_queue", "queue", "f31a6b53-3077-4c59");
+        lineage.assertLink(pathC, remoteInputPortQ);
+        lineage.assertLink(pathT, remoteInputPortQ);
+        lineage.assertLink(remoteInputPortQ, remoteInputPortP);
+        lineage.assertLink(remoteInputPortP, remoteInputPortD);
+
+        // nifi_data is created for each obscure input processor.
+        final Node genC = lineage.findNode("nifi_data", "Generate C", "c439cdca-e989-3491");
+        final Node genT = lineage.findNode("nifi_data", "GetTwitter", "b775b657-5a5b-3708");
+        lineage.assertLink(genC, pathC);
+        lineage.assertLink(genT, pathT);
     }
 
     @Test
@@ -679,6 +688,25 @@ public class ITAtlasNiFiFlowLineage {
         tc.properties.put(NIFI_LINEAGE_STRATEGY, LINEAGE_STRATEGY_COMPLETE_PATH.getValue());
 
         testS2SSend(tc);
+
+        final Lineage lineage = getLineage();
+
+        // Complete path has hash.
+        final Node pathC = lineage.findNode("nifi_flow_path", "Generate C, Remote Input Port",
+                "c439cdca-e989-3491-0000-000000000000::1605753423@example");
+        final Node pathT = lineage.findNode("nifi_flow_path", "GetTwitter, Remote Input Port",
+                "b775b657-5a5b-3708-0000-000000000000::3843156947@example");
+
+        // Generate C and GetTwitter have reported proper SEND lineage to the input port.
+        final Node remoteInputPort = lineage.findNode("nifi_input_port", "input", "77919f59-533e-35a3");
+        lineage.assertLink(pathC, remoteInputPort);
+        lineage.assertLink(pathT, remoteInputPort);
+
+        // nifi_data is created for each obscure input processor.
+        final Node genC = lineage.findNode("nifi_data", "Generate C", "c439cdca-e989-3491");
+        final Node genT = lineage.findNode("nifi_data", "GetTwitter", "b775b657-5a5b-3708");
+        lineage.assertLink(genC, pathC);
+        lineage.assertLink(genT, pathT);
     }
 
     /**
@@ -688,9 +716,10 @@ public class ITAtlasNiFiFlowLineage {
     public void testS2SGet() throws Exception {
         final TestConfiguration tc = new TestConfiguration("S2SGet");
         final ProvenanceRecords prs = tc.provenanceRecords;
-        prs.add(pr("392e7343-3950-329b", "Remote Output Port", RECEIVE,
-                "http://nifi.example.com:8080/nifi-api/data-transfer/input-ports" +
-                        "/392e7343-3950-329b/transactions/tx-1/flow-files"));
+        // The remote port GUID is different than the Remote Output Ports.
+        prs.add(pr("7375f8f6-4604-468d", "Remote Output Port", RECEIVE,
+                "http://nifi.example.com:8080/nifi-api/data-transfer/output-ports" +
+                        "/392e7343-3950-329b-0000-000000000000/transactions/tx-1/flow-files"));
 
         test(tc);
 
@@ -698,19 +727,28 @@ public class ITAtlasNiFiFlowLineage {
 
         final Lineage lineage = getLineage();
 
-        final Node flow = lineage.findNode("nifi_flow", "S2SGet", "S2SGet");
+        final Node flow = lineage.findNode("nifi_flow", "S2SGet", "S2SGet@example");
         final Node pathL = lineage.findNode("nifi_flow_path", "LogAttribute", "97cc5b27-22f3-3c3b");
         final Node pathP = lineage.findNode("nifi_flow_path", "PutFile", "4f3bfa4c-6427-3aac");
         final Node pathU = lineage.findNode("nifi_flow_path", "UpdateAttribute", "bb530e58-ee14-3cac");
-        final Node remoteOutputPort = lineage.findNode("nifi_output_port", "output", "392e7343-3950-329b");
 
-        lineage.assertLink(flow, pathL);
-        lineage.assertLink(flow, pathP);
-        lineage.assertLink(flow, pathU);
+        // These entities should be created by notification.
+        final Node remoteOutputPortDataSet = lineage.findNode("nifi_output_port", "output", "392e7343-3950-329b");
+        final Node remoteOutputPortProcess = lineage.findNode("nifi_flow_path", "Remote Output Port", "7375f8f6-4604-468d");
+        final Node queueL = lineage.findNode("nifi_queue", "queue", "97cc5b27-22f3-3c3b");
+        final Node queueP = lineage.findNode("nifi_queue", "queue", "4f3bfa4c-6427-3aac");
+        final Node queueU = lineage.findNode("nifi_queue", "queue", "bb530e58-ee14-3cac");
 
-        lineage.assertLink(remoteOutputPort, pathL);
-        lineage.assertLink(remoteOutputPort, pathP);
-        lineage.assertLink(remoteOutputPort, pathU);
+        lineage.assertLink(remoteOutputPortDataSet, remoteOutputPortProcess);
+
+        lineage.assertLink(flow, remoteOutputPortProcess);
+        lineage.assertLink(remoteOutputPortProcess, queueL);
+        lineage.assertLink(remoteOutputPortProcess, queueP);
+        lineage.assertLink(remoteOutputPortProcess, queueU);
+
+        lineage.assertLink(queueL, pathL);
+        lineage.assertLink(queueP, pathP);
+        lineage.assertLink(queueU, pathU);
 
     }
 
@@ -721,14 +759,20 @@ public class ITAtlasNiFiFlowLineage {
     @Test
     public void testS2STransfer() throws Exception {
         final TestConfiguration tc = new TestConfiguration("S2STransfer");
+
+        final ProvenanceRecords prs = tc.provenanceRecords;
+        prs.add(pr("392e7343-3950-329b", "Output Port", SEND,
+                "http://nifi.example.com:8080/nifi-api/data-transfer/output-ports" +
+                        "/392e7343-3950-329b-0000-000000000000/transactions/tx-1/flow-files"));
+
         test(tc);
 
         waitNotificationsGetDelivered();
 
         final Lineage lineage = getLineage();
 
-        final Node flow = lineage.findNode("nifi_flow", "S2STransfer", "S2STransfer");
-        final Node path = lineage.findNode("nifi_flow_path", "GenerateFlowFile", "1b9f81db-a0fd-389a");
+        final Node flow = lineage.findNode("nifi_flow", "S2STransfer", "S2STransfer@example");
+        final Node path = lineage.findNode("nifi_flow_path", "GenerateFlowFile, output", "1b9f81db-a0fd-389a");
         final Node outputPort = lineage.findNode("nifi_output_port", "output", "392e7343-3950-329b");
 
         lineage.assertLink(flow, path);
@@ -742,14 +786,20 @@ public class ITAtlasNiFiFlowLineage {
     @Test
     public void testS2SReceive() throws Exception {
         final TestConfiguration tc = new TestConfiguration("S2SReceive");
+
+        final ProvenanceRecords prs = tc.provenanceRecords;
+        prs.add(pr("77919f59-533e-35a3", "Input Port", RECEIVE,
+                "http://nifi.example.com:8080/nifi-api/data-transfer/output-ports" +
+                        "/77919f59-533e-35a3-0000-000000000000/transactions/tx-1/flow-files"));
+
         test(tc);
 
         waitNotificationsGetDelivered();
 
         final Lineage lineage = getLineage();
 
-        final Node flow = lineage.findNode("nifi_flow", "S2SReceive", "S2SReceive");
-        final Node path = lineage.findNode("nifi_flow_path", "UpdateAttribute", "67834454-5a13-3872");
+        final Node flow = lineage.findNode("nifi_flow", "S2SReceive", "S2SReceive@example");
+        final Node path = lineage.findNode("nifi_flow_path", "input, UpdateAttribute", "77919f59-533e-35a3");
         final Node inputPort = lineage.findNode("nifi_input_port", "input", "77919f59-533e-35a3");
 
         lineage.assertLink(flow, path);
@@ -765,8 +815,10 @@ public class ITAtlasNiFiFlowLineage {
 
         final Lineage lineage = getLineage();
 
-        final Node remoteFlow = lineage.findNode("nifi_flow", "S2SReceive", "S2SReceive");
-        final Node localFlow = lineage.findNode("nifi_flow", "S2SSend", "S2SSend");
+        final Node remoteFlow = lineage.findNode("nifi_flow", "S2SReceive", "S2SReceive@example");
+        final Node localFlow = lineage.findNode("nifi_flow", "S2SSend", "S2SSend@example");
+        final Node remoteInputPortQ = lineage.findNode("nifi_queue", "queue", "f31a6b53-3077-4c59");
+        final Node remoteInputPortP = lineage.findNode("nifi_flow_path", "Remote Input Port", "f31a6b53-3077-4c59");
         final Node inputPort = lineage.findNode("nifi_input_port", "input", "77919f59-533e-35a3");
         final Node pathC = lineage.findNode("nifi_flow_path", "Generate C", "c439cdca-e989-3491");
         final Node pathT = lineage.findNode("nifi_flow_path", "GetTwitter", "b775b657-5a5b-3708");
@@ -777,8 +829,10 @@ public class ITAtlasNiFiFlowLineage {
         // These paths within local flow sends data to the remote flow through the remote input port.
         lineage.assertLink(localFlow, pathC);
         lineage.assertLink(localFlow, pathT);
-        lineage.assertLink(pathC, inputPort);
-        lineage.assertLink(pathT, inputPort);
+        lineage.assertLink(pathC, remoteInputPortQ);
+        lineage.assertLink(pathT, remoteInputPortQ);
+        lineage.assertLink(remoteInputPortQ, remoteInputPortP);
+        lineage.assertLink(remoteInputPortP, inputPort);
 
     }
 
@@ -789,10 +843,15 @@ public class ITAtlasNiFiFlowLineage {
 
         final Lineage lineage = getLineage();
 
-        final Node remoteFlow = lineage.findNode("nifi_flow", "S2STransfer", "S2STransfer");
-        final Node localFlow = lineage.findNode("nifi_flow", "S2SGet", "S2SGet");
-        final Node remoteGen = lineage.findNode("nifi_flow_path", "GenerateFlowFile", "1b9f81db-a0fd-389a");
+        final Node remoteFlow = lineage.findNode("nifi_flow", "S2STransfer", "S2STransfer@example");
+        final Node localFlow = lineage.findNode("nifi_flow", "S2SGet", "S2SGet@example");
+        final Node remoteGen = lineage.findNode("nifi_flow_path", "GenerateFlowFile, output", "1b9f81db-a0fd-389a");
         final Node outputPort = lineage.findNode("nifi_output_port", "output", "392e7343-3950-329b");
+
+        final Node remoteOutputPortP = lineage.findNode("nifi_flow_path", "Remote Output Port", "7375f8f6-4604-468d");
+        final Node queueL = lineage.findNode("nifi_queue", "queue", "97cc5b27-22f3-3c3b");
+        final Node queueP = lineage.findNode("nifi_queue", "queue", "4f3bfa4c-6427-3aac");
+        final Node queueU = lineage.findNode("nifi_queue", "queue", "bb530e58-ee14-3cac");
         final Node pathL = lineage.findNode("nifi_flow_path", "LogAttribute", "97cc5b27-22f3-3c3b");
         final Node pathP = lineage.findNode("nifi_flow_path", "PutFile", "4f3bfa4c-6427-3aac");
         final Node pathU = lineage.findNode("nifi_flow_path", "UpdateAttribute", "bb530e58-ee14-3cac");
@@ -801,13 +860,15 @@ public class ITAtlasNiFiFlowLineage {
         lineage.assertLink(remoteFlow, remoteGen);
         lineage.assertLink(remoteGen, outputPort);
 
-        // These paths within local flow gets data from the remote flow through the remote output port.
-        lineage.assertLink(localFlow, pathL);
-        lineage.assertLink(localFlow, pathP);
-        lineage.assertLink(localFlow, pathU);
-        lineage.assertLink(outputPort, pathL);
-        lineage.assertLink(outputPort, pathP);
-        lineage.assertLink(outputPort, pathU);
+        // The Remote Output Port path in local flow gets data from the remote.
+        lineage.assertLink(localFlow, remoteOutputPortP);
+        lineage.assertLink(outputPort, remoteOutputPortP);
+        lineage.assertLink(remoteOutputPortP, queueL);
+        lineage.assertLink(remoteOutputPortP, queueP);
+        lineage.assertLink(remoteOutputPortP, queueU);
+        lineage.assertLink(queueL, pathL);
+        lineage.assertLink(queueP, pathP);
+        lineage.assertLink(queueU, pathU);
 
     }
 
@@ -819,16 +880,13 @@ public class ITAtlasNiFiFlowLineage {
         final TestConfiguration tc = new TestConfiguration("S2SDirect");
         final ProvenanceRecords prs = tc.provenanceRecords;
 
-        prs.add(pr("015f1040-dcd7-17bd-5c1f-e31afe0a09a4", "Remote Output Port", RECEIVE,
-                "http://nifi.example.com:8080/nifi-api/data-transfer/input-ports" +
+        prs.add(pr("d73d9115-b987-4ffc", "Remote Output Port", RECEIVE,
+                "http://nifi.example.com:8080/nifi-api/data-transfer/output-ports" +
                         "/015f1040-dcd7-17bd-5c1f-e31afe0a09a4/transactions/tx-1/flow-files"));
 
-        prs.add((pr("015f101e-dcd7-17bd-8899-1a723733521a", "Remote Input Port", SEND,
+        prs.add((pr("a4f14247-89aa-4e6c", "Remote Input Port", SEND,
                 "http://nifi.example.com:8080/nifi-api/data-transfer/input-ports" +
                         "/015f101e-dcd7-17bd-8899-1a723733521a/transactions/tx-2/flow-files")));
-
-        // This provenance should not reported (by being linked to root flow_path).
-        prs.add((pr("00000000-0000-0000", "Unknown", CREATE)));
 
         Map<Long, ComputeLineageResult> lineages = tc.lineageResults;
         // Received from remote output port, then sent it via remote input port
@@ -839,15 +897,19 @@ public class ITAtlasNiFiFlowLineage {
 
         final Lineage lineage = getLineage();
 
-        final Node flow = lineage.findNode("nifi_flow", "S2SDirect", "S2SDirect");
-        final Node remoteOutputPort = lineage.findNode("nifi_output_port", "output", "015f1040-dcd7-17bd-5c1f-e31afe0a09a4");
-        final Node remoteInputPort = lineage.findNode("nifi_input_port", "input", "015f101e-dcd7-17bd-8899-1a723733521a");
-        final Node pathRoot = lineage.findNode("nifi_flow_path", "S2SDirect", "S2SDirect");
+        final Node flow = lineage.findNode("nifi_flow", "S2SDirect", "S2SDirect@example");
+        final Node remoteOutputPort = lineage.findNode("nifi_output_port", "output", "015f1040-dcd7-17bd-5c1f-e31afe0a09a4@example");
+        final Node remoteOutputPortP = lineage.findNode("nifi_flow_path", "Remote Output Port", "d73d9115-b987-4ffc");
+        final Node remoteInputPortQ = lineage.findNode("nifi_queue", "queue", "a4f14247-89aa-4e6c");
+        final Node remoteInputPortP = lineage.findNode("nifi_flow_path", "Remote Input Port", "a4f14247-89aa-4e6c");
+        final Node remoteInputPort = lineage.findNode("nifi_input_port", "input", "015f101e-dcd7-17bd-8899-1a723733521a@example");
 
         // Even if there is no Processor, lineage can be reported using root flow_path.
-        lineage.assertLink(flow, pathRoot);
-        lineage.assertLink(remoteOutputPort, pathRoot);
-        lineage.assertLink(pathRoot, remoteInputPort);
+        lineage.assertLink(flow, remoteOutputPortP);
+        lineage.assertLink(remoteOutputPort, remoteOutputPortP);
+        lineage.assertLink(remoteOutputPortP, remoteInputPortQ);
+        lineage.assertLink(remoteInputPortQ, remoteInputPortP);
+        lineage.assertLink(remoteInputPortP, remoteInputPort);
     }
 
     @Test
@@ -863,7 +925,7 @@ public class ITAtlasNiFiFlowLineage {
 
         final Lineage lineage = getLineage();
 
-        final Node flow = lineage.findNode("nifi_flow", "RemoteInvocation", "RemoteInvocation");
+        final Node flow = lineage.findNode("nifi_flow", "RemoteInvocation", "RemoteInvocation@example");
         final Node path = lineage.findNode("nifi_flow_path",
                 "DeleteHDFS",
                 "2607ed95-c6ef-3636");

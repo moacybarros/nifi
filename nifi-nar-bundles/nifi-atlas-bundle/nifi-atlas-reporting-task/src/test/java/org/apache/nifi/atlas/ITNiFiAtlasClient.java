@@ -77,23 +77,4 @@ public class ITNiFiAtlasClient {
         logger.info("entityDef={}", entityDef);
     }
 
-    @Test
-    public void testSSL() throws Exception {
-        System.setProperty("atlas.conf", "/tmp/atlas");
-        final Configuration hadoopConf = new Configuration();
-        hadoopConf.set("hadoop.security.authentication", "kerberos");
-        UserGroupInformation.setConfiguration(hadoopConf);
-//        final UserGroupInformation ugi = UserGroupInformation.loginUserFromKeytabAndReturnUGI("atlas/0.hdp.aws.mine@AWS.MINE", "/tmp/atlas/atlas.service.keytab");
-        final UserGroupInformation ugi = null;
-//        final AtlasClientV2 client = new AtlasClientV2(ugi, null, "https://0.hdp.aws.mine:21443");
-        final AtlasClientV2 client = new AtlasClientV2(new String[]{"https://0.hdp.aws.mine:21443"}, new String[]{"admin", "admin"});
-        final AtlasObjectId atlasObjectId = new AtlasObjectId("kafka_topic", "topic", "nifi-test");
-
-        final Map<String, String> attributes = new HashMap<>();
-        atlasObjectId.getUniqueAttributes().entrySet().stream().filter(entry -> entry.getValue() != null)
-                .forEach(entry -> attributes.put(entry.getKey(), entry.getValue().toString()));
-        final AtlasEntity.AtlasEntityWithExtInfo entity = client.getEntityByAttribute(atlasObjectId.getTypeName(), attributes);
-        logger.info("entity={}", entity);
-    }
-
 }

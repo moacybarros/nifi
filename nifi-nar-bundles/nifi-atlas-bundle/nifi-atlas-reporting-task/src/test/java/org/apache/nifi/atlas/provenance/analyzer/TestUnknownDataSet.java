@@ -39,7 +39,7 @@ import static org.junit.Assert.assertNull;
 import static org.mockito.Matchers.matches;
 import static org.mockito.Mockito.when;
 
-public class TestCreateObscureInputDataSet {
+public class TestUnknownDataSet {
 
     @Test
     public void testGenerateFlowFile() {
@@ -58,6 +58,7 @@ public class TestCreateObscureInputDataSet {
         final AnalysisContext context = Mockito.mock(AnalysisContext.class);
         when(context.getClusterResolver()).thenReturn(clusterResolvers);
         when(context.findConnectionTo(processorId)).thenReturn(connections);
+        when(context.getNiFiClusterName()).thenReturn("nifi-cluster");
 
         final NiFiProvenanceEventAnalyzer analyzer = NiFiProvenanceEventAnalyzerFactory.getAnalyzer(processorName, null, record.getEventType());
         assertNotNull(analyzer);
@@ -68,7 +69,7 @@ public class TestCreateObscureInputDataSet {
         Referenceable ref = refs.getInputs().iterator().next();
         assertEquals("nifi_data", ref.getTypeName());
         assertEquals("GenerateFlowFile", ref.get(ATTR_NAME));
-        assertEquals("processor-1234", ref.get(ATTR_QUALIFIED_NAME));
+        assertEquals("processor-1234@nifi-cluster", ref.get(ATTR_QUALIFIED_NAME));
     }
 
     @Test

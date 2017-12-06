@@ -241,7 +241,7 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
                 // Processor name can be configured by user and more meaningful if available.
                 // If the component is already removed, it may not be available here.
                 .map(event -> nifiFlow.getProcessComponentName(event.getComponentId(), () -> event.getComponentType()))
-                .collect(Collectors.joining(","));
+                .collect(Collectors.joining(", "));
 
         flowPath.setName(pathName);
         final NiFiFlowPath staticFlowPath = nifiFlow.findPath(firstComponentId);

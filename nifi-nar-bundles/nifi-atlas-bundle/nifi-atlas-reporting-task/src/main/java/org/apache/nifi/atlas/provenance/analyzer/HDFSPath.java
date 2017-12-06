@@ -24,6 +24,7 @@ import org.apache.nifi.provenance.ProvenanceEventRecord;
 
 import java.net.URI;
 
+import static org.apache.nifi.atlas.AtlasUtils.toQualifiedName;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_CLUSTER_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_PATH;

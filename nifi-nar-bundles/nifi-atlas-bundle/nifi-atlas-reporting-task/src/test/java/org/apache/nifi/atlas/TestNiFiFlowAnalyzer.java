@@ -25,13 +25,10 @@ import org.apache.nifi.util.Tuple;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.time.Instant;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
-import java.util.Date;
 import java.util.Map;
 import java.util.function.Function;
 
+import static org.apache.nifi.atlas.AtlasUtils.toQualifiedName;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_QUEUE;
 import static org.junit.Assert.assertEquals;
@@ -42,7 +39,6 @@ import static org.junit.Assert.assertEquals;
  */
 public class TestNiFiFlowAnalyzer {
 
-    private static final String NIFI_URL = "http://localhost:8080/nifi";
     private int componentId = 0;
 
     @Before
@@ -66,9 +62,10 @@ public class TestNiFiFlowAnalyzer {
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
         final NiFiFlow nifiFlow = new NiFiFlow(rootPG.getId());
+        nifiFlow.setClusterName("cluster1");
         analyzer.analyzeProcessGroup(nifiFlow, rootPG);
 
-        assertEquals("Flow name", nifiFlow.getFlowName());
+        assertEquals("1234-5678-0000-0000@cluster1", nifiFlow.getQualifiedName());
     }
 
     private ProcessorStatus createProcessor(ProcessGroupStatus pgStatus, String type) {
@@ -133,21 +130,16 @@ public class TestNiFiFlowAnalyzer {
         analyzer.analyzePaths(nifiFlow);
         final Map<String, NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
-        assertEquals(2, paths.size());
-
-        // root path
-        final NiFiFlowPath path0 = paths.get(0);
-        assertEquals(rootPG.getId(), path0.getId());
-        assertEquals(rootPG.getId(), path0.getGroupId());
+        assertEquals(1, paths.size());
 
         // first path
-        final NiFiFlowPath path1 = paths.get(1);
-        assertEquals(path1.getId(), path1.getProcessComponentIds().get(0));
-        assertEquals(rootPG.getId(), path1.getGroupId());
+        final NiFiFlowPath path0 = paths.get(pr0.getId());
+        assertEquals(path0.getId(), path0.getProcessComponentIds().get(0));
+        assertEquals(rootPG.getId(), path0.getGroupId());
 
         // Should be able to find a path from a given processor GUID.
         final NiFiFlowPath pathForPr0 = nifiFlow.findPath(pr0.getId());
-        assertEquals(path1, pathForPr0);
+        assertEquals(path0, pathForPr0);
     }
 
 
@@ -171,14 +163,14 @@ public class TestNiFiFlowAnalyzer {
         analyzer.analyzePaths(nifiFlow);
         final Map<String, NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
-        assertEquals(2, paths.size());
+        assertEquals(1, paths.size());
 
         // Should be able to find a path from a given processor GUID.
         final NiFiFlowPath pathForPr0 = nifiFlow.findPath(pr0.getId());
         final NiFiFlowPath pathForPr1 = nifiFlow.findPath(pr1.getId());
-        final NiFiFlowPath path1 = paths.get(1);
-        assertEquals(path1, pathForPr0);
-        assertEquals(path1, pathForPr1);
+        final NiFiFlowPath path0 = paths.get(pr0.getId());
+        assertEquals(path0, pathForPr0);
+        assertEquals(path0, pathForPr1);
     }
 
     @Test
@@ -204,7 +196,7 @@ public class TestNiFiFlowAnalyzer {
         analyzer.analyzePaths(nifiFlow);
         final Map<String, NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
-        assertEquals(3, paths.size());
+        assertEquals(2, paths.size());
 
         // Order is not guaranteed
         final NiFiFlowPath pathA = paths.get(pr0.getId());
@@ -244,6 +236,7 @@ public class TestNiFiFlowAnalyzer {
         final NiFiFlowAnalyzer analyzer = new NiFiFlowAnalyzer();
 
         final NiFiFlow nifiFlow = new NiFiFlow(rootPG.getId());
+        nifiFlow.setClusterName("cluster1");
         analyzer.analyzeProcessGroup(nifiFlow, rootPG);
 
         assertEquals(4, nifiFlow.getProcessors().size());
@@ -251,7 +244,7 @@ public class TestNiFiFlowAnalyzer {
         analyzer.analyzePaths(nifiFlow);
         final Map<String, NiFiFlowPath> paths = nifiFlow.getFlowPaths();
 
-        assertEquals(4, paths.size());
+        assertEquals(3, paths.size());
 
         // Order is not guaranteed
         final NiFiFlowPath pathA = paths.get(pr0.getId());
@@ -265,7 +258,7 @@ public class TestNiFiFlowAnalyzer {
         assertEquals(1, pathC.getInputs().size());
         final AtlasObjectId queue = pathC.getInputs().iterator().next();
         assertEquals(TYPE_NIFI_QUEUE, queue.getTypeName());
-        assertEquals(pathC.getId(), queue.getUniqueAttributes().get(ATTR_QUALIFIED_NAME));
+        assertEquals(toQualifiedName("cluster1", pathC.getId()), queue.getUniqueAttributes().get(ATTR_QUALIFIED_NAME));
 
         // Should be able to find a path from a given processor GUID.
         final NiFiFlowPath pathForPr0 = nifiFlow.findPath(pr0.getId());
@@ -276,17 +269,6 @@ public class TestNiFiFlowAnalyzer {
         assertEquals(pathA, pathForPr1);
         assertEquals(pathB, pathForPr2);
         assertEquals(pathC, pathForPr3);
-    }
-
-    @Test
-    public void testTimeFormat() {
-        final Date now = new Date();
-        System.out.println(String.format("%tFT%tT.000%tz", now, now, now));
-
-        String nows = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX")
-                .withZone(ZoneOffset.UTC)
-                .format(Instant.now());
-        System.out.println(nows);
     }
 
 }

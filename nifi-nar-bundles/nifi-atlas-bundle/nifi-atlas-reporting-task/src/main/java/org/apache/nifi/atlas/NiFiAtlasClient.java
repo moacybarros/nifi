@@ -46,6 +46,7 @@ import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -146,8 +147,8 @@ public class NiFiAtlasClient {
     public boolean isNiFiTypeDefsRegistered() throws AtlasServiceException {
         final Set<String> typeNames = ENTITIES.keySet();
         final Map<String, AtlasEntityDef> existingDefs = getTypeDefs(typeNames.toArray(new String[typeNames.size()])).getEntityDefs().stream()
-                .collect(Collectors.toMap(def -> def.getName(), def -> def));
-        return typeNames.stream().allMatch(typeName -> existingDefs.containsKey(typeName));
+                .collect(Collectors.toMap(AtlasEntityDef::getName, Function.identity()));
+        return typeNames.stream().allMatch(existingDefs::containsKey);
     }
 
     /**
@@ -157,7 +158,7 @@ public class NiFiAtlasClient {
     public void registerNiFiTypeDefs(boolean update) throws AtlasServiceException {
         final Set<String> typeNames = ENTITIES.keySet();
         final Map<String, AtlasEntityDef> existingDefs = getTypeDefs(typeNames.toArray(new String[typeNames.size()])).getEntityDefs().stream()
-                .collect(Collectors.toMap(def -> def.getName(), def -> def));
+                .collect(Collectors.toMap(AtlasEntityDef::getName, Function.identity()));
 
 
         final AtomicBoolean shouldUpdate = new AtomicBoolean(false);
@@ -220,7 +221,7 @@ public class NiFiAtlasClient {
      */
     public NiFiFlow fetchNiFiFlow(String rootProcessGroupId, String clusterName) throws AtlasServiceException {
 
-        final String qualifiedName = AtlasUtils.toQualifiedName(rootProcessGroupId, clusterName);
+        final String qualifiedName = AtlasUtils.toQualifiedName(clusterName, rootProcessGroupId);
         final AtlasObjectId flowId = new AtlasObjectId(TYPE_NIFI_FLOW, ATTR_QUALIFIED_NAME, qualifiedName);
         final AtlasEntity.AtlasEntityWithExtInfo nifiFlowExt = searchEntityDef(flowId);
 
@@ -316,7 +317,6 @@ public class NiFiAtlasClient {
         final AtlasEntity flowEntity = registerNiFiFlowEntity(nifiFlow);
 
         // Create DataSet entities those are created by this NiFi flow.
-        // TODO: If all dataset instances are deleted, then this doesn't contain anything for the typename, and update is skipped. Need to return something..
         final Map<String, List<AtlasEntity>> updatedDataSetEntities = registerDataSetEntities(nifiFlow);
 
         // Create path entities.

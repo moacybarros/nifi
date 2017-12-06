@@ -19,6 +19,7 @@ package org.apache.nifi.atlas.provenance.lineage;
 import org.apache.atlas.model.instance.AtlasObjectId;
 import org.apache.atlas.notification.hook.HookNotification;
 import org.apache.atlas.typesystem.Referenceable;
+import org.apache.nifi.atlas.AtlasUtils;
 import org.apache.nifi.atlas.NiFiFlow;
 import org.apache.nifi.atlas.NiFiFlowPath;
 import org.apache.nifi.atlas.provenance.AnalysisContext;
@@ -38,6 +39,8 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import static org.apache.nifi.atlas.AtlasUtils.toStr;
+import static org.apache.nifi.atlas.AtlasUtils.toTypedQualifiedName;
 import static org.apache.nifi.atlas.NiFIAtlasHook.NIFI_USER;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_INPUTS;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
@@ -82,8 +85,6 @@ public abstract class AbstractLineageStrategy implements LineageStrategy {
                 .collect(Collectors.toSet());
 
         addDataSetRefs(nifiFlow, flowPaths, refs);
-
-
     }
 
     protected void addDataSetRefs(NiFiFlow nifiFlow, Set<NiFiFlowPath> flowPaths, DataSetRefs refs) {
@@ -143,7 +144,7 @@ public abstract class AbstractLineageStrategy implements LineageStrategy {
         if (refsToAdd != null && !refsToAdd.isEmpty()) {
 
             // If nifiFlowPath already has a given dataSetRef, then it needs not to be created.
-            final Function<Referenceable, String> toTypedQualifiedName = ref -> ref.getTypeName() + "::" + ref.get(ATTR_QUALIFIED_NAME);
+            final Function<Referenceable, String> toTypedQualifiedName = ref -> toTypedQualifiedName(ref.getTypeName(), toStr(ref.get(ATTR_QUALIFIED_NAME)));
             final Collection<Referenceable> refs = Optional.ofNullable((Collection<Referenceable>) nifiFlowPath.get(targetAttribute)).orElseGet(ArrayList::new);
             final Set<String> existingRefTypedQualifiedNames = refs.stream().map(toTypedQualifiedName).collect(Collectors.toSet());
 

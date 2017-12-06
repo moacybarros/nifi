@@ -24,6 +24,7 @@ import org.apache.atlas.model.typedef.AtlasEntityDef;
 import org.apache.atlas.model.typedef.AtlasTypesDef;
 import org.apache.atlas.notification.hook.HookNotification;
 import org.apache.atlas.typesystem.Referenceable;
+import org.apache.nifi.atlas.AtlasUtils;
 import org.apache.nifi.atlas.NiFiTypes;
 import org.codehaus.jackson.map.ObjectMapper;
 import org.eclipse.jetty.server.Connector;
@@ -46,13 +47,27 @@ import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+
+import static org.apache.nifi.atlas.AtlasUtils.isGuidAssigned;
+import static org.apache.nifi.atlas.AtlasUtils.toStr;
+import static org.apache.nifi.atlas.AtlasUtils.toTypedQualifiedName;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_GUID;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_INPUTS;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_OUTPUTS;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_TYPENAME;
+import static org.apache.nifi.util.StringUtils.isEmpty;
 
 /**
  * Emulate Atlas API v2 server for NiFi implementation testing.
@@ -86,21 +101,22 @@ public class AtlasAPIV2ServerEmulator {
                 HookNotification.EntityCreateRequest em = (HookNotification.EntityCreateRequest) m;
                 for (Referenceable ref : em.getEntities()) {
                     final AtlasEntity entity = toEntity(ref);
-                    updateEntityByNotification(entity);
+                    createEntityByNotification(entity);
                 }
             } else if (m instanceof HookNotification.EntityPartialUpdateRequest) {
                 HookNotification.EntityPartialUpdateRequest em
                         = (HookNotification.EntityPartialUpdateRequest) m;
                 final AtlasEntity entity = toEntity(em.getEntity());
+                entity.setAttribute(em.getAttribute(), em.getAttributeValue());
                 updateEntityByNotification(entity);
             }
         });
     }
 
     @SuppressWarnings("unchecked")
-    private void updateEntityByNotification(AtlasEntity entity) {
-        final String key = toEntityKey(entity);
-        final AtlasEntity exEntity = atlasEntities.get(key);
+    private void createEntityByNotification(AtlasEntity entity) {
+        final String key = toTypedQname(entity);
+        final AtlasEntity exEntity = atlasEntitiesByTypedQname.get(key);
 
         if (exEntity != null) {
             convertReferenceableToObjectId(entity.getAttributes()).forEach((k, v) -> {
@@ -113,7 +129,60 @@ public class AtlasAPIV2ServerEmulator {
                 exEntity.setAttribute(k, r);
             });
         } else {
-            atlasEntities.put(key, entity);
+            String guid = String.valueOf(guidSeq.getAndIncrement());
+            entity.setGuid(guid);
+            atlasEntitiesByTypedQname.put(key, entity);
+            atlasEntitiesByGuid.put(guid, entity);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> resolveIOReference(Object _refs) {
+        if (_refs == null) {
+            return Collections.emptyList();
+        }
+        final Collection<Map<String, Object>> refs = (Collection<Map<String, Object>>) _refs;
+        return refs.stream().map(ref -> {
+            final String typeName = toStr(ref.get(ATTR_TYPENAME));
+            final String qualifiedName = toStr(((Map<String, Object>) ref.get("uniqueAttributes")).get(ATTR_QUALIFIED_NAME));
+            final String guid = toStr(ref.get(ATTR_GUID));
+            if (isEmpty(guid)) {
+                final String typedQname = toTypedQualifiedName(typeName, qualifiedName);
+                final AtlasEntity referredEntity = atlasEntitiesByTypedQname.get(typedQname);
+                if (referredEntity == null) {
+                    throw new RuntimeException("Entity does not exist for " + typedQname);
+                }
+                ref.put(ATTR_GUID, referredEntity.getGuid());
+            }
+            return ref;
+        }).collect(Collectors.toList());
+    }
+
+    private void updateEntityByNotification(AtlasEntity entity) {
+        final String inputGuid = entity.getGuid();
+        final String inputTypedQname = toTypedQname(entity);
+        final AtlasEntity exEntity = isGuidAssigned(inputGuid)
+                ? atlasEntitiesByGuid.get(inputGuid)
+                : atlasEntitiesByTypedQname.get(inputTypedQname);
+
+        if (exEntity != null) {
+            convertReferenceableToObjectId(entity.getAttributes()).forEach((k, v) -> {
+                final Object r;
+                switch (k) {
+                    case "inputs":
+                    case "outputs":
+                    {
+                        // If a reference doesn't have guid, then find it.
+                        r = resolveIOReference(v);
+                    }
+                    break;
+                    default:
+                        r = v;
+                }
+                exEntity.setAttribute(k, r);
+            });
+        } else {
+            throw new RuntimeException("Existing entity to be updated was not found for, " + entity);
         }
     }
 
@@ -145,7 +214,9 @@ public class AtlasAPIV2ServerEmulator {
 
         servletHandler.addServletWithMapping(TypeDefsServlet.class, "/types/typedefs/");
         servletHandler.addServletWithMapping(EntityBulkServlet.class, "/entity/bulk/");
-        servletHandler.addServletWithMapping(EntitySearchServlet.class, "/search/basic/");
+        servletHandler.addServletWithMapping(EntityGuidServlet.class, "/entity/guid/*");
+        servletHandler.addServletWithMapping(SearchByUniqueAttributeServlet.class, "/entity/uniqueAttribute/type/*");
+        servletHandler.addServletWithMapping(SearchBasicServlet.class, "/search/basic/");
         servletHandler.addServletWithMapping(LineageServlet.class, "/debug/lineage/");
 
         notificationServerEmulator = new AtlasNotificationServerEmulator();
@@ -175,7 +246,8 @@ public class AtlasAPIV2ServerEmulator {
 
     private static final AtlasTypesDef atlasTypesDef = new AtlasTypesDef();
     // key = type::qualifiedName
-    private static final Map<String, AtlasEntity> atlasEntities = new HashMap<>();
+    private static final Map<String, AtlasEntity> atlasEntitiesByTypedQname = new HashMap<>();
+    private static final Map<String, AtlasEntity> atlasEntitiesByGuid = new HashMap<>();
 
     public static class TypeDefsServlet extends HttpServlet {
 
@@ -215,31 +287,90 @@ public class AtlasAPIV2ServerEmulator {
         }
     }
 
+    private static final AtomicInteger guidSeq = new AtomicInteger(0);
+
     public static class EntityBulkServlet extends HttpServlet {
 
         @Override
         protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
             final AtlasEntity.AtlasEntitiesWithExtInfo withExtInfo = readInputJSON(req, AtlasEntity.AtlasEntitiesWithExtInfo.class);
-            withExtInfo.getEntities().forEach(entity -> atlasEntities.put(toEntityKey((AtlasEntity) entity), entity));
+            final Map<String, String> guidAssignments = new HashMap<>();
+            withExtInfo.getEntities().forEach(entity -> {
+                atlasEntitiesByTypedQname.put(toTypedQname(entity), entity);
+                String guid = entity.getGuid();
+                if (!AtlasUtils.isGuidAssigned(guid)) {
+                    final String _guid = String.valueOf(guidSeq.getAndIncrement());
+                    guidAssignments.put(guid, _guid);
+                    entity.setGuid(_guid);
+                    guid = _guid;
+                }
+                atlasEntitiesByGuid.put(guid, entity);
+            });
             final EntityMutationResponse mutationResponse = new EntityMutationResponse();
+            mutationResponse.setGuidAssignments(guidAssignments);
             respondWithJson(resp, mutationResponse);
         }
 
         @Override
         protected void doDelete(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
-            atlasEntities.clear();
+            atlasEntitiesByTypedQname.clear();
+            atlasEntitiesByGuid.clear();
             resp.setStatus(200);
         }
     }
 
-    public static class EntitySearchServlet extends HttpServlet {
+    public static class SearchBasicServlet extends HttpServlet {
 
         @Override
         protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
             final AtlasSearchResult result = new AtlasSearchResult();
-            result.setEntities(atlasEntities.values().stream()
+            result.setEntities(atlasEntitiesByTypedQname.values().stream()
                     .map(entity -> new AtlasEntityHeader(entity.getTypeName(), entity.getAttributes())).collect(Collectors.toList()));
             respondWithJson(resp, result);
+        }
+    }
+
+    public static class EntityGuidServlet extends HttpServlet {
+
+        private static Pattern URL_PATTERN = Pattern.compile(".+/guid/([^/]+)");
+        @Override
+        protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
+            final Matcher matcher = URL_PATTERN.matcher(req.getRequestURI());
+            if (matcher.matches()) {
+                final String guid = matcher.group(1);
+                final AtlasEntity entity = atlasEntitiesByGuid.get(guid);
+                if (entity != null) {
+                    respondWithJson(resp, createSearchResult(entity));
+                    return;
+                }
+            }
+            resp.setStatus(404);
+        }
+    }
+
+    private static AtlasEntity.AtlasEntityWithExtInfo createSearchResult(AtlasEntity entity) {
+        entity.setAttribute(ATTR_INPUTS, resolveIOReference(entity.getAttribute(ATTR_INPUTS)));
+        entity.setAttribute(ATTR_OUTPUTS, resolveIOReference(entity.getAttribute(ATTR_OUTPUTS)));
+        return new AtlasEntity.AtlasEntityWithExtInfo(entity);
+    }
+
+    public static class SearchByUniqueAttributeServlet extends HttpServlet {
+
+        private static Pattern URL_PATTERN = Pattern.compile(".+/uniqueAttribute/type/([^/]+)");
+        @Override
+        protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
+            // http://localhost:21000/api/atlas/v2/entity/uniqueAttribute/type/nifi_flow_path?attr:qualifiedName=2e9a2852-228f-379b-0000-000000000000@example
+            final Matcher matcher = URL_PATTERN.matcher(req.getRequestURI());
+            if (matcher.matches()) {
+                final String typeName = matcher.group(1);
+                final String qualifiedName = req.getParameter("attr:qualifiedName");
+                final AtlasEntity entity = atlasEntitiesByTypedQname.get(toTypedQualifiedName(typeName, qualifiedName));
+                if (entity != null) {
+                    respondWithJson(resp, createSearchResult(entity));
+                    return;
+                }
+            }
+            resp.setStatus(404);
         }
     }
 
@@ -264,26 +395,23 @@ public class AtlasAPIV2ServerEmulator {
         } else if (v instanceof Map) {
             r = convertReferenceableToObjectId((Map<String, Object>) v);
         } else if (v instanceof Collection) {
-            r = ((Collection) v).stream().map(c -> toV2(c)).collect(Collectors.toList());
+            r = ((Collection) v).stream().map(AtlasAPIV2ServerEmulator::toV2).collect(Collectors.toList());
         }
         return r;
     }
 
     private static Map<String, Object> toMap(Referenceable ref) {
         final HashMap<String, Object> result = new HashMap<>();
-        result.put("typeName", ref.getTypeName());
+        result.put(ATTR_TYPENAME, ref.getTypeName());
         final HashMap<String, String> uniqueAttrs = new HashMap<>();
-        uniqueAttrs.put("qualifiedName", (String) ref.getValuesMap().get("qualifiedName"));
+        uniqueAttrs.put(ATTR_QUALIFIED_NAME, (String) ref.getValuesMap().get(ATTR_QUALIFIED_NAME));
         result.put("uniqueAttributes", uniqueAttrs);
+        result.put(ATTR_GUID, ref.getId() != null ? ref.getId()._getId() : null);
         return result;
     }
 
-    private static String toEntityKey(AtlasEntity entity) {
-        return toEntityKey(entity.getTypeName(), (String) entity.getAttribute("qualifiedName"));
-    }
-
-    private static String toEntityKey(String typeName, String qName) {
-        return typeName + "::" + qName;
+    private static String toTypedQname(AtlasEntity entity) {
+        return toTypedQualifiedName(entity.getTypeName(), (String) entity.getAttribute("qualifiedName"));
     }
 
     public static class LineageServlet extends HttpServlet {
@@ -291,14 +419,14 @@ public class AtlasAPIV2ServerEmulator {
         private Node toNode(AtlasEntity entity) {
             Node node = new Node();
             node.setName(entity.getAttribute(NiFiTypes.ATTR_NAME).toString());
-            node.setQualifiedName(entity.getAttribute(NiFiTypes.ATTR_QUALIFIED_NAME).toString());
+            node.setQualifiedName(entity.getAttribute(ATTR_QUALIFIED_NAME).toString());
             node.setType(entity.getTypeName());
             return node;
         }
 
         private Link toLink(AtlasEntity s, AtlasEntity t, Map<String, Integer> nodeIndices) {
-            final Integer sid = nodeIndices.get(toEntityKey(s));
-            final Integer tid = nodeIndices.get(toEntityKey(t));
+            final Integer sid = nodeIndices.get(toTypedQname(s));
+            final Integer tid = nodeIndices.get(toTypedQname(t));
 
             return new Link(sid, tid);
         }
@@ -307,6 +435,16 @@ public class AtlasAPIV2ServerEmulator {
             return s + "::" + t;
         }
 
+        @SuppressWarnings("unchecked")
+        private AtlasEntity getReferredEntity(Map<String, Object> references) {
+            final String guid = toStr(references.get(ATTR_GUID));
+            final String qname = ((Map<String, String>) references.get("uniqueAttributes")).get(ATTR_QUALIFIED_NAME);
+            return isGuidAssigned(guid)
+                    ? atlasEntitiesByGuid.get(guid)
+                    : atlasEntitiesByTypedQname.get(toTypedQualifiedName((String) references.get(ATTR_TYPENAME), qname));
+        }
+
+        @SuppressWarnings("unchecked")
         private void traverse(Set<AtlasEntity> seen, AtlasEntity s, List<Link> links, Map<String, Integer> nodeIndices, Map<String, List<AtlasEntity>> outgoingEntities) {
 
             // To avoid cyclic links.
@@ -316,11 +454,10 @@ public class AtlasAPIV2ServerEmulator {
             seen.add(s);
 
             // Traverse entities those are updated by this entity.
-            final Object outputs = s.getAttribute(NiFiTypes.ATTR_OUTPUTS);
+            final Object outputs = s.getAttribute(ATTR_OUTPUTS);
             if (outputs != null) {
                 for (Map<String, Object> output : ((List<Map<String, Object>>) outputs)) {
-                    final String qname = ((Map<String, String>) output.get("uniqueAttributes")).get("qualifiedName");
-                    final AtlasEntity t = atlasEntities.get(toEntityKey((String) output.get("typeName"), qname));
+                    final AtlasEntity t = getReferredEntity(output);
 
                     if (t != null) {
                         links.add(toLink(s, t, nodeIndices));
@@ -333,8 +470,7 @@ public class AtlasAPIV2ServerEmulator {
             final Object inputs = s.getAttribute(NiFiTypes.ATTR_INPUTS);
             if (inputs != null) {
                 for (Map<String, Object> input : ((List<Map<String, Object>>) inputs)) {
-                    final String qname = ((Map<String, String>) input.get("uniqueAttributes")).get("qualifiedName");
-                    final AtlasEntity t = atlasEntities.get(toEntityKey((String) input.get("typeName"), qname));
+                    final AtlasEntity t = getReferredEntity(input);
 
                     if (t != null) {
                         links.add(toLink(t, s, nodeIndices));
@@ -344,7 +480,7 @@ public class AtlasAPIV2ServerEmulator {
 
 
             // Traverse entities those consume this entity as their input.
-            final List<AtlasEntity> outGoings = outgoingEntities.get(toEntityKey(s));
+            final List<AtlasEntity> outGoings = outgoingEntities.get(toTypedQname(s));
             if (outGoings != null) {
                 outGoings.forEach(o -> {
                     links.add(toLink(s, o, nodeIndices));
@@ -366,7 +502,7 @@ public class AtlasAPIV2ServerEmulator {
             result.setNodes(nodes);
 
             // Add all nodes.
-            atlasEntities.entrySet().forEach(entry -> {
+            atlasEntitiesByTypedQname.entrySet().forEach(entry -> {
                 nodeIndices.put(entry.getKey(), nodes.size());
                 final AtlasEntity entity = entry.getValue();
                 nodes.add(toNode(entity));
@@ -376,8 +512,8 @@ public class AtlasAPIV2ServerEmulator {
                 if (inputs != null) {
                     for (Map<String, Object> input : ((List<Map<String, Object>>) inputs)) {
                         final String qname = ((Map<String, String>) input.get("uniqueAttributes")).get("qualifiedName");
-                        final String inputKey = toEntityKey((String) input.get("typeName"), qname);
-                        final AtlasEntity t = atlasEntities.get(inputKey);
+                        final String inputKey = toTypedQualifiedName((String) input.get("typeName"), qname);
+                        final AtlasEntity t = atlasEntitiesByTypedQname.get(inputKey);
                         if (t != null) {
                             outgoingEntities.computeIfAbsent(inputKey, k -> new ArrayList<>()).add(entity);
                         }
@@ -388,14 +524,12 @@ public class AtlasAPIV2ServerEmulator {
             });
 
             // Correct all flow_path
-            final Map<String, List<AtlasEntity>> entities = atlasEntities.values().stream()
+            final Map<String, List<AtlasEntity>> entities = atlasEntitiesByTypedQname.values().stream()
                     .collect(Collectors.groupingBy(AtlasEntity::getTypeName));
             final HashSet<AtlasEntity> seen = new HashSet<>();
 
             // Add nifi_flow
             if (entities.containsKey(NiFiTypes.TYPE_NIFI_FLOW)) {
-                final Map<String, AtlasEntity> nifiFlows = entities.get(NiFiTypes.TYPE_NIFI_FLOW)
-                        .stream().collect(Collectors.toMap(n -> (String) n.getAttribute("qualifiedName"), n -> n));
 
                 if (entities.containsKey(NiFiTypes.TYPE_NIFI_FLOW_PATH)) {
 
@@ -421,10 +555,8 @@ public class AtlasAPIV2ServerEmulator {
                         // Link it to parent NiFi Flow.
                         final Object nifiFlowRef = s.getAttribute("nifiFlow");
                         if (nifiFlowRef != null) {
-                            Map<String, Object> uniqueAttrs = (Map<String, Object>)((Map<String, Object>) nifiFlowRef).get("uniqueAttributes");
-                            String qname = (String) uniqueAttrs.get("qualifiedName");
 
-                            final AtlasEntity nifiFlow = nifiFlows.get(qname);
+                            final AtlasEntity nifiFlow = getReferredEntity((Map<String, Object>) nifiFlowRef);
                             if (nifiFlow != null) {
                                 links.add(toLink(nifiFlow, s, nodeIndices));
                             }
@@ -462,7 +594,7 @@ public class AtlasAPIV2ServerEmulator {
                 } else {
                     // Group links by its target, and configure each weight value.
                     // E.g. 1 -> 3 and 2 -> 3, then 1 (0.5) -> 3 and 2 (0.5) -> 3.
-                    ls.stream().collect(Collectors.groupingBy(l -> l.getTarget()))
+                    ls.stream().collect(Collectors.groupingBy(Link::getTarget))
                         .forEach((t, ls2SameTgt) -> ls2SameTgt.forEach(l -> l.setValue(1.0 / (double) ls2SameTgt.size())));
                 }
             });

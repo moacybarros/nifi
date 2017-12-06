@@ -16,8 +16,6 @@
  */
 package org.apache.nifi.atlas.provenance.analyzer.unknown;
 
-import org.apache.atlas.typesystem.Referenceable;
-import org.apache.nifi.atlas.provenance.AbstractNiFiProvenanceEventAnalyzer;
 import org.apache.nifi.atlas.provenance.AnalysisContext;
 import org.apache.nifi.atlas.provenance.DataSetRefs;
 import org.apache.nifi.controller.status.ConnectionStatus;
@@ -25,10 +23,6 @@ import org.apache.nifi.provenance.ProvenanceEventRecord;
 import org.apache.nifi.provenance.ProvenanceEventType;
 
 import java.util.List;
-
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_DESCRIPTION;
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 
 /**
  * Analyze a CREATE event and create 'nifi_data' when there is no specific Analyzer implementation found.

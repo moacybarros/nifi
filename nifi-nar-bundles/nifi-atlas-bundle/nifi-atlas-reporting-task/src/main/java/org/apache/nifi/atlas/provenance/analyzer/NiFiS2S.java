@@ -21,7 +21,6 @@ import org.apache.nifi.atlas.resolver.ClusterResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.net.URI;
 import java.net.URL;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;

@@ -16,6 +16,7 @@
  */
 package org.apache.nifi.atlas.emulator;
 
+import org.apache.nifi.atlas.AtlasUtils;
 import org.junit.Assert;
 
 import java.util.Arrays;
@@ -52,7 +53,7 @@ public class Lineage {
     private String toFullQname(String type, String _qname) {
         return type.startsWith("nifi_") && _qname.matches("[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}")
                     && !_qname.endsWith("-0000-000000000000")
-                    ? _qname + "-0000-000000000000" : _qname;
+                    ? _qname + "-0000-000000000000@example" : _qname;
     }
 
     public Node findNode(String type, String _qname) {

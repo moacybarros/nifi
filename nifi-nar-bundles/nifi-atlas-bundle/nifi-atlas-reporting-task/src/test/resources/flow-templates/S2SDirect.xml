@@ -34,7 +34,7 @@
           <backPressureObjectThreshold>10000</backPressureObjectThreshold>
           <destination>
             <groupId>5f6971b4-9209-3005-0000-000000000000</groupId>
-            <id>015f101e-dcd7-17bd-8899-1a723733521a</id>
+            <id>a4f14247-89aa-4e6c-0000-000000000000</id>
             <type>REMOTE_INPUT_PORT</type>
           </destination>
           <flowFileExpiration>0 sec</flowFileExpiration>
@@ -42,7 +42,7 @@
           <name></name>
           <source>
             <groupId>b7c5498a-de8b-38e5-0000-000000000000</groupId>
-            <id>015f1040-dcd7-17bd-5c1f-e31afe0a09a4</id>
+            <id>d73d9115-b987-4ffc-0000-000000000000</id>
             <type>REMOTE_OUTPUT_PORT</type>
           </source>
           <zIndex>0</zIndex>
@@ -60,7 +60,8 @@
               <concurrentlySchedulableTaskCount>1</concurrentlySchedulableTaskCount>
               <connected>false</connected>
               <exists>true</exists>
-              <id>015f101e-dcd7-17bd-8899-1a723733521a</id>
+              <id>6909277f-e8e6-497b-0000-000000000000</id>
+              <targetId>015f101e-dcd7-17bd-8899-1a723733521a</targetId>
               <name>input</name>
               <targetRunning>true</targetRunning>
               <transmitting>false</transmitting>
@@ -70,7 +71,8 @@
               <concurrentlySchedulableTaskCount>1</concurrentlySchedulableTaskCount>
               <connected>true</connected>
               <exists>true</exists>
-              <id>015f1040-dcd7-17bd-5c1f-e31afe0a09a4</id>
+              <id>d73d9115-b987-4ffc-0000-000000000000</id>
+              <targetId>015f1040-dcd7-17bd-5c1f-e31afe0a09a4</targetId>
               <name>output</name>
               <targetRunning>true</targetRunning>
               <transmitting>true</transmitting>
@@ -97,7 +99,8 @@
               <concurrentlySchedulableTaskCount>1</concurrentlySchedulableTaskCount>
               <connected>true</connected>
               <exists>true</exists>
-              <id>015f101e-dcd7-17bd-8899-1a723733521a</id>
+              <id>a4f14247-89aa-4e6c-0000-000000000000</id>
+              <targetId>015f101e-dcd7-17bd-8899-1a723733521a</targetId>
               <name>input</name>
               <targetRunning>true</targetRunning>
               <transmitting>true</transmitting>
@@ -107,7 +110,8 @@
               <concurrentlySchedulableTaskCount>1</concurrentlySchedulableTaskCount>
               <connected>false</connected>
               <exists>true</exists>
-              <id>015f1040-dcd7-17bd-5c1f-e31afe0a09a4</id>
+              <id>1ed6d4f5-b91e-4d46-0000-000000000000</id>
+              <targetId>015f1040-dcd7-17bd-5c1f-e31afe0a09a4</targetId>
               <name>output</name>
               <targetRunning>true</targetRunning>
               <transmitting>false</transmitting>
