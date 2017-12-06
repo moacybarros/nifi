@@ -27,20 +27,34 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
+import static org.apache.nifi.atlas.AtlasUtils.findIdByQualifiedName;
+import static org.apache.nifi.atlas.AtlasUtils.isGuidAssigned;
+import static org.apache.nifi.atlas.AtlasUtils.isUpdated;
+import static org.apache.nifi.atlas.AtlasUtils.updateMetadata;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_CLUSTER_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_DESCRIPTION;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_INPUTS;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NIFI_FLOW;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_OUTPUTS;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_URL;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW;
+import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_FLOW_PATH;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_INPUT_PORT;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_OUTPUT_PORT;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_QUEUE;
@@ -57,6 +71,16 @@ public class NiFiFlow {
     private AtlasEntity exEntity;
     private AtlasObjectId atlasObjectId;
     private String description;
+
+    /**
+     * Track whether this instance has metadata updated and should be updated in Atlas.
+     */
+    private AtomicBoolean metadataUpdated = new AtomicBoolean(false);
+    private List<String> updateAudit = new ArrayList<>();
+    private Set<String> updatedEntityGuids = new LinkedHashSet<>();
+    private Set<String> stillExistingEntityGuids = new LinkedHashSet<>();
+    private Set<String> traversedPathIds = new LinkedHashSet<>();
+    private boolean urlUpdated = false;
 
     private final Map<String, NiFiFlowPath> flowPaths = new HashMap<>();
     private final Map<String, ProcessorStatus> processors = new HashMap<>();
@@ -93,6 +117,7 @@ public class NiFiFlow {
     }
 
     public void setClusterName(String clusterName) {
+        updateMetadata(metadataUpdated, updateAudit, ATTR_CLUSTER_NAME, this.clusterName, clusterName);
         this.clusterName = clusterName;
         atlasObjectId = createAtlasObjectId();
     }
@@ -128,6 +153,7 @@ public class NiFiFlow {
     }
 
     public void setDescription(String description) {
+        updateMetadata(metadataUpdated, updateAudit, ATTR_DESCRIPTION, this.description, description);
         this.description = description;
     }
 
@@ -149,6 +175,7 @@ public class NiFiFlow {
     }
 
     public void setFlowName(String flowName) {
+        updateMetadata(metadataUpdated, updateAudit, ATTR_NAME, this.flowName, flowName);
         this.flowName = flowName;
     }
 
@@ -157,6 +184,10 @@ public class NiFiFlow {
     }
 
     public void setUrl(String url) {
+        updateMetadata(metadataUpdated, updateAudit, ATTR_URL, this.url, url);
+        if (isUpdated(this.url, url)) {
+            this.urlUpdated = true;
+        }
         this.url = url;
     }
 
@@ -210,10 +241,6 @@ public class NiFiFlow {
         return rootInputPortEntities;
     }
 
-    public Optional<AtlasObjectId> findIdByQualifiedName(Set<AtlasObjectId> ids, String qualifiedName) {
-        return ids.stream().filter(id -> qualifiedName.equals(id.getUniqueAttributes().get(ATTR_QUALIFIED_NAME))).findFirst();
-    }
-
     private AtlasEntity createOrUpdateRootGroupPortEntity(boolean isInput, String qualifiedName, String portName) {
         final Map<AtlasObjectId, AtlasEntity> ports = isInput ? rootInputPortEntities : rootOutputPortEntities;
         final Optional<AtlasObjectId> existingPortId = findIdByQualifiedName(ports.keySet(), qualifiedName);
@@ -221,8 +248,18 @@ public class NiFiFlow {
         final String typeName = isInput ? TYPE_NIFI_INPUT_PORT : TYPE_NIFI_OUTPUT_PORT;
 
         if (existingPortId.isPresent()) {
-            // TODO: Update port name and set updated flag.
-            return ports.get(existingPortId.get());
+            final AtlasEntity entity = ports.get(existingPortId.get());
+            final String portGuid = entity.getGuid();
+            stillExistingEntityGuids.add(portGuid);
+
+            final Object currentName = entity.getAttribute(ATTR_NAME);
+            if (isUpdated(currentName, portName)) {
+                // Update port name and set updated flag.
+                entity.setAttribute(ATTR_NAME, portName);
+                updatedEntityGuids.add(portGuid);
+                updateAudit.add(String.format("Name of %s %s changed from %s to %s", entity.getTypeName(), portGuid, currentName, portName));
+            }
+            return entity;
         } else {
             final AtlasEntity entity = new AtlasEntity(typeName);
 
@@ -245,7 +282,9 @@ public class NiFiFlow {
         final Optional<AtlasObjectId> existingQueueId = findIdByQualifiedName(queues.keySet(), qualifiedName);
 
         if (existingQueueId.isPresent()) {
-            return new Tuple<>(existingQueueId.get(), queues.get(existingQueueId.get()));
+            final AtlasEntity entity = queues.get(existingQueueId.get());
+            stillExistingEntityGuids.add(entity.getGuid());
+            return new Tuple<>(existingQueueId.get(), entity);
         } else {
             final AtlasObjectId queueId = new AtlasObjectId(TYPE_NIFI_QUEUE, ATTR_QUALIFIED_NAME, qualifiedName);
             final AtlasEntity queue = new AtlasEntity(TYPE_NIFI_QUEUE);
@@ -315,17 +354,187 @@ public class NiFiFlow {
                 : isRootOutputPort(componentId) ? getRootOutputPorts().get(componentId).getName() : unknown.get();
     }
 
+    /**
+     * Start tracking changes from current state.
+     */
+    public void startTrackingChanges() {
+        this.metadataUpdated.set(false);
+        this.updateAudit.clear();
+        this.updatedEntityGuids.clear();
+        this.stillExistingEntityGuids.clear();
+        this.urlUpdated = false;
+    }
+
+    public boolean isMetadataUpdated() {
+        return this.metadataUpdated.get();
+    }
+
     public String toQualifiedName(String componentId) {
-        return componentId + "@" + clusterName;
+        return AtlasUtils.toQualifiedName(componentId, clusterName);
     }
 
-    public void dump() {
-        logger.info("flowName: {}", flowName);
-        Function<String, String> toName = pid -> processors.get(pid).getName();
-        processors.forEach((pid, p) -> {
-            logger.info("{}:{} receives from {}", pid, toName.apply(pid), incomingRelationShips.get(pid));
-            logger.info("{}:{} sends to {}", pid, toName.apply(pid), outGoingRelationShips.get(pid));
+    public enum EntityChangeType {
+        AS_IS,
+        CREATED,
+        UPDATED,
+        DELETED;
+
+        public static boolean containsChange(Collection<EntityChangeType> types) {
+            return types.contains(CREATED) || types.contains(UPDATED) || types.contains(DELETED);
+        }
+    }
+
+    private EntityChangeType getEntityChangeType(String guid) {
+        if (!isGuidAssigned(guid)) {
+            return EntityChangeType.CREATED;
+        } else if (updatedEntityGuids.contains(guid)) {
+            return EntityChangeType.UPDATED;
+        } else if (!stillExistingEntityGuids.contains(guid)) {
+            return EntityChangeType.DELETED;
+        }
+        return EntityChangeType.AS_IS;
+    }
+
+    public Map<EntityChangeType, List<AtlasEntity>> getChangedDataSetEntities() {
+        final Map<EntityChangeType, List<AtlasEntity>> changedEntities = Stream
+                .of(rootInputPortEntities.values().stream(), rootOutputPortEntities.values().stream(), queues.values().stream())
+                .flatMap(Function.identity())
+                .collect(Collectors.groupingBy(entity -> getEntityChangeType(entity.getGuid())));
+        updateAudit.add("CREATED DataSet entities=" + changedEntities.get(EntityChangeType.CREATED));
+        updateAudit.add("UPDATED DataSet entities=" + changedEntities.get(EntityChangeType.UPDATED));
+        updateAudit.add("DELETED DataSet entities=" + changedEntities.get(EntityChangeType.DELETED));
+        return changedEntities;
+    }
+
+    public NiFiFlowPath getOrCreateFlowPath(String pathId) {
+        traversedPathIds.add(pathId);
+        return flowPaths.computeIfAbsent(pathId, k -> new NiFiFlowPath(pathId));
+    }
+
+    public boolean isTraversedPath(String pathId) {
+        return traversedPathIds.contains(pathId);
+    }
+
+    private EntityChangeType getFlowPathChangeType(NiFiFlowPath path) {
+        if (path.getExEntity() == null) {
+            return EntityChangeType.CREATED;
+        } else if (path.isMetadataUpdated() || urlUpdated) {
+            return EntityChangeType.UPDATED;
+        } else if (!traversedPathIds.contains(path.getId())) {
+            return EntityChangeType.DELETED;
+        }
+        return EntityChangeType.AS_IS;
+    }
+
+    private EntityChangeType getFlowPathIOChangeType(AtlasObjectId id) {
+        final String guid = id.getGuid();
+        if (!isGuidAssigned(guid)) {
+            return EntityChangeType.CREATED;
+        } else {
+            if (TYPE_NIFI_QUEUE.equals(id.getTypeName()) && queues.containsKey(id)) {
+                // If an input/output is a queue, and it is owned by this NiFiFlow, then check if it's still needed. NiFiFlow knows active queues.
+                if (stillExistingEntityGuids.contains(guid)) {
+                    return EntityChangeType.AS_IS;
+                } else {
+                    return EntityChangeType.DELETED;
+                }
+            } else {
+                // Otherwise, do not need to delete.
+                return EntityChangeType.AS_IS;
+            }
+        }
+    }
+
+    private Tuple<EntityChangeType, AtlasEntity> toAtlasEntity(EntityChangeType changeType, final NiFiFlowPath path) {
+
+        final AtlasEntity entity = EntityChangeType.CREATED.equals(changeType) ? new AtlasEntity() : new AtlasEntity(path.getExEntity());
+        entity.setTypeName(TYPE_NIFI_FLOW_PATH);
+        entity.setVersion(1L);
+        entity.setAttribute(ATTR_NIFI_FLOW, getAtlasObjectId());
+
+        final StringBuilder name = new StringBuilder();
+        final StringBuilder description = new StringBuilder();
+        path.getProcessComponentIds().forEach(pid -> {
+            final String componentName = getProcessComponentName(pid);
+
+            if (name.length() > 0) {
+                name.append(", ");
+                description.append(", ");
+            }
+            name.append(componentName);
+            description.append(String.format("%s::%s", componentName, pid));
         });
+
+        path.setName(name.toString());
+        entity.setAttribute(ATTR_NAME, name.toString());
+        entity.setAttribute(ATTR_DESCRIPTION, description.toString());
+
+        // Use first processor's id as qualifiedName.
+        entity.setAttribute(ATTR_QUALIFIED_NAME, toQualifiedName(path.getId()));
+
+        entity.setAttribute(ATTR_URL, path.createDeepLinkURL(getUrl()));
+
+        final boolean inputsChanged = setChangedIOIds(path, entity, true);
+        final boolean outputsChanged = setChangedIOIds(path, entity, false);
+
+        // Even iff there's no flow path metadata changed, if any IO is changed then the pass should be updated.
+        EntityChangeType finalChangeType = EntityChangeType.AS_IS.equals(changeType)
+                ? (path.isMetadataUpdated() || inputsChanged || outputsChanged ? EntityChangeType.UPDATED : EntityChangeType.AS_IS)
+                : changeType;
+
+        return new Tuple<>(finalChangeType, entity);
     }
 
+    /**
+     * Set input or output DataSet ids for a NiFiFlowPath.
+     * The updated ids only containing active ids.
+     * @return True if there is any changed IO reference (create, update, delete).
+     */
+    private boolean setChangedIOIds(NiFiFlowPath path, AtlasEntity pathEntity, boolean isInput) {
+        Set<AtlasObjectId> ids = isInput ? path.getInputs() : path.getOutputs();
+        String targetAttribute = isInput ? ATTR_INPUTS : ATTR_OUTPUTS;
+        final Map<EntityChangeType, List<AtlasObjectId>> changedIOIds
+                = ids.stream().collect(Collectors.groupingBy(this::getFlowPathIOChangeType));
+        // Remove DELETED references.
+        final Set<AtlasObjectId> remainingFlowPathIOIds = toRemainingFlowPathIOIds(changedIOIds);
+
+        // If references are changed, update it.
+        if (path.isDataSetReferenceChanged(remainingFlowPathIOIds, isInput)) {
+            pathEntity.setAttribute(targetAttribute, remainingFlowPathIOIds);
+            return true;
+        }
+        return false;
+    }
+
+    private Set<AtlasObjectId> toRemainingFlowPathIOIds(Map<EntityChangeType, List<AtlasObjectId>> ids) {
+        return ids.entrySet().stream()
+                .filter(entry -> !EntityChangeType.DELETED.equals(entry.getKey()))
+                .flatMap(entry -> entry.getValue().stream())
+                .collect(Collectors.toSet());
+    }
+
+    public Map<EntityChangeType, List<AtlasEntity>> getChangedFlowPathEntities() {
+        // Convert NiFiFlowPath to AtlasEntity.
+        final HashMap<EntityChangeType, List<AtlasEntity>> changedPaths = flowPaths.values().stream()
+                .map(path -> {
+                    final EntityChangeType changeType = getFlowPathChangeType(path);
+                    switch (changeType) {
+                        case CREATED:
+                        case UPDATED:
+                        case AS_IS:
+                            return toAtlasEntity(changeType, path);
+                        default:
+                            return new Tuple<>(changeType, path.getExEntity());
+                    }
+                }).collect(Collectors.groupingBy(Tuple::getKey, HashMap::new, Collectors.mapping(Tuple::getValue, Collectors.toList())));
+
+        updateAudit.add("CREATED NiFiFlowPath=" + changedPaths.get(EntityChangeType.CREATED));
+        updateAudit.add("UPDATED NiFiFlowPath=" + changedPaths.get(EntityChangeType.UPDATED));
+        updateAudit.add("DELETED NiFiFlowPath=" + changedPaths.get(EntityChangeType.DELETED));
+        return changedPaths;
+    }
+
+    public List<String> getUpdateAudit() {
+        return updateAudit;
+    }
 }

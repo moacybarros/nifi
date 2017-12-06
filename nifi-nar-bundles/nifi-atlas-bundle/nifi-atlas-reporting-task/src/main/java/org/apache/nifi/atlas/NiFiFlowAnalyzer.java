@@ -106,7 +106,7 @@ public class NiFiFlowAnalyzer {
         return nextProcessComponent;
     }
 
-    private void traverse(NiFiFlow nifiFlow, Map<String, NiFiFlowPath> paths, NiFiFlowPath path, String componentId) {
+    private void traverse(NiFiFlow nifiFlow, NiFiFlowPath path, String componentId) {
 
         // If the pid is RootInputPort of the same NiFi instance, then stop traversing to create separate self S2S path.
         // E.g InputPort -> MergeContent, GenerateFlowFile -> InputPort.
@@ -132,27 +132,37 @@ public class NiFiFlowAnalyzer {
                 return;
             }
 
-            // If destination has more than one inputs, or there are multiple destinations, it is an independent flow path.
-            final boolean createJointPoint = nextProcessComponents.size() > 1 || getIncomingProcessorsIds(nifiFlow, nifiFlow.getIncomingRelationShips(destPid)).size() > 1;
+            // If the destination has more than one inputs, or there are multiple destinations,
+            // then it should be treated as a separate flow path.
+            final boolean createJointPoint = nextProcessComponents.size() > 1
+                    || getIncomingProcessorsIds(nifiFlow, nifiFlow.getIncomingRelationShips(destPid)).size() > 1;
 
             if (createJointPoint) {
-                // Get existing or create new one.
-                final NiFiFlowPath jointPoint = paths.computeIfAbsent(destPid, k -> new NiFiFlowPath(destPid));
+
+                final boolean alreadyTraversed = nifiFlow.isTraversedPath(destPid);
 
                 // Create an input queue DataSet because Atlas doesn't show lineage if it doesn't have in and out.
                 // This DataSet is also useful to link flowPaths together on Atlas lineage graph.
                 final Tuple<AtlasObjectId, AtlasEntity> queueTuple = nifiFlow.getOrCreateQueue(destPid);
 
                 final AtlasObjectId queueId = queueTuple.getKey();
-                jointPoint.getInputs().add(queueId);
                 path.getOutputs().add(queueId);
 
+                // If the destination is already traversed once, it doesn't have to be visited again.
+                if (alreadyTraversed) {
+                    return;
+                }
+
+                // Get existing or create new one.
+                final NiFiFlowPath jointPoint = nifiFlow.getOrCreateFlowPath(destPid);
+                jointPoint.getInputs().add(queueId);
+
                 // Start traversing as a new joint point.
-                traverse(nifiFlow, paths, jointPoint, destPid);
+                traverse(nifiFlow, jointPoint, destPid);
 
             } else {
                 // Normal relation, continue digging.
-                traverse(nifiFlow, paths, path, destPid);
+                traverse(nifiFlow, path, destPid);
             }
 
         });
@@ -177,8 +187,6 @@ public class NiFiFlowAnalyzer {
     }
 
     public void analyzePaths(NiFiFlow nifiFlow) {
-        final Map<String, NiFiFlowPath> paths = nifiFlow.getFlowPaths();
-
         final String rootProcessGroupId = nifiFlow.getRootProcessGroupId();
 
         // Now let's break it into flow paths.
@@ -198,11 +206,11 @@ public class NiFiFlowAnalyzer {
             // the same path will end up being the same Atlas entity.
             // However, if the first processor is replaced by another,
             // the flow path will have a different id, and the old path is logically deleted.
-            final NiFiFlowPath path = nifiFlow.getFlowPaths().computeIfAbsent(startPid, k -> new NiFiFlowPath(startPid));
-            traverse(nifiFlow, paths, path, startPid);
+            final NiFiFlowPath path = nifiFlow.getOrCreateFlowPath(startPid);
+            traverse(nifiFlow, path, startPid);
         });
 
-        paths.values().forEach(path -> {
+        nifiFlow.getFlowPaths().values().forEach(path -> {
             if (processors.containsKey(path.getId())) {
                 final ProcessorStatus processor = processors.get(path.getId());
                 path.setGroupId(processor.getGroupId());

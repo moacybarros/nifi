@@ -23,6 +23,11 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
+
+import static org.apache.nifi.atlas.AtlasUtils.updateMetadata;
+import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
 
 public class NiFiFlowPath implements AtlasProcess {
     private final List<String> processComponentIds = new ArrayList<>();
@@ -36,6 +41,12 @@ public class NiFiFlowPath implements AtlasProcess {
     private String groupId;
 
     private AtlasEntity exEntity;
+
+    private AtomicBoolean metadataUpdated = new AtomicBoolean(false);
+    private List<String> updateAudit = new ArrayList<>();
+    private Set<String> existingInputGuids;
+    private Set<String> existingOutputGuids;
+
 
     public NiFiFlowPath(String id) {
         this.id = id;
@@ -66,6 +77,7 @@ public class NiFiFlowPath implements AtlasProcess {
     }
 
     public void setName(String name) {
+        updateMetadata(metadataUpdated, updateAudit, ATTR_NAME, this.name, name);
         this.name = name;
     }
 
@@ -74,6 +86,7 @@ public class NiFiFlowPath implements AtlasProcess {
     }
 
     public void setGroupId(String groupId) {
+        updateMetadata(metadataUpdated, updateAudit, "groupId", this.groupId, groupId);
         this.groupId = groupId;
     }
 
@@ -105,6 +118,36 @@ public class NiFiFlowPath implements AtlasProcess {
                 ? String.format("%s?processGroupId=%s", nifiUrl, groupId)
                 // This path represents a partial flow within a process group consists of processors.
                 : String.format("%s?processGroupId=%s&componentIds=%s", nifiUrl, groupId, componentId);
+    }
+
+    /**
+     * Start tracking changes from current state.
+     */
+    public void startTrackingChanges(NiFiFlow nifiFlow) {
+        this.metadataUpdated.set(false);
+        this.updateAudit.clear();
+        existingInputGuids = inputs.stream().map(AtlasObjectId::getGuid).collect(Collectors.toSet());
+        existingOutputGuids = outputs.stream().map(AtlasObjectId::getGuid).collect(Collectors.toSet());
+
+        // Remove all nifi_queues those are owned by the nifiFlow to delete ones no longer exist.
+        // Because it should be added again if not deleted when flow analysis finished.
+        final Set<AtlasObjectId> ownedQueues = nifiFlow.getQueues().keySet();
+        inputs.removeAll(ownedQueues);
+        outputs.removeAll(ownedQueues);
+    }
+
+    public boolean isMetadataUpdated() {
+        return this.metadataUpdated.get();
+    }
+
+    public List<String> getUpdateAudit() {
+        return updateAudit;
+    }
+
+    boolean isDataSetReferenceChanged(Set<AtlasObjectId> ids, boolean isInput) {
+        final Set<String> guids = ids.stream().map(AtlasObjectId::getGuid).collect(Collectors.toSet());
+        final Set<String> existingGuids = isInput ? existingInputGuids : existingOutputGuids;
+        return existingGuids == null || !existingGuids.equals(guids);
     }
 
     @Override
