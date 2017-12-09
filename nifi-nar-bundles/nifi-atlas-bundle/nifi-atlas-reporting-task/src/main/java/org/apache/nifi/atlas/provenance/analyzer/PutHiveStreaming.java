@@ -30,8 +30,8 @@ import static org.apache.nifi.atlas.provenance.analyzer.DatabaseAnalyzerUtil.par
 
 /**
  * Analyze provenance events for PutHiveStreamingProcessor.
- * <li>qualifiedName=dbName@clusterName (example: default@cl1)
- * <li>dbName (example: default)
+ * <li>qualifiedName=tableName@clusterName (example: myTable@cl1)
+ * <li>name=tableName (example: myTable)
  */
 public class PutHiveStreaming extends AbstractHiveAnalyzer {
 

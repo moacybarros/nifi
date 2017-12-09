@@ -35,7 +35,7 @@ import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_OUTPUT_PORT;
 
 /**
  * Analyze a transit URI as a NiFi Site-to-Site remote input/output port.
- * <li>qualifiedName=remotePortGUID (example: 35dbc0ab-015e-1000-144c-a8d71255027d)
+ * <li>qualifiedName=remotePortGUID@clusterName (example: 35dbc0ab-015e-1000-144c-a8d71255027d@cl1)
  * <li>name=portName (example: input)
  */
 public class NiFiRemotePort extends NiFiS2S {

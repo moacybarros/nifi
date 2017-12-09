@@ -42,7 +42,7 @@ public class HBaseTable extends AbstractNiFiProvenanceEventAnalyzer {
     private static final Logger logger = LoggerFactory.getLogger(HBaseTable.class);
     private static final String TYPE = "hbase_table";
 
-    // hbase://zk0.example.com,zk1.example.com,zk3.example.com/hbaseTableName/hbaseRowId(optional)
+    // hbase://masterAddress/hbaseTableName/hbaseRowId(optional)
     private static final Pattern URI_PATTERN = Pattern.compile("^hbase://([^/]+)/([^/]+)/?.*$");
 
     @Override
