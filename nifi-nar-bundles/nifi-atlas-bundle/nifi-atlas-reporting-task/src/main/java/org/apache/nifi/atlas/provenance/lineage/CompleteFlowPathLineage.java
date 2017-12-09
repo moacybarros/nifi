@@ -39,6 +39,9 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.CRC32;
 
+import static org.apache.nifi.atlas.AtlasUtils.toQualifiedName;
+import static org.apache.nifi.atlas.AtlasUtils.toStr;
+import static org.apache.nifi.atlas.AtlasUtils.toTypedQualifiedName;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.apache.nifi.atlas.NiFiTypes.TYPE_NIFI_QUEUE;
@@ -82,12 +85,11 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
 
     private List<LineageNode> findParentEvents(Map<String, List<LineageNode>> lineageTree, ProvenanceEventRecord event) {
         List<LineageNode> parentNodes = lineageTree.get(String.valueOf(event.getEventId()));
-        List<LineageNode> parentEvents = parentNodes == null || parentNodes.isEmpty() ? null : parentNodes.stream()
+        return parentNodes == null || parentNodes.isEmpty() ? null : parentNodes.stream()
                 // In case it's not a provenance event (i.e. FLOWFILE_NODE), get one level higher parents.
                 .flatMap(n -> !LineageNodeType.PROVENANCE_EVENT_NODE.equals(n.getNodeType())
                         ? lineageTree.get(n.getIdentifier()).stream() : Stream.of(n))
                 .collect(Collectors.toList());
-        return parentEvents;
     }
 
     private void extractLineagePaths(AnalysisContext context, Map<String, List<LineageNode>> lineageTree,
@@ -132,8 +134,8 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
         } else {
             // Simply traverse upwards.
             if (parentEvents.size() > 1) {
-                throw new IllegalStateException(String.format("Having more than 1 parents for event type {}" +
-                                " is not expected. Should ask NiFi developer for investigation. {}",
+                throw new IllegalStateException(String.format("Having more than 1 parents for event type %s" +
+                                " is not expected. Should ask NiFi developer for investigation. %s",
                         lastEvent.getEventType(), lastEvent));
             }
             final ProvenanceEventRecord parentEvent = context.getProvenanceEvent(Long.parseLong(parentEvents.get(0).getIdentifier()));
@@ -152,8 +154,8 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
             if (refs == null || refs.isEmpty()) {
                 return;
             }
-            refs.getInputs().forEach(i -> parentRefs.addInput(i));
-            refs.getOutputs().forEach(o -> parentRefs.addOutput(o));
+            refs.getInputs().forEach(parentRefs::addInput);
+            refs.getOutputs().forEach(parentRefs::addOutput);
         });
 
         lineagePath.setRefs(parentRefs);
@@ -186,7 +188,7 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
         final List<ProvenanceEventRecord> events = lineagePath.getEvents();
         Collections.reverse(events);
 
-        final List<String> componentIds = events.stream().map(event -> event.getComponentId()).collect(Collectors.toList());
+        final List<String> componentIds = events.stream().map(ProvenanceEventRecord::getComponentId).collect(Collectors.toList());
         final String firstComponentId = events.get(0).getComponentId();
         final DataSetRefs dataSetRefs = lineagePath.getRefs();
 
@@ -209,7 +211,7 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
         // Create a variant path.
         // Calculate a hash from component_ids and input and output resource ids.
         final Stream<String> ioIds = Stream.concat(dataSetRefs.getInputs().stream(), dataSetRefs.getOutputs()
-                .stream()).map(ref -> ref.getTypeName() + "::" + ref.get(ATTR_QUALIFIED_NAME));
+                .stream()).map(ref -> toTypedQualifiedName(ref.getTypeName(), toStr(ref.get(ATTR_QUALIFIED_NAME))));
 
         final Stream<String> parentHashes = lineagePath.getParents().stream().map(p -> String.valueOf(p.getLineagePathHash()));
         final CRC32 crc32 = new CRC32();
@@ -224,7 +226,7 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
         // In order to differentiate a queue between parents and this flow_path, add the hash into the queue qname.
         // E.g, FF1 and FF2 read from dirA were merged, vs FF3 and FF4 read from dirB were merged then passed here, these two should be different queue.
         if (queueBetweenParent != null) {
-            queueBetweenParent.set(ATTR_QUALIFIED_NAME, firstComponentId + "::" + hash);
+            queueBetweenParent.set(ATTR_QUALIFIED_NAME, toQualifiedName(nifiFlow.getClusterName(), firstComponentId + "::" + hash));
         }
 
         // If the same components emitted multiple provenance events consecutively, merge it to come up with a simpler name.
@@ -240,7 +242,7 @@ public class CompleteFlowPathLineage extends AbstractLineageStrategy {
         final String pathName = uniqueEventsForName.stream()
                 // Processor name can be configured by user and more meaningful if available.
                 // If the component is already removed, it may not be available here.
-                .map(event -> nifiFlow.getProcessComponentName(event.getComponentId(), () -> event.getComponentType()))
+                .map(event -> nifiFlow.getProcessComponentName(event.getComponentId(), event::getComponentType))
                 .collect(Collectors.joining(", "));
 
         flowPath.setName(pathName);

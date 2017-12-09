@@ -16,7 +16,6 @@
  */
 package org.apache.nifi.atlas.emulator;
 
-import org.apache.nifi.atlas.AtlasUtils;
 import org.junit.Assert;
 
 import java.util.Arrays;

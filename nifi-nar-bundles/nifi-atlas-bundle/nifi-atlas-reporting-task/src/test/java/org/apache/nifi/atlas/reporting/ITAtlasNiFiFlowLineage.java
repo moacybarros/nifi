@@ -940,7 +940,7 @@ public class ITAtlasNiFiFlowLineage {
     }
 
     @Test
-    public void testSimpleEventLevelByPath() throws Exception {
+    public void testSimpleEventLevelSimplePath() throws Exception {
         final TestConfiguration tc = new TestConfiguration("SimpleEventLevel");
         final ProvenanceRecords prs = tc.provenanceRecords;
         prs.add(pr("d9257f7e-b78c-349a", "Generate A", CREATE));
@@ -949,57 +949,36 @@ public class ITAtlasNiFiFlowLineage {
         prs.add((pr("eaf013c1-aec5-39b0", "PutFile", SEND, "file:/tmp/nifi/a.txt")));
         prs.add((pr("eaf013c1-aec5-39b0", "PutFile", SEND, "file:/tmp/nifi/b.txt")));
 
-        Map<Long, ComputeLineageResult> lineages = tc.lineageResults;
-//        // Generate C created a FlowFile, then it's sent via S2S
-//        lineages.put(3L, createLineage(prs, 1, 3));
-//        // GetTwitter created a FlowFile, then it's sent via S2S
-//        lineages.put(4L, createLineage(prs, 2, 4));
-
         test(tc);
 
         waitNotificationsGetDelivered();
 
         final Lineage lineage = getLineage();
+        final Node genA = lineage.findNode("nifi_data", "Generate A", "d9257f7e-b78c-349a");
+        final Node genB = lineage.findNode("nifi_data", "Generate B", "d84b9bdc-5e42-3b3b");
 
-//        final Node flow = lineage.findNode("nifi_flow", "S2SSend", "S2SSend");
-//        final Node pathA = lineage.findNode("nifi_flow_path", "Generate A", "ca71e4d9-2a4f-3970");
-//        final Node pathB = lineage.findNode("nifi_flow_path", "Generate B", "333255b6-eb02-3056");
-//        final Node pathC = lineage.findNode("nifi_flow_path", "Generate C", "c439cdca-e989-3491");
-//        final Node pathT = lineage.findNode("nifi_flow_path", "GetTwitter", "b775b657-5a5b-3708");
-//        final Node pathI = lineage.findNode("nifi_flow_path", "InactiveProcessor", "7033f311-ac68-3cab");
-//        // UpdateAttribute has multiple incoming paths, so it generates a queue to receive those.
-//        final Node queueU = lineage.findNode("nifi_queue", "queue", "c5392447-e9f1-33ad");
-//        final Node pathU = lineage.findNode("nifi_flow_path", "UpdateAttribute", "c5392447-e9f1-33ad");
-//
-//        // These are starting paths.
-//        lineage.assertLink(flow, pathA);
-//        lineage.assertLink(flow, pathB);
-//        lineage.assertLink(flow, pathC);
-//        lineage.assertLink(flow, pathT);
-//        lineage.assertLink(flow, pathI);
+        final Node genAPath = lineage.findNode("nifi_flow_path", "Generate A", "d9257f7e-b78c-349a");
+        final Node genBPath = lineage.findNode("nifi_flow_path", "Generate B", "d84b9bdc-5e42-3b3b");
 
-        // Multiple paths connected to the same path.
-//        lineage.assertLink(pathB, queueU);
-//        lineage.assertLink(pathC, queueU);
-//        lineage.assertLink(queueU, pathU);
+        final Node queue = lineage.findNode("nifi_queue", "queue", "eaf013c1-aec5-39b0");
+        final Node putFile = lineage.findNode("nifi_flow_path", "PutFile, LogAttribute", "eaf013c1-aec5-39b0");
 
-//        // Generate C and GetTwitter have reported proper SEND lineage to the input port.
-//        final Node remoteInputPort = lineage.findNode("nifi_input_port", "input", "77919f59-533e-35a3");
-//        lineage.assertLink(pathC, remoteInputPort);
-//        lineage.assertLink(pathT, remoteInputPort);
-//
-//        // nifi_data is created for each obscure input processor.
-//        final Node genA = lineage.findNode("nifi_data", "Generate A", "ca71e4d9-2a4f-3970");
-//        final Node genC = lineage.findNode("nifi_data", "Generate C", "c439cdca-e989-3491");
-//        final Node genT = lineage.findNode("nifi_data", "GetTwitter", "b775b657-5a5b-3708");
-//        lineage.assertLink(genA, pathA);
-//        lineage.assertLink(genC, pathC);
-//        lineage.assertLink(genT, pathT);
+        final Node outA = lineage.findNode("fs_path", "/tmp/nifi/a.txt@example");
+        final Node outB = lineage.findNode("fs_path", "/tmp/nifi/b.txt@example");
 
+        lineage.assertLink(genA, genAPath);
+        lineage.assertLink(genAPath, queue);
+
+        lineage.assertLink(genB, genBPath);
+        lineage.assertLink(genBPath, queue);
+
+        lineage.assertLink(queue, putFile);
+        lineage.assertLink(putFile, outA);
+        lineage.assertLink(putFile, outB);
     }
 
     @Test
-    public void testSimpleEventLevel() throws Exception {
+    public void testSimpleEventLevelCompletePath() throws Exception {
         final TestConfiguration tc = new TestConfiguration("SimpleEventLevel");
         tc.properties.put(NIFI_LINEAGE_STRATEGY, LINEAGE_STRATEGY_COMPLETE_PATH.getValue());
         final ProvenanceRecords prs = tc.provenanceRecords;
@@ -1025,7 +1004,22 @@ public class ITAtlasNiFiFlowLineage {
 
         final Lineage lineage = getLineage();
 
-        // TODO: assert
+        final Node genA = lineage.findNode("nifi_data", "Generate A", "d9257f7e-b78c-349a");
+        final Node genB = lineage.findNode("nifi_data", "Generate B", "d84b9bdc-5e42-3b3b");
+
+        final Node genAPath = lineage.findNode("nifi_flow_path", "Generate A, PutFile, LogAttribute",
+                "d9257f7e-b78c-349a-0000-000000000000::980416504@example");
+        final Node genBPath = lineage.findNode("nifi_flow_path", "Generate B, PutFile, LogAttribute",
+                "d84b9bdc-5e42-3b3b-0000-000000000000::442259660@example");
+
+        final Node outA = lineage.findNode("fs_path", "/tmp/nifi/a.txt@example");
+        final Node outB = lineage.findNode("fs_path", "/tmp/nifi/b.txt@example");
+
+        lineage.assertLink(genA, genAPath);
+        lineage.assertLink(genB, genBPath);
+
+        lineage.assertLink(genAPath, outA);
+        lineage.assertLink(genBPath, outB);
     }
 
     @Test
@@ -1075,7 +1069,40 @@ public class ITAtlasNiFiFlowLineage {
 
         final Lineage lineage = getLineage();
 
-        // TODO: assert
+        final Node genA = lineage.findNode("nifi_data", "Generate A", "f585d83b-2a03-37cf");
+        final Node genB = lineage.findNode("nifi_data", "Generate B", "59a7c1f9-9a73-3cc6");
+        final Node genC = lineage.findNode("nifi_data", "Generate C", "d6c3f282-e03d-316c");
+        final Node genD = lineage.findNode("nifi_data", "Generate D", "f9593a5a-f0d5-3e87");
+
+        final Node genAPath = lineage.findNode("nifi_flow_path", "Generate A, PutFile, LogAttribute",
+                "f585d83b-2a03-37cf-0000-000000000000::1003499964@example");
+        final Node genBPath = lineage.findNode("nifi_flow_path", "Generate B",
+                "59a7c1f9-9a73-3cc6-0000-000000000000::45412830@example");
+        final Node genCPath = lineage.findNode("nifi_flow_path", "Generate C",
+                "d6c3f282-e03d-316c-0000-000000000000::1968410985@example");
+        final Node genDPath = lineage.findNode("nifi_flow_path", "Generate D, PutFile, LogAttribute",
+                "f9593a5a-f0d5-3e87-0000-000000000000::4257576567@example");
+
+        lineage.assertLink(genA, genAPath);
+        lineage.assertLink(genB, genBPath);
+        lineage.assertLink(genC, genCPath);
+        lineage.assertLink(genD, genDPath);
+
+        // B and C were merged together, while A and D were processed individually.
+        final Node joinBC = lineage.findNode("nifi_queue", "JOIN", "c77dd033-bb9e-39ea-0000-000000000000::2370367315@example");
+        final Node bcPath = lineage.findNode("nifi_flow_path", "MergeContent, PutFile, LogAttribute",
+                "c77dd033-bb9e-39ea-0000-000000000000::2370367315@example");
+        lineage.assertLink(genBPath, joinBC);
+        lineage.assertLink(genCPath, joinBC);
+        lineage.assertLink(joinBC, bcPath);
+
+        final Node outA = lineage.findNode("fs_path", "/tmp/nifi/a.txt@example");
+        final Node outBC = lineage.findNode("fs_path", "/tmp/nifi/bc.txt@example");
+        final Node outD = lineage.findNode("fs_path", "/tmp/nifi/d.txt@example");
+        lineage.assertLink(genAPath, outA);
+        lineage.assertLink(bcPath, outBC);
+        lineage.assertLink(genDPath, outD);
+
     }
 
     @Test
@@ -1104,7 +1131,7 @@ public class ITAtlasNiFiFlowLineage {
         final String ffIdA2 = "A2000000"; // Forked children
         final String ffIdB2 = "B2000000"; // Forked children
         prs.add(pr("529e6722-9b49-3b66", "ConsumeKafkaRecord_0_10", RECEIVE, "PLAINTEXT://localhost:9092/nifi-test", ffIdK1)); // 8
-        prs.add(pr("529e6722-9b49-3b66", "ConsumeKafkaRecord_0_10", FORK, ffIdK1)); // 9
+        prs.add(pr("3f6d405e-6e3d-38c9", "PartitionRecord", FORK, ffIdK1)); // 9
         prs.add(pr("db8bb12c-5cd3-3011", "UpdateAttribute", ATTRIBUTES_MODIFIED, ffIdA2)); // 10
         prs.add(pr("db8bb12c-5cd3-3011", "UpdateAttribute", ATTRIBUTES_MODIFIED, ffIdB2)); // 11
         prs.add(pr("062caf95-da40-3a57", "PutFile", SEND, "file:/tmp/consumed/A_20171101_100701.csv", ffIdA2)); // 12
@@ -1114,7 +1141,7 @@ public class ITAtlasNiFiFlowLineage {
 
 
         Map<Long, ComputeLineageResult> lineages = tc.lineageResults;
-        Map<Long, ComputeLineageResult> parents = new HashMap<>();
+        Map<Long, ComputeLineageResult> parents = tc.parentLineageResults;
         lineages.put(6L, createLineage(prs, 0, 2, 4, 6)); // Publish A1
         lineages.put(7L, createLineage(prs, 1, 3, 5, 7)); // Publish B1
         parents.put(9L, createLineage(prs, 8, 9)); // Consumed and Forked K1
@@ -1127,7 +1154,46 @@ public class ITAtlasNiFiFlowLineage {
 
         final Lineage lineage = getLineage();
 
-        // TODO: assert
+        // Publish part
+        final Node inputFileA1 = lineage.findNode("fs_path", "/tmp/input/A1.csv@example");
+        final Node inputFileB1 = lineage.findNode("fs_path", "/tmp/input/B1.csv@example");
+        // These two flow paths are derived from the same set of Processors, but with different input files, and resulted different hashes.
+        final Node getFileToPublishKafkaA = lineage.findNode("nifi_flow_path", "GetFile, PutFile, PublishKafkaRecord_0_10",
+                "22be62d9-c4a1-3056-0000-000000000000::2823953997@example");
+        final Node getFileToPublishKafkaB = lineage.findNode("nifi_flow_path", "GetFile, PutFile, PublishKafkaRecord_0_10",
+                "22be62d9-c4a1-3056-0000-000000000000::568010061@example");
+
+        lineage.assertLink(inputFileA1, getFileToPublishKafkaA);
+        lineage.assertLink(inputFileB1, getFileToPublishKafkaB);
+
+        final Node nifiTestTopic = lineage.findNode("kafka_topic", "nifi-test@example");
+        final Node outputFileA = lineage.findNode("fs_path", "/tmp/output/A1.csv@example");
+        final Node outputFileB = lineage.findNode("fs_path", "/tmp/output/B1.csv@example");
+        lineage.assertLink(getFileToPublishKafkaA, nifiTestTopic);
+        lineage.assertLink(getFileToPublishKafkaB, nifiTestTopic);
+        lineage.assertLink(getFileToPublishKafkaA, outputFileA);
+        lineage.assertLink(getFileToPublishKafkaB, outputFileB);
+
+        // Consume part
+        final Node consumeNifiTestTopic = lineage.findNode("nifi_flow_path", "ConsumeKafkaRecord_0_10",
+                "529e6722-9b49-3b66-0000-000000000000::3649132843@example");
+        final Node forkedA = lineage.findNode("nifi_queue", "FORK",
+                "3f6d405e-6e3d-38c9-0000-000000000000::234149075@example");
+        final Node forkedB = lineage.findNode("nifi_queue", "FORK",
+                "3f6d405e-6e3d-38c9-0000-000000000000::2377021542@example");
+        lineage.assertLink(consumeNifiTestTopic, forkedA);
+        lineage.assertLink(consumeNifiTestTopic, forkedB);
+
+        final Node partitionToPutA = lineage.findNode("nifi_flow_path", "PartitionRecord, UpdateAttribute, PutFile",
+                "3f6d405e-6e3d-38c9-0000-000000000000::234149075@example");
+        final Node partitionToPutB = lineage.findNode("nifi_flow_path", "PartitionRecord, UpdateAttribute, PutFile",
+                "3f6d405e-6e3d-38c9-0000-000000000000::2377021542@example");
+        final Node consumedFileA = lineage.findNode("fs_path", "/tmp/consumed/A_20171101_100701.csv@example");
+        final Node consumedFileB = lineage.findNode("fs_path", "/tmp/consumed/B_20171101_100701.csv@example");
+        lineage.assertLink(forkedA, partitionToPutA);
+        lineage.assertLink(forkedB, partitionToPutB);
+        lineage.assertLink(partitionToPutA, consumedFileA);
+        lineage.assertLink(partitionToPutB, consumedFileB);
     }
 
     @Test

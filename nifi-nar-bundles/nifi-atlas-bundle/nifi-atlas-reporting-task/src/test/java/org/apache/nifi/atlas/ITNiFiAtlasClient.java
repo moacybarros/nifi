@@ -16,11 +16,8 @@
  */
 package org.apache.nifi.atlas;
 
-import org.apache.atlas.AtlasClientV2;
 import org.apache.atlas.model.instance.AtlasEntity;
 import org.apache.atlas.model.instance.AtlasObjectId;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.nifi.atlas.reporting.AtlasNiFiFlowLineage;
 import org.apache.nifi.atlas.security.AtlasAuthN;
 import org.apache.nifi.atlas.security.Basic;
@@ -30,9 +27,6 @@ import org.junit.Before;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.HashMap;
-import java.util.Map;
 
 import static org.apache.nifi.atlas.NiFiTypes.NIFI_TYPES;
 import static org.mockito.Mockito.mock;

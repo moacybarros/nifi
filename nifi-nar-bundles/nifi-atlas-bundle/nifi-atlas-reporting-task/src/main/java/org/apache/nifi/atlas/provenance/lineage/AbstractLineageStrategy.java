@@ -19,7 +19,6 @@ package org.apache.nifi.atlas.provenance.lineage;
 import org.apache.atlas.model.instance.AtlasObjectId;
 import org.apache.atlas.notification.hook.HookNotification;
 import org.apache.atlas.typesystem.Referenceable;
-import org.apache.nifi.atlas.AtlasUtils;
 import org.apache.nifi.atlas.NiFiFlow;
 import org.apache.nifi.atlas.NiFiFlowPath;
 import org.apache.nifi.atlas.provenance.AnalysisContext;
@@ -99,7 +98,7 @@ public abstract class AbstractLineageStrategy implements LineageStrategy {
         }
     }
 
-    protected Referenceable toReferenceable(NiFiFlow nifiFlow) {
+    private Referenceable toReferenceable(NiFiFlow nifiFlow) {
         final Referenceable flowRef = new Referenceable(TYPE_NIFI_FLOW);
         flowRef.set(ATTR_NAME, nifiFlow.getFlowName());
         flowRef.set(ATTR_QUALIFIED_NAME, nifiFlow.getQualifiedName());
@@ -130,9 +129,6 @@ public abstract class AbstractLineageStrategy implements LineageStrategy {
                 ? new Referenceable(id.getTypeName(), id.getUniqueAttributes())
                 : new Referenceable(id.getGuid(), id.getTypeName(), id.getUniqueAttributes());
     }
-
-    // TODO: Refactor lineageContext and NiFiAtlasHook.
-
 
     protected void createEntity(Referenceable ... entities) {
         final HookNotification.EntityCreateRequest msg = new HookNotification.EntityCreateRequest(NIFI_USER, entities);

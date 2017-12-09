@@ -58,6 +58,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.apache.nifi.atlas.AtlasUtils.isGuidAssigned;
 import static org.apache.nifi.atlas.AtlasUtils.toStr;
@@ -436,12 +437,12 @@ public class AtlasAPIV2ServerEmulator {
         }
 
         @SuppressWarnings("unchecked")
-        private AtlasEntity getReferredEntity(Map<String, Object> references) {
-            final String guid = toStr(references.get(ATTR_GUID));
-            final String qname = ((Map<String, String>) references.get("uniqueAttributes")).get(ATTR_QUALIFIED_NAME);
+        private AtlasEntity getReferredEntity(Map<String, Object> reference) {
+            final String guid = toStr(reference.get(ATTR_GUID));
+            final String qname = ((Map<String, String>) reference.get("uniqueAttributes")).get(ATTR_QUALIFIED_NAME);
             return isGuidAssigned(guid)
                     ? atlasEntitiesByGuid.get(guid)
-                    : atlasEntitiesByTypedQname.get(toTypedQualifiedName((String) references.get(ATTR_TYPENAME), qname));
+                    : atlasEntitiesByTypedQname.get(toTypedQualifiedName((String) reference.get(ATTR_TYPENAME), qname));
         }
 
         @SuppressWarnings("unchecked")
@@ -480,13 +481,12 @@ public class AtlasAPIV2ServerEmulator {
 
 
             // Traverse entities those consume this entity as their input.
-            final List<AtlasEntity> outGoings = outgoingEntities.get(toTypedQname(s));
-            if (outGoings != null) {
-                outGoings.forEach(o -> {
-                    links.add(toLink(s, o, nodeIndices));
-                    traverse(seen, o, links, nodeIndices, outgoingEntities);
-                });
-            }
+            final List<AtlasEntity> outGoings = Stream.of(outgoingEntities.getOrDefault(toTypedQname(s), Collections.emptyList()),
+                    outgoingEntities.getOrDefault(s.getGuid(), Collections.emptyList())).flatMap(List::stream).collect(Collectors.toList());
+            outGoings.forEach(o -> {
+                links.add(toLink(s, o, nodeIndices));
+                traverse(seen, o, links, nodeIndices, outgoingEntities);
+            });
 
         }
 
@@ -497,7 +497,7 @@ public class AtlasAPIV2ServerEmulator {
             final List<Node> nodes = new ArrayList<>();
             final List<Link> links = new ArrayList<>();
             final Map<String, Integer> nodeIndices = new HashMap<>();
-            // DataSet to outgoing Processes.
+            // DataSet to outgoing Processes, either by guid or typed qname.
             final Map<String, List<AtlasEntity>> outgoingEntities = new HashMap<>();
             result.setNodes(nodes);
 
@@ -511,11 +511,12 @@ public class AtlasAPIV2ServerEmulator {
                 final Object inputs = entity.getAttribute(NiFiTypes.ATTR_INPUTS);
                 if (inputs != null) {
                     for (Map<String, Object> input : ((List<Map<String, Object>>) inputs)) {
-                        final String qname = ((Map<String, String>) input.get("uniqueAttributes")).get("qualifiedName");
-                        final String inputKey = toTypedQualifiedName((String) input.get("typeName"), qname);
-                        final AtlasEntity t = atlasEntitiesByTypedQname.get(inputKey);
+                        final AtlasEntity t = getReferredEntity(input);
                         if (t != null) {
-                            outgoingEntities.computeIfAbsent(inputKey, k -> new ArrayList<>()).add(entity);
+                            final String typedQname = toTypedQualifiedName(t.getTypeName(), toStr(t.getAttribute(ATTR_QUALIFIED_NAME)));
+                            final String guid = t.getGuid();
+                            outgoingEntities.computeIfAbsent(typedQname, k -> new ArrayList<>()).add(entity);
+                            outgoingEntities.computeIfAbsent(guid, k -> new ArrayList<>()).add(entity);
                         }
 
                     }

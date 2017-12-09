@@ -18,7 +18,6 @@ package org.apache.nifi.atlas.reporting;
 
 import com.sun.jersey.api.client.ClientResponse;
 import org.apache.atlas.AtlasServiceException;
-import org.apache.atlas.model.instance.AtlasObjectId;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.config.SslConfigs;
@@ -84,13 +83,9 @@ import java.util.Properties;
 import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.function.Consumer;
-import java.util.function.Function;
-import java.util.stream.Collector;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.apache.commons.lang3.StringUtils.isEmpty;
-import static org.apache.nifi.atlas.NiFiTypes.ATTR_QUALIFIED_NAME;
 import static org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer.PROVENANCE_BATCH_SIZE;
 import static org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer.PROVENANCE_START_POSITION;
 
@@ -261,14 +256,17 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
             .defaultValue("kafka")
             .build();
 
-    // TODO: doc
-    static final AllowableValue LINEAGE_STRATEGY_SIMPLE_PATH = new AllowableValue("SimplePath", "Simple Path", "");
-    static final AllowableValue LINEAGE_STRATEGY_COMPLETE_PATH = new AllowableValue("CompletePath", "Complete Path", "");
+    static final AllowableValue LINEAGE_STRATEGY_SIMPLE_PATH = new AllowableValue("SimplePath", "Simple Path",
+            "Map NiFi provenance events and target Atlas DataSets to statically created 'nifi_flow_path' Atlas Processes." +
+                    " See also 'Additional Details'.");
+    static final AllowableValue LINEAGE_STRATEGY_COMPLETE_PATH = new AllowableValue("CompletePath", "Complete Path",
+            "Create separate 'nifi_flow_path' Atlas Processes for each distinct input and output DataSet combinations" +
+                    " by looking at the complete route for a given FlowFile. See also 'Additional Details.");
 
     static final PropertyDescriptor NIFI_LINEAGE_STRATEGY = new PropertyDescriptor.Builder()
             .name("nifi-lineage-strategy")
             .displayName("NiFi Lineage Strategy")
-            .description("Specifies what granularity the data should be sent to Atlas.")
+            .description("Specifies granularity on how NiFi data flow should be reported to Atlas.")
             .required(true)
             .allowableValues(LINEAGE_STRATEGY_SIMPLE_PATH, LINEAGE_STRATEGY_COMPLETE_PATH)
             .defaultValue(LINEAGE_STRATEGY_SIMPLE_PATH.getValue())
@@ -585,7 +583,6 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
 
         if (isResponsibleForPrimaryTasks) {
             try {
-                // TODO: Compare difference. And update only changed entities. Do not check inputs/outputs because those are created by provenance. Focus on static properties.
                 atlasClient.registerNiFiFlow(nifiFlow);
             } catch (AtlasServiceException e) {
                 throw new RuntimeException("Failed to register NiFI flow. " + e, e);
@@ -598,14 +595,6 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         consumeNiFiProvenanceEvents(context, nifiFlow);
 
     }
-
-    // Use qualifiedName to merge existing Paths. Ones created by analyzing flow do not have id, but existing ones have id.
-    static final Collector<AtlasObjectId, ?, Map<String, List<AtlasObjectId>>> groupByQualifiedName
-            = Collectors.groupingBy(id -> id.getTypeName() + "::" + id.getUniqueAttributes().get(ATTR_QUALIFIED_NAME));
-
-    // Pick the one having GUID, or the first available.
-    static final Function<List<AtlasObjectId>, AtlasObjectId> pickBestId
-            = ids -> ids.stream().filter(id -> !StringUtils.isEmpty(id.getGuid())).findFirst().orElse(ids.get(0));
 
     private NiFiFlow createNiFiFlow(ReportingContext context) {
         final ProcessGroupStatus rootProcessGroup = context.getEventAccess().getGroupStatus("root");
@@ -625,34 +614,6 @@ public class AtlasNiFiFlowLineage extends AbstractReportingTask {
         try {
             // Retrieve Existing NiFiFlow from Atlas.
             existingNiFiFlow = atlasClient.fetchNiFiFlow(rootProcessGroup.getId(), clusterName);
-
-            /*
-            // TODO: No longer needed?
-            if (existingNiFiFlow != null) {
-
-                nifiFlow.setExEntity(existingNiFiFlow.getExEntity());
-
-                final Map<String, NiFiFlowPath> existingPaths = existingNiFiFlow.getFlowPaths()
-                        .stream().collect(Collectors.toMap(path -> path.getId(), Function.identity()));
-
-                for (NiFiFlowPath path: nifiFlow.getFlowPaths()) {
-                    if (existingPaths.containsKey(path.getId())) {
-                        // Merge existing IO.
-                        final NiFiFlowPath existingPath = existingPaths.get(path.getId());
-                        final Set<AtlasObjectId> mergedInputs = Stream.concat(path.getInputs().stream(), existingPath.getInputs().stream()).collect(groupByQualifiedName)
-                                .values().stream().map(pickBestId).collect(Collectors.toSet());
-                        final Set<AtlasObjectId> mergedOutputs = Stream.concat(path.getOutputs().stream(), existingPath.getOutputs().stream()).collect(groupByQualifiedName)
-                                .values().stream().map(pickBestId).collect(Collectors.toSet());
-
-                        path.getInputs().clear();
-                        path.getInputs().addAll(mergedInputs);
-                        path.getOutputs().clear();
-                        path.getOutputs().addAll(mergedOutputs);
-                    }
-                }
-            }
-            */
-
         } catch (AtlasServiceException e) {
             if (ClientResponse.Status.NOT_FOUND.equals(e.getStatus())){
                 getLogger().debug("Existing flow was not found for {}@{}", new Object[]{rootProcessGroup.getId(), clusterName});
