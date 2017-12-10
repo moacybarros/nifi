@@ -52,14 +52,14 @@
 
         <p>'NiFi flow structure' tells what components are running within a NiFi flow and how these are connected. It is reported by analyzing current NiFi flow structure, specifically NiFi component relationships.</p>
 
-        <p>'NiFi data lineage' tells what part of NiFi flow interacts with different DataSets such as files in a HDFS or Hive tables ... etc. It is reported by analyzing NiFi provenance events.</p>
+        <p>'NiFi data lineage' tells what part of NiFi flow interacts with different DataSets such as HDFS files or Hive tables ... etc. It is reported by analyzing NiFi provenance events.</p>
 
         <object data="nifi_atlas.svg" type="image/svg+xml" width="60%"></object>
 
-        <p>Technically each information is sent different protocol, Atlas REST API v2, and Notification via a Kafka topic as shown in above image.</p>
+        <p>Technically each information is sent using different protocol, Atlas REST API v2, and Notification via a Kafka topic as shown in above image.</p>
 
 
-        <p>As both types of information use the same <a href="#nifi-atlas-types">NiFi Atlas Types</a> and <a href="#cluster-name">Cluster Name Resolution</a> concepts, it is recommended to start reading those sections first.</p>
+        <p>As both information types use the same <a href="#nifi-atlas-types">NiFi Atlas Types</a> and <a href="#cluster-name">Cluster Name Resolution</a> concepts, it is recommended to start reading those sections first.</p>
 
         <h4 id="nifi-atlas-types">NiFi Atlas Types</h4>
 
@@ -76,7 +76,7 @@
                 <p>As shown in the above diagram, nifi_flow owns other nifi_component types.
                     This owning relationship is defined by Atlas 'owned' constraint so that when a 'nifi_flow' entity is removed, all owned NiFi component entities are removed in cascading manner.</p>
                 <p>When this reporting task runs, it analyzes and traverse the entire flow structure, and create NiFi component entities in Atlas.
-                    At subsequently runs, it compares the current flow structure with the one stored in Atlas to figure out if any changes has been made since the last time the flow was reported. The reporting task updates NiFi component entities in Atlas if needed.<p>
+                    At later runs, it compares the current flow structure with the one stored in Atlas to figure out if any changes has been made since the last time the flow was reported. The reporting task updates NiFi component entities in Atlas if needed.<p>
                 <p>NiFi components those are removed from a NiFi flow also get deleted from Atlas.
                     However those entities can still be seen in Atlas search results or lineage graphs since Atlas uses 'Soft Delete' by default.
                     See <a href="#delete-handler">Atlas Delete Handler</a> for further detail.</p>
@@ -144,17 +144,17 @@
         <p>As an example, following mapping definition would resolve cluster name 'cluster-A' for ip address such as '192.168.30.123' or hostname 'namenode1.a.example.com', and 'cluster-B' for '192.168.40.223' or 'nifi3.b.example.com'.</p>
 
         <pre>
-            # Dynamic Property Name for cluster-A
-            hostnamePattern.cluster-A
-            # Value can have multiple Regular Expression patterns separated by new line
-            192\.168\.30\.\d+
-            [^\.]+\.a\.example\.com
+# Dynamic Property Name for cluster-A
+hostnamePattern.cluster-A
+# Value can have multiple Regular Expression patterns separated by new line
+192\.168\.30\.\d+
+[^\.]+\.a\.example\.com
 
-            # Dynamic Property Name for cluster-B
-            hostnamePattern.cluster-B
-            # Values
-            192\.168\.40\.\d+
-            [^\.]+\.b\.example\.com
+# Dynamic Property Name for cluster-B
+hostnamePattern.cluster-B
+# Values
+192\.168\.40\.\d+
+[^\.]+\.b\.example\.com
         </pre>
 
         <p>If any cluster name mapping does not match, then a name defined at 'Atlas Default Cluster Name' is used.</p>
@@ -473,6 +473,7 @@ Processor 3</pre>
                     SEND<br/>
                     REMOTE_INVOCATION
                 </td>
+                <td></td>
                 <td>nifi_data</td>
                 <td>processorGuid@clusterName<br/>db8bb12c-5cd3-3011-c971-579f460ebedf@cl1</td>
             </tr>
@@ -532,6 +533,9 @@ Processor 3</pre>
 
 
         <h3 id="atlas-emulator">Atlas Server Emulator</h3>
+
+        <p>If you have Apache NiFi project source code on your local machine, you can run Atlas Server Emulator which is included in 'nifi-atlas-reporting-task' test module. The emulator listens on 21000 port for Atlas REST API v2, and 9092 port for Kafka by default. A running NiFi instance can use the emulator to report information from this reporting task. It can be helpful when you need to debug how the reporting task works, or try out different reporting strategies.</p>
+        <p>See <a href="https://github.com/apache/nifi/tree/master/nifi-nar-bundles/nifi-atlas-bundle/nifi-atlas-reporting-task/src/test/java/org/apache/nifi/atlas/emulator/README.md">Apache Atlas Server Emulator</a> readme file for further details.</p>
 
     </body>
 </html>
