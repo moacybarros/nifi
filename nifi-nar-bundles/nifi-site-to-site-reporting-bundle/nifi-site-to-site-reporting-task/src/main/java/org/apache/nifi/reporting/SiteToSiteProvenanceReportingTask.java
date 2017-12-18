@@ -28,6 +28,7 @@ import org.apache.nifi.components.AllowableValue;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.components.state.Scope;
 import org.apache.nifi.controller.ConfigurationContext;
+import org.apache.nifi.controller.status.ConnectionStatus;
 import org.apache.nifi.controller.status.PortStatus;
 import org.apache.nifi.controller.status.ProcessGroupStatus;
 import org.apache.nifi.controller.status.ProcessorStatus;
@@ -196,8 +197,13 @@ public class SiteToSiteProvenanceReportingTask extends AbstractSiteToSiteReporti
                 componentMap.put(rpgStatus.getId(), rpgStatus.getName());
             }
 
+            for (final ConnectionStatus connectionStatus : status.getConnectionStatus()) {
+                componentMap.put(connectionStatus.getId(), connectionStatus.getName());
+            }
+
             for (final ProcessGroupStatus childGroup : status.getProcessGroupStatus()) {
                 componentMap.put(childGroup.getId(), childGroup.getName());
+                componentMap.putAll(createComponentMap(childGroup));
             }
         }
 
