@@ -70,6 +70,7 @@ import java.util.concurrent.TimeUnit;
 @Restricted("Provides operator the ability send sensitive details contained in Provenance events to any external system.")
 public class SiteToSiteProvenanceReportingTask extends AbstractSiteToSiteReportingTask {
 
+    static final String ROOT = "@ROOT@";
     static final String TIMESTAMP_FORMAT = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'";
     static final String LAST_EVENT_ID_KEY = "last_event_id";
 
@@ -175,39 +176,47 @@ public class SiteToSiteProvenanceReportingTask extends AbstractSiteToSiteReporti
         return properties;
     }
 
-    private Map<String,String> createComponentMap(final ProcessGroupStatus status) {
-        final Map<String,String> componentMap = new HashMap<>();
+    private ComponentMapHolder createComponentMap(final ProcessGroupStatus status) {
+        final ComponentMapHolder holder = new ComponentMapHolder();
+        final Map<String,String> componentMap = holder.getComponentMap();
+        final Map<String,String> componentToParentGroupMap = holder.getComponentToParentGroupMap();
 
         if (status != null) {
             componentMap.put(status.getId(), status.getName());
 
             for (final ProcessorStatus procStatus : status.getProcessorStatus()) {
                 componentMap.put(procStatus.getId(), procStatus.getName());
+                componentToParentGroupMap.put(procStatus.getId(), status.getId());
             }
 
             for (final PortStatus portStatus : status.getInputPortStatus()) {
                 componentMap.put(portStatus.getId(), portStatus.getName());
+                componentToParentGroupMap.put(portStatus.getId(), status.getId());
             }
 
             for (final PortStatus portStatus : status.getOutputPortStatus()) {
                 componentMap.put(portStatus.getId(), portStatus.getName());
+                componentToParentGroupMap.put(portStatus.getId(), status.getId());
             }
 
             for (final RemoteProcessGroupStatus rpgStatus : status.getRemoteProcessGroupStatus()) {
                 componentMap.put(rpgStatus.getId(), rpgStatus.getName());
+                componentToParentGroupMap.put(rpgStatus.getId(), status.getId());
             }
 
             for (final ConnectionStatus connectionStatus : status.getConnectionStatus()) {
                 componentMap.put(connectionStatus.getId(), connectionStatus.getName());
+                componentToParentGroupMap.put(connectionStatus.getId(), status.getId());
             }
 
             for (final ProcessGroupStatus childGroup : status.getProcessGroupStatus()) {
                 componentMap.put(childGroup.getId(), childGroup.getName());
-                componentMap.putAll(createComponentMap(childGroup));
+                componentToParentGroupMap.put(childGroup.getId(), status.getId());
+                holder.putAll(createComponentMap(childGroup));
             }
         }
 
-        return componentMap;
+        return holder;
     }
 
     @Override
@@ -222,7 +231,10 @@ public class SiteToSiteProvenanceReportingTask extends AbstractSiteToSiteReporti
 
         final ProcessGroupStatus procGroupStatus = context.getEventAccess().getControllerStatus();
         final String rootGroupName = procGroupStatus == null ? null : procGroupStatus.getName();
-        final Map<String,String> componentMap = createComponentMap(procGroupStatus);
+        final ComponentMapHolder componentMapHolder = createComponentMap(procGroupStatus);
+        if (procGroupStatus != null) {
+            componentMapHolder.getComponentToParentGroupMap().put(procGroupStatus.getId(), ROOT);
+        }
 
         final String nifiUrl = context.getProperty(INSTANCE_URL).evaluateAttributeExpressions().getValue();
         URL url;
@@ -248,8 +260,10 @@ public class SiteToSiteProvenanceReportingTask extends AbstractSiteToSiteReporti
             // Create a JSON array of all the events in the current batch
             final JsonArrayBuilder arrayBuilder = factory.createArrayBuilder();
             for (final ProvenanceEventRecord event : events) {
-                final String componentName = componentMap.get(event.getComponentId());
-                arrayBuilder.add(serialize(factory, builder, event, df, componentName, hostname, url, rootGroupName, platform, nodeId));
+                final String componentName = componentMapHolder.getComponentName(event.getComponentId());
+                final String processGroupId = componentMapHolder.getProcessGroupId(event.getComponentId());
+                final String processGroupName = componentMapHolder.getComponentMap().get(processGroupId);
+                arrayBuilder.add(serialize(factory, builder, event, df, componentName, processGroupId, processGroupName, hostname, url, rootGroupName, platform, nodeId));
             }
             final JsonArray jsonArray = arrayBuilder.build();
 
@@ -283,7 +297,8 @@ public class SiteToSiteProvenanceReportingTask extends AbstractSiteToSiteReporti
 
 
     static JsonObject serialize(final JsonBuilderFactory factory, final JsonObjectBuilder builder, final ProvenanceEventRecord event, final DateFormat df,
-        final String componentName, final String hostname, final URL nifiUrl, final String applicationName, final String platform, final String nodeIdentifier) {
+                                final String componentName, final String processGroupId, final String processGroupName, final String hostname, final URL nifiUrl, final String applicationName,
+                                final String platform, final String nodeIdentifier) {
         addField(builder, "eventId", UUID.randomUUID().toString());
         addField(builder, "eventOrdinal", event.getEventId());
         addField(builder, "eventType", event.getEventType().name());
@@ -295,6 +310,8 @@ public class SiteToSiteProvenanceReportingTask extends AbstractSiteToSiteReporti
         addField(builder, "componentId", event.getComponentId());
         addField(builder, "componentType", event.getComponentType());
         addField(builder, "componentName", componentName);
+        addField(builder, "processGroupId", processGroupId);
+        addField(builder, "processGroupName", processGroupName);
         addField(builder, "entityId", event.getFlowFileUuid());
         addField(builder, "entityType", "org.apache.nifi.flowfile.FlowFile");
         addField(builder, "entitySize", event.getFileSize());
@@ -373,6 +390,35 @@ public class SiteToSiteProvenanceReportingTask extends AbstractSiteToSiteReporti
             }
         }
         return builder;
+    }
+
+    private static class ComponentMapHolder {
+
+        final Map<String,String> componentMap = new HashMap<>();
+        final Map<String,String> componentToParentGroupMap = new HashMap<>();
+
+        public ComponentMapHolder putAll(ComponentMapHolder holder) {
+            this.componentMap.putAll(holder.getComponentMap());
+            this.componentToParentGroupMap.putAll(holder.getComponentToParentGroupMap());
+            return this;
+        }
+
+        public Map<String, String> getComponentMap() {
+            return componentMap;
+        }
+
+        public Map<String, String> getComponentToParentGroupMap() {
+            return componentToParentGroupMap;
+        }
+
+        public String getComponentName(final String componentId) {
+            return componentMap.get(componentId);
+        }
+
+        public String getProcessGroupId(final String componentId) {
+            return componentToParentGroupMap.get(componentId);
+        }
+
     }
 
 }
