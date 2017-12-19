@@ -28,18 +28,13 @@ import org.apache.nifi.components.AllowableValue;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.components.state.Scope;
 import org.apache.nifi.controller.ConfigurationContext;
-import org.apache.nifi.controller.status.ConnectionStatus;
-import org.apache.nifi.controller.status.PortStatus;
 import org.apache.nifi.controller.status.ProcessGroupStatus;
-import org.apache.nifi.controller.status.ProcessorStatus;
-import org.apache.nifi.controller.status.RemoteProcessGroupStatus;
 import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
 import org.apache.nifi.provenance.ProvenanceEventType;
 import org.apache.nifi.remote.Transaction;
 import org.apache.nifi.remote.TransferDirection;
-import org.apache.nifi.reporting.util.provenance.ComponentMapHolder;
 import org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer;
 
 import javax.json.Json;
@@ -48,6 +43,7 @@ import javax.json.JsonArrayBuilder;
 import javax.json.JsonBuilderFactory;
 import javax.json.JsonObject;
 import javax.json.JsonObjectBuilder;
+import javax.json.JsonValue;
 import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -71,7 +67,6 @@ import java.util.concurrent.TimeUnit;
 @Restricted("Provides operator the ability send sensitive details contained in Provenance events to any external system.")
 public class SiteToSiteProvenanceReportingTask extends AbstractSiteToSiteReportingTask {
 
-    static final String ROOT = "@ROOT@";
     static final String TIMESTAMP_FORMAT = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'";
     static final String LAST_EVENT_ID_KEY = "last_event_id";
 
@@ -177,49 +172,6 @@ public class SiteToSiteProvenanceReportingTask extends AbstractSiteToSiteReporti
         return properties;
     }
 
-    private ComponentMapHolder createComponentMap(final ProcessGroupStatus status) {
-        final ComponentMapHolder holder = new ComponentMapHolder();
-        final Map<String,String> componentMap = holder.getComponentMap();
-        final Map<String,String> componentToParentGroupMap = holder.getComponentToParentGroupMap();
-
-        if (status != null) {
-            componentMap.put(status.getId(), status.getName());
-
-            for (final ProcessorStatus procStatus : status.getProcessorStatus()) {
-                componentMap.put(procStatus.getId(), procStatus.getName());
-                componentToParentGroupMap.put(procStatus.getId(), status.getId());
-            }
-
-            for (final PortStatus portStatus : status.getInputPortStatus()) {
-                componentMap.put(portStatus.getId(), portStatus.getName());
-                componentToParentGroupMap.put(portStatus.getId(), status.getId());
-            }
-
-            for (final PortStatus portStatus : status.getOutputPortStatus()) {
-                componentMap.put(portStatus.getId(), portStatus.getName());
-                componentToParentGroupMap.put(portStatus.getId(), status.getId());
-            }
-
-            for (final RemoteProcessGroupStatus rpgStatus : status.getRemoteProcessGroupStatus()) {
-                componentMap.put(rpgStatus.getId(), rpgStatus.getName());
-                componentToParentGroupMap.put(rpgStatus.getId(), status.getId());
-            }
-
-            for (final ConnectionStatus connectionStatus : status.getConnectionStatus()) {
-                componentMap.put(connectionStatus.getId(), connectionStatus.getName());
-                componentToParentGroupMap.put(connectionStatus.getId(), status.getId());
-            }
-
-            for (final ProcessGroupStatus childGroup : status.getProcessGroupStatus()) {
-                componentMap.put(childGroup.getId(), childGroup.getName());
-                componentToParentGroupMap.put(childGroup.getId(), status.getId());
-                holder.putAll(createComponentMap(childGroup));
-            }
-        }
-
-        return holder;
-    }
-
     @Override
     public void onTrigger(final ReportingContext context) {
         final boolean isClustered = context.isClustered();
@@ -232,11 +184,6 @@ public class SiteToSiteProvenanceReportingTask extends AbstractSiteToSiteReporti
 
         final ProcessGroupStatus procGroupStatus = context.getEventAccess().getControllerStatus();
         final String rootGroupName = procGroupStatus == null ? null : procGroupStatus.getName();
-        final ComponentMapHolder componentMapHolder = createComponentMap(procGroupStatus);
-        if (procGroupStatus != null) {
-            componentMapHolder.getComponentToParentGroupMap().put(procGroupStatus.getId(), ROOT);
-        }
-
         final String nifiUrl = context.getProperty(INSTANCE_URL).evaluateAttributeExpressions().getValue();
         URL url;
         try {
@@ -256,14 +203,14 @@ public class SiteToSiteProvenanceReportingTask extends AbstractSiteToSiteReporti
         final DateFormat df = new SimpleDateFormat(TIMESTAMP_FORMAT);
         df.setTimeZone(TimeZone.getTimeZone("Z"));
 
-        consumer.consumeEvents(componentMapHolder, context.getEventAccess(), context.getStateManager(), events -> {
+        consumer.consumeEvents(context, context.getStateManager(), (mapHolder, events) -> {
             final long start = System.nanoTime();
             // Create a JSON array of all the events in the current batch
             final JsonArrayBuilder arrayBuilder = factory.createArrayBuilder();
             for (final ProvenanceEventRecord event : events) {
-                final String componentName = componentMapHolder.getComponentName(event.getComponentId());
-                final String processGroupId = componentMapHolder.getProcessGroupId(event.getComponentId());
-                final String processGroupName = componentMapHolder.getComponentMap().get(processGroupId);
+                final String componentName = mapHolder.getComponentName(event.getComponentId());
+                final String processGroupId = mapHolder.getProcessGroupId(event.getComponentId());
+                final String processGroupName = mapHolder.getComponentMap().get(processGroupId);
                 arrayBuilder.add(serialize(factory, builder, event, df, componentName, processGroupId, processGroupName, hostname, url, rootGroupName, platform, nodeId));
             }
             final JsonArray jsonArray = arrayBuilder.build();
@@ -311,8 +258,8 @@ public class SiteToSiteProvenanceReportingTask extends AbstractSiteToSiteReporti
         addField(builder, "componentId", event.getComponentId());
         addField(builder, "componentType", event.getComponentType());
         addField(builder, "componentName", componentName);
-        addField(builder, "processGroupId", processGroupId);
-        addField(builder, "processGroupName", processGroupName);
+        addField(builder, "processGroupId", processGroupId, true);
+        addField(builder, "processGroupName", processGroupName, true);
         addField(builder, "entityId", event.getFlowFileUuid());
         addField(builder, "entityType", "org.apache.nifi.flowfile.FlowFile");
         addField(builder, "entitySize", event.getFileSize());
@@ -376,11 +323,17 @@ public class SiteToSiteProvenanceReportingTask extends AbstractSiteToSiteReporti
     }
 
     private static void addField(final JsonObjectBuilder builder, final String key, final String value) {
-        if (value == null) {
-            return;
-        }
+        addField(builder, key, value, false);
+    }
 
-        builder.add(key, value);
+    private static void addField(final JsonObjectBuilder builder, final String key, final String value, final boolean allowNullValues) {
+        if (value == null) {
+            if (allowNullValues) {
+                builder.add(key, JsonValue.NULL);
+            }
+        } else {
+            builder.add(key, value);
+        }
     }
 
     private static JsonArrayBuilder createJsonArray(JsonBuilderFactory factory, final Collection<String> values) {
