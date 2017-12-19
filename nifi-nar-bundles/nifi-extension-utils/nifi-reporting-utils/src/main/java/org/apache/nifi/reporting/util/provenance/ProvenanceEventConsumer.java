@@ -68,6 +68,8 @@ public class ProvenanceEventConsumer {
     private List<String> componentIds = new ArrayList<String>();
     private int batchSize = Integer.parseInt(PROVENANCE_BATCH_SIZE.getDefaultValue());
 
+    private volatile ComponentMapHolder holder;
+
     private volatile long firstEventId = -1L;
     private volatile boolean scheduled = false;
 
@@ -111,9 +113,10 @@ public class ProvenanceEventConsumer {
         this.logger = logger;
     }
 
-    public void consumeEvents(final EventAccess eventAccess, final StateManager stateManager,
+    public void consumeEvents(final ComponentMapHolder holder, final EventAccess eventAccess, final StateManager stateManager,
                               final Consumer<List<ProvenanceEventRecord>> consumer) throws ProcessException {
 
+        this.holder = holder;
         Long currMaxId = eventAccess.getProvenanceRepository().getMaxEventId();
 
         if(currMaxId == null) {
@@ -223,7 +226,10 @@ public class ProvenanceEventConsumer {
             List<ProvenanceEventRecord> filteredEvents = new ArrayList<ProvenanceEventRecord>();
 
             for (ProvenanceEventRecord provenanceEventRecord : provenanceEvents) {
-                if(!componentIds.isEmpty() && !componentIds.contains(provenanceEventRecord.getComponentId())) {
+                // Is this event either associated with a component in the filter or from a process group whose ID is in the filter? If not exclude it
+                if (!componentIds.isEmpty() && !componentIds.contains(provenanceEventRecord.getComponentId())
+                        && (holder.getComponentToParentGroupMap().isEmpty()
+                        || !componentIds.contains(holder.getComponentToParentGroupMap().get(provenanceEventRecord.getComponentId())))) {
                     continue;
                 }
                 if(!eventTypes.isEmpty() && !eventTypes.contains(provenanceEventRecord.getEventType())) {

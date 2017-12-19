@@ -39,6 +39,7 @@ import org.apache.nifi.provenance.ProvenanceEventRecord;
 import org.apache.nifi.provenance.ProvenanceEventType;
 import org.apache.nifi.remote.Transaction;
 import org.apache.nifi.remote.TransferDirection;
+import org.apache.nifi.reporting.util.provenance.ComponentMapHolder;
 import org.apache.nifi.reporting.util.provenance.ProvenanceEventConsumer;
 
 import javax.json.Json;
@@ -255,7 +256,7 @@ public class SiteToSiteProvenanceReportingTask extends AbstractSiteToSiteReporti
         final DateFormat df = new SimpleDateFormat(TIMESTAMP_FORMAT);
         df.setTimeZone(TimeZone.getTimeZone("Z"));
 
-        consumer.consumeEvents(context.getEventAccess(), context.getStateManager(), events -> {
+        consumer.consumeEvents(componentMapHolder, context.getEventAccess(), context.getStateManager(), events -> {
             final long start = System.nanoTime();
             // Create a JSON array of all the events in the current batch
             final JsonArrayBuilder arrayBuilder = factory.createArrayBuilder();
@@ -391,34 +392,4 @@ public class SiteToSiteProvenanceReportingTask extends AbstractSiteToSiteReporti
         }
         return builder;
     }
-
-    private static class ComponentMapHolder {
-
-        final Map<String,String> componentMap = new HashMap<>();
-        final Map<String,String> componentToParentGroupMap = new HashMap<>();
-
-        public ComponentMapHolder putAll(ComponentMapHolder holder) {
-            this.componentMap.putAll(holder.getComponentMap());
-            this.componentToParentGroupMap.putAll(holder.getComponentToParentGroupMap());
-            return this;
-        }
-
-        public Map<String, String> getComponentMap() {
-            return componentMap;
-        }
-
-        public Map<String, String> getComponentToParentGroupMap() {
-            return componentToParentGroupMap;
-        }
-
-        public String getComponentName(final String componentId) {
-            return componentMap.get(componentId);
-        }
-
-        public String getProcessGroupId(final String componentId) {
-            return componentToParentGroupMap.get(componentId);
-        }
-
-    }
-
 }
