@@ -226,11 +226,13 @@ public class ProvenanceEventConsumer {
             List<ProvenanceEventRecord> filteredEvents = new ArrayList<ProvenanceEventRecord>();
 
             for (ProvenanceEventRecord provenanceEventRecord : provenanceEvents) {
-                // Is this event either associated with a component in the filter or from a process group whose ID is in the filter? If not exclude it
-                if (!componentIds.isEmpty() && !componentIds.contains(provenanceEventRecord.getComponentId())
-                        && (holder.getComponentToParentGroupMap().isEmpty()
-                        || !componentIds.contains(holder.getComponentToParentGroupMap().get(provenanceEventRecord.getComponentId())))) {
-                    continue;
+                if(!componentIds.isEmpty() && !componentIds.contains(provenanceEventRecord.getComponentId())) {
+                    // If we aren't filtering it out based on component ID, let's see if this component has a parent process group ID
+                    // that is being filtered on
+                    if (holder == null || (holder.getComponentToParentGroupMap().isEmpty()
+                            && !componentIds.contains(holder.getComponentToParentGroupMap().get(provenanceEventRecord.getComponentId())))) {
+                        continue;
+                    }
                 }
                 if(!eventTypes.isEmpty() && !eventTypes.contains(provenanceEventRecord.getEventType())) {
                     continue;
