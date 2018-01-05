@@ -82,44 +82,10 @@ public class NiFiAtlasClient {
 
     private static final Logger logger = LoggerFactory.getLogger(NiFiAtlasClient.class);
 
-    private static NiFiAtlasClient nifiClient;
-    private AtlasClientV2 atlasClient;
+    private final AtlasClientV2 atlasClient;
 
-    private NiFiAtlasClient() {
-        super();
-    }
-
-    public static NiFiAtlasClient getInstance() {
-        if (nifiClient == null) {
-            synchronized (NiFiAtlasClient.class) {
-                if (nifiClient == null) {
-                    nifiClient = new NiFiAtlasClient();
-                }
-            }
-        }
-        return nifiClient;
-    }
-
-    public void initialize(final String[] baseUrls, final AtlasAuthN authN, final File atlasConfDir) {
-
-        synchronized (NiFiAtlasClient.class) {
-
-            if (atlasClient != null) {
-                logger.info("{} had been setup but replacing it with new one.", atlasClient);
-                ApplicationProperties.forceReload();
-            }
-
-            if (atlasConfDir != null) {
-                // If atlasConfDir is not set, atlas-application.properties will be searched under classpath.
-                Properties props = System.getProperties();
-                final String atlasConfProp = "atlas.conf";
-                props.setProperty(atlasConfProp, atlasConfDir.getAbsolutePath());
-                logger.debug("{} has been set to: {}", atlasConfProp, props.getProperty(atlasConfProp));
-            }
-
-            atlasClient = authN.createClient(baseUrls);
-
-        }
+    public NiFiAtlasClient(AtlasClientV2 atlasClient) {
+        this.atlasClient = atlasClient;
     }
 
     /**
