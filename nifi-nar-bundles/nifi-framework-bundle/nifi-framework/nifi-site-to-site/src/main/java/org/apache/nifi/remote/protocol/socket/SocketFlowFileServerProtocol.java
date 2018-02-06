@@ -26,6 +26,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.nifi.remote.Peer;
+import org.apache.nifi.remote.PeerDescription;
+import org.apache.nifi.remote.PeerDescriptionModifier;
 import org.apache.nifi.remote.RemoteResourceFactory;
 import org.apache.nifi.remote.StandardVersionNegotiator;
 import org.apache.nifi.remote.VersionNegotiator;
@@ -184,14 +186,18 @@ public class SocketFlowFileServerProtocol extends AbstractFlowFileServerProtocol
         }
 
         dos.writeInt(numPeers);
+        final PeerDescriptionModifier modifier = new PeerDescriptionModifier();
         for (final NodeInformation nodeInfo : nodeInfos) {
             if (nodeInfo.getSiteToSitePort() == null) {
                 continue;
             }
 
-            dos.writeUTF(nodeInfo.getSiteToSiteHostname());
-            dos.writeInt(nodeInfo.getSiteToSitePort());
-            dos.writeBoolean(nodeInfo.isSiteToSiteSecure());
+            final PeerDescription target = new PeerDescription(nodeInfo.getSiteToSiteHostname(), nodeInfo.getSiteToSitePort(), nodeInfo.isSiteToSiteSecure());
+            final PeerDescription modifiedTarget = modifier.modify(peer.getDescription(), target);
+
+            dos.writeUTF(modifiedTarget.getHostname());
+            dos.writeInt(modifiedTarget.getPort());
+            dos.writeBoolean(modifiedTarget.isSecure());
             dos.writeInt(nodeInfo.getTotalFlowFiles());
         }
 
