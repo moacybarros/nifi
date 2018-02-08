@@ -35,6 +35,7 @@ import org.apache.nifi.remote.PeerDescriptionModifier;
 import org.apache.nifi.remote.VersionNegotiator;
 import org.apache.nifi.remote.client.http.TransportProtocolVersionNegotiator;
 import org.apache.nifi.remote.exception.BadRequestException;
+import org.apache.nifi.remote.protocol.SiteToSiteTransportProtocol;
 import org.apache.nifi.remote.protocol.http.HttpHeaders;
 import org.apache.nifi.util.NiFiProperties;
 import org.apache.nifi.web.NiFiServiceFacade;
@@ -140,8 +141,10 @@ public class SiteToSiteResource extends ApplicationResource {
         final String siteToSiteHostname = getSiteToSiteHostname(req);
         final PeerDescription rawTarget = new PeerDescription(siteToSiteHostname, controller.getRemoteSiteListeningPort(), isSiteToSiteSecure);
         final PeerDescription httpTarget = new PeerDescription(siteToSiteHostname, controller.getRemoteSiteHttpListeningPort(), isSiteToSiteSecure);
-        final PeerDescription modifiedRawTarget = peerDescriptionModifier.modify(source, rawTarget);
-        final PeerDescription modifiedHttpTarget = peerDescriptionModifier.modify(source, httpTarget);
+        final PeerDescription modifiedRawTarget = peerDescriptionModifier.modify(source, rawTarget,
+                SiteToSiteTransportProtocol.RAW, PeerDescriptionModifier.RequestType.SiteToSiteDetail);
+        final PeerDescription modifiedHttpTarget = peerDescriptionModifier.modify(source, httpTarget,
+                SiteToSiteTransportProtocol.HTTP, PeerDescriptionModifier.RequestType.SiteToSiteDetail);
         controller.setRemoteSiteListeningPort(modifiedRawTarget.getPort());
         controller.setRemoteSiteHttpListeningPort(modifiedHttpTarget.getPort());
 
@@ -225,7 +228,8 @@ public class SiteToSiteResource extends ApplicationResource {
                     final String siteToSiteHostname = nodeId.getSiteToSiteAddress() == null ? nodeId.getApiAddress() : nodeId.getSiteToSiteAddress();
                     final int siteToSitePort = nodeId.getSiteToSiteHttpApiPort() == null ? nodeId.getApiPort() : nodeId.getSiteToSiteHttpApiPort();
                     final PeerDescription target = new PeerDescription(siteToSiteHostname, siteToSitePort, nodeId.isSiteToSiteSecure());
-                    final PeerDescription modifiedTarget = peerDescriptionModifier.modify(source, target);
+                    final PeerDescription modifiedTarget = peerDescriptionModifier.modify(source, target,
+                            SiteToSiteTransportProtocol.HTTP, PeerDescriptionModifier.RequestType.Peers);
 
                     final PeerDTO peer = new PeerDTO();
                     peer.setHostname(modifiedTarget.getHostname());
@@ -246,7 +250,8 @@ public class SiteToSiteResource extends ApplicationResource {
 
             final PeerDescription target = new PeerDescription(siteToSiteHostname,
                     properties.getRemoteInputHttpPort(), properties.isSiteToSiteSecure());
-            final PeerDescription modifiedTarget = peerDescriptionModifier.modify(source, target);
+            final PeerDescription modifiedTarget = peerDescriptionModifier.modify(source, target,
+                    SiteToSiteTransportProtocol.HTTP, PeerDescriptionModifier.RequestType.Peers);
 
             peer.setHostname(modifiedTarget.getHostname());
             peer.setPort(modifiedTarget.getPort());

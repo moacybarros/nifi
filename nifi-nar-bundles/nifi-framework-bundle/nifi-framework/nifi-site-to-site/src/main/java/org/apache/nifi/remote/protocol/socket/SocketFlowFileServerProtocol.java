@@ -41,6 +41,7 @@ import org.apache.nifi.remote.protocol.CommunicationsSession;
 import org.apache.nifi.remote.protocol.HandshakeProperties;
 import org.apache.nifi.remote.protocol.RequestType;
 import org.apache.nifi.remote.protocol.ResponseCode;
+import org.apache.nifi.remote.protocol.SiteToSiteTransportProtocol;
 
 public class SocketFlowFileServerProtocol extends AbstractFlowFileServerProtocol {
 
@@ -193,7 +194,8 @@ public class SocketFlowFileServerProtocol extends AbstractFlowFileServerProtocol
             }
 
             final PeerDescription target = new PeerDescription(nodeInfo.getSiteToSiteHostname(), nodeInfo.getSiteToSitePort(), nodeInfo.isSiteToSiteSecure());
-            final PeerDescription modifiedTarget = modifier.modify(peer.getDescription(), target);
+            final PeerDescription modifiedTarget = modifier.modify(peer.getDescription(), target,
+                    SiteToSiteTransportProtocol.RAW, PeerDescriptionModifier.RequestType.Peers);
 
             dos.writeUTF(modifiedTarget.getHostname());
             dos.writeInt(modifiedTarget.getPort());
