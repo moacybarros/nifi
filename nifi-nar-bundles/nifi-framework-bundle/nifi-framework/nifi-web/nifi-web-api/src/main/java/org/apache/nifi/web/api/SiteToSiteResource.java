@@ -135,7 +135,7 @@ public class SiteToSiteResource extends ApplicationResource {
         final ControllerDTO controller = serviceFacade.getSiteToSiteDetails();
 
         // Alter s2s port.
-        final PeerDescription source = new PeerDescription(req.getRemoteHost(), req.getRemotePort(), req.isSecure());
+        final PeerDescription source = getSourcePeerDescription(req);
         final Boolean isSiteToSiteSecure = controller.isSiteToSiteSecure();
         final String siteToSiteHostname = getSiteToSiteHostname(req);
         final PeerDescription rawTarget = new PeerDescription(siteToSiteHostname, controller.getRemoteSiteListeningPort(), isSiteToSiteSecure);
@@ -149,7 +149,7 @@ public class SiteToSiteResource extends ApplicationResource {
         final ControllerEntity entity = new ControllerEntity();
         entity.setController(controller);
 
-        if (isEmpty(req.getHeader(HttpHeaders.PROTOCOL_VERSION))) {
+        if (org.apache.commons.lang3.StringUtils.isEmpty(req.getHeader(HttpHeaders.PROTOCOL_VERSION))) {
             // This indicates the client uses older NiFi version,
             // which strictly read JSON properties and fail with unknown properties.
             // Convert result entity so that old version clients can understand.
@@ -159,6 +159,20 @@ public class SiteToSiteResource extends ApplicationResource {
 
         // generate the response
         return noCache(Response.ok(entity)).build();
+    }
+
+    private PeerDescription getSourcePeerDescription(@Context HttpServletRequest req) {
+        final PeerDescription source;
+        final String proxyHost = req.getHeader(PROXY_HOST_HTTP_HEADER);
+        final String proxyPort = req.getHeader(PROXY_PORT_HTTP_HEADER);
+        final String proxyScheme = req.getHeader(PROXY_SCHEME_HTTP_HEADER);
+        if (!isEmpty(proxyHost) && !isEmpty(proxyPort) && !isEmpty(proxyScheme)) {
+            // Use Proxy address as source if there are sufficient headers.
+            source = new PeerDescription(proxyHost, Integer.valueOf(proxyPort), proxyScheme.equalsIgnoreCase("https"));
+        } else {
+            source = new PeerDescription(req.getRemoteHost(), req.getRemotePort(), req.isSecure());
+        }
+        return source;
     }
 
     /**
@@ -201,7 +215,7 @@ public class SiteToSiteResource extends ApplicationResource {
         }
 
         final List<PeerDTO> peers = new ArrayList<>();
-        final PeerDescription source = new PeerDescription(req.getRemoteHost(), req.getRemotePort(), req.isSecure());
+        final PeerDescription source = getSourcePeerDescription(req);
         if (properties.isNode()) {
 
             try {
@@ -263,7 +277,7 @@ public class SiteToSiteResource extends ApplicationResource {
             localName = req.getLocalName();
         }
 
-        return isEmpty(remoteInputHost) ? localName : remoteInputHost;
+        return org.apache.commons.lang3.StringUtils.isEmpty(remoteInputHost) ? localName : remoteInputHost;
     }
 
     // setters
