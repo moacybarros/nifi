@@ -59,6 +59,8 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -83,10 +85,11 @@ public class SiteToSiteResource extends ApplicationResource {
     private final ResponseCreator responseCreator = new ResponseCreator();
     private final VersionNegotiator transportProtocolVersionNegotiator = new TransportProtocolVersionNegotiator(1);
     private final HttpRemoteSiteListener transactionManager;
-    private final PeerDescriptionModifier peerDescriptionModifier = new PeerDescriptionModifier();
+    private final PeerDescriptionModifier peerDescriptionModifier;
 
     public SiteToSiteResource(final NiFiProperties nifiProperties) {
         transactionManager = HttpRemoteSiteListener.getInstance(nifiProperties);
+        peerDescriptionModifier = new PeerDescriptionModifier(nifiProperties);
     }
 
     /**
@@ -136,23 +139,34 @@ public class SiteToSiteResource extends ApplicationResource {
         final ControllerDTO controller = serviceFacade.getSiteToSiteDetails();
 
         // Alter s2s port.
-        final PeerDescription source = getSourcePeerDescription(req);
-        final Boolean isSiteToSiteSecure = controller.isSiteToSiteSecure();
-        final String siteToSiteHostname = getSiteToSiteHostname(req);
-        final PeerDescription rawTarget = new PeerDescription(siteToSiteHostname, controller.getRemoteSiteListeningPort(), isSiteToSiteSecure);
-        final PeerDescription httpTarget = new PeerDescription(siteToSiteHostname, controller.getRemoteSiteHttpListeningPort(), isSiteToSiteSecure);
-        final PeerDescription modifiedRawTarget = peerDescriptionModifier.modify(source, rawTarget,
-                SiteToSiteTransportProtocol.RAW, PeerDescriptionModifier.RequestType.SiteToSiteDetail);
-        final PeerDescription modifiedHttpTarget = peerDescriptionModifier.modify(source, httpTarget,
-                SiteToSiteTransportProtocol.HTTP, PeerDescriptionModifier.RequestType.SiteToSiteDetail);
-        controller.setRemoteSiteListeningPort(modifiedRawTarget.getPort());
-        controller.setRemoteSiteHttpListeningPort(modifiedHttpTarget.getPort());
+        final boolean modificationNeededRaw = peerDescriptionModifier.isModificationNeeded(SiteToSiteTransportProtocol.RAW);
+        final boolean modificationNeededHttp = peerDescriptionModifier.isModificationNeeded(SiteToSiteTransportProtocol.HTTP);
+        if (modificationNeededRaw || modificationNeededHttp) {
+            final PeerDescription source = getSourcePeerDescription(req);
+            final Boolean isSiteToSiteSecure = controller.isSiteToSiteSecure();
+            final String siteToSiteHostname = getSiteToSiteHostname(req);
+            final Map<String, String> httpHeaders = getHttpHeaders(req);
+
+            if (modificationNeededRaw) {
+                final PeerDescription rawTarget = new PeerDescription(siteToSiteHostname, controller.getRemoteSiteListeningPort(), isSiteToSiteSecure);
+                final PeerDescription modifiedRawTarget = peerDescriptionModifier.modify(source, rawTarget,
+                        SiteToSiteTransportProtocol.RAW, PeerDescriptionModifier.RequestType.SiteToSiteDetail, new HashMap<>(httpHeaders));
+                controller.setRemoteSiteListeningPort(modifiedRawTarget.getPort());
+            }
+
+            if (modificationNeededHttp) {
+                final PeerDescription httpTarget = new PeerDescription(siteToSiteHostname, controller.getRemoteSiteHttpListeningPort(), isSiteToSiteSecure);
+                final PeerDescription modifiedHttpTarget = peerDescriptionModifier.modify(source, httpTarget,
+                        SiteToSiteTransportProtocol.HTTP, PeerDescriptionModifier.RequestType.SiteToSiteDetail, new HashMap<>(httpHeaders));
+                controller.setRemoteSiteHttpListeningPort(modifiedHttpTarget.getPort());
+            }
+        }
 
         // build the response entity
         final ControllerEntity entity = new ControllerEntity();
         entity.setController(controller);
 
-        if (org.apache.commons.lang3.StringUtils.isEmpty(req.getHeader(HttpHeaders.PROTOCOL_VERSION))) {
+        if (isEmpty(req.getHeader(HttpHeaders.PROTOCOL_VERSION))) {
             // This indicates the client uses older NiFi version,
             // which strictly read JSON properties and fail with unknown properties.
             // Convert result entity so that old version clients can understand.
@@ -165,17 +179,17 @@ public class SiteToSiteResource extends ApplicationResource {
     }
 
     private PeerDescription getSourcePeerDescription(@Context HttpServletRequest req) {
-        final PeerDescription source;
-        final String proxyHost = req.getHeader(PROXY_HOST_HTTP_HEADER);
-        final String proxyPort = req.getHeader(PROXY_PORT_HTTP_HEADER);
-        final String proxyScheme = req.getHeader(PROXY_SCHEME_HTTP_HEADER);
-        if (!isEmpty(proxyHost) && !isEmpty(proxyPort) && !isEmpty(proxyScheme)) {
-            // Use Proxy address as source if there are sufficient headers.
-            source = new PeerDescription(proxyHost, Integer.valueOf(proxyPort), proxyScheme.equalsIgnoreCase("https"));
-        } else {
-            source = new PeerDescription(req.getRemoteHost(), req.getRemotePort(), req.isSecure());
+        return new PeerDescription(req.getRemoteHost(), req.getRemotePort(), req.isSecure());
+    }
+
+    private Map<String, String> getHttpHeaders(@Context HttpServletRequest req) {
+        final Map<String, String> headers = new HashMap<>();
+        final Enumeration<String> headerNames = req.getHeaderNames();
+        while (headerNames.hasMoreElements()) {
+            final String name = headerNames.nextElement();
+            headers.put(name, req.getHeader(name));
         }
-        return source;
+        return headers;
     }
 
     /**
@@ -219,6 +233,7 @@ public class SiteToSiteResource extends ApplicationResource {
 
         final List<PeerDTO> peers = new ArrayList<>();
         final PeerDescription source = getSourcePeerDescription(req);
+        final Map<String, String> headers = getHttpHeaders(req);
         if (properties.isNode()) {
 
             try {
@@ -227,14 +242,17 @@ public class SiteToSiteResource extends ApplicationResource {
                     final NodeIdentifier nodeId = entry.getKey();
                     final String siteToSiteHostname = nodeId.getSiteToSiteAddress() == null ? nodeId.getApiAddress() : nodeId.getSiteToSiteAddress();
                     final int siteToSitePort = nodeId.getSiteToSiteHttpApiPort() == null ? nodeId.getApiPort() : nodeId.getSiteToSiteHttpApiPort();
-                    final PeerDescription target = new PeerDescription(siteToSiteHostname, siteToSitePort, nodeId.isSiteToSiteSecure());
-                    final PeerDescription modifiedTarget = peerDescriptionModifier.modify(source, target,
-                            SiteToSiteTransportProtocol.HTTP, PeerDescriptionModifier.RequestType.Peers);
+
+                    PeerDescription target = new PeerDescription(siteToSiteHostname, siteToSitePort, nodeId.isSiteToSiteSecure());
+                    if (peerDescriptionModifier.isModificationNeeded(SiteToSiteTransportProtocol.HTTP)) {
+                        target = peerDescriptionModifier.modify(source, target,
+                                SiteToSiteTransportProtocol.HTTP, PeerDescriptionModifier.RequestType.Peers, new HashMap<>(headers));
+                    }
 
                     final PeerDTO peer = new PeerDTO();
-                    peer.setHostname(modifiedTarget.getHostname());
-                    peer.setPort(modifiedTarget.getPort());
-                    peer.setSecure(modifiedTarget.isSecure());
+                    peer.setHostname(target.getHostname());
+                    peer.setPort(target.getPort());
+                    peer.setSecure(target.isSecure());
                     peer.setFlowFileCount(entry.getValue().getFlowFileCount());
                     peers.add(peer);
                 });
@@ -251,7 +269,7 @@ public class SiteToSiteResource extends ApplicationResource {
             final PeerDescription target = new PeerDescription(siteToSiteHostname,
                     properties.getRemoteInputHttpPort(), properties.isSiteToSiteSecure());
             final PeerDescription modifiedTarget = peerDescriptionModifier.modify(source, target,
-                    SiteToSiteTransportProtocol.HTTP, PeerDescriptionModifier.RequestType.Peers);
+                    SiteToSiteTransportProtocol.HTTP, PeerDescriptionModifier.RequestType.Peers, new HashMap<>(headers));
 
             peer.setHostname(modifiedTarget.getHostname());
             peer.setPort(modifiedTarget.getPort());
