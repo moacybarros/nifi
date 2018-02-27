@@ -159,6 +159,10 @@ public class SiteToSiteResource extends ApplicationResource {
                 final PeerDescription modifiedHttpTarget = peerDescriptionModifier.modify(source, httpTarget,
                         SiteToSiteTransportProtocol.HTTP, PeerDescriptionModifier.RequestType.SiteToSiteDetail, new HashMap<>(httpHeaders));
                 controller.setRemoteSiteHttpListeningPort(modifiedHttpTarget.getPort());
+                if (!controller.isSiteToSiteSecure() && modifiedHttpTarget.isSecure()) {
+                    // In order to enable TLS terminate at the reverse proxy server, even if NiFi itself is not secured, introduce the endpoint as secure.
+                    controller.setSiteToSiteSecure(true);
+                }
             }
         }
 
