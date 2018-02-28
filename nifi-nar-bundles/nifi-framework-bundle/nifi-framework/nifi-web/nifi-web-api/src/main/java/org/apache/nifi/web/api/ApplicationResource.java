@@ -1212,11 +1212,19 @@ public abstract class ApplicationResource {
                     .entity(entity).build();
         }
 
-        public Response locationResponse(UriInfo uriInfo, String portType, String portId, String transactionId, Object entity,
+        public Response locationResponse(HttpServletRequest req, UriInfo uriInfo, String portType, String portId, String transactionId, Object entity,
                                          Integer protocolVersion, final HttpRemoteSiteListener transactionManager) {
 
             String path = "/data-transfer/" + portType + "/" + portId + "/transactions/" + transactionId;
-            URI location = uriInfo.getBaseUriBuilder().path(path).build();
+            final UriBuilder baseUriBuilder = uriInfo.getBaseUriBuilder();
+            baseUriBuilder.path(path);
+            // With TLS terminate deployment, uriInfo may have 'http' while the location header should use 'https'.
+            final String forwardedProtocol = req.getHeader(FORWARDED_PROTO_HTTP_HEADER);
+            if (!StringUtils.isEmpty(forwardedProtocol)) {
+                baseUriBuilder.scheme(forwardedProtocol);
+            }
+
+            final URI location = baseUriBuilder.build();
             return noCache(setCommonHeaders(Response.created(location), protocolVersion, transactionManager)
                     .header(LOCATION_URI_INTENT_NAME, LOCATION_URI_INTENT_VALUE))
                     .entity(entity).build();

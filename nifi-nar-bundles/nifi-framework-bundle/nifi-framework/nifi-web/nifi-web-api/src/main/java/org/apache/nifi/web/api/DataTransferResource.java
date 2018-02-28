@@ -48,7 +48,6 @@ import org.apache.nifi.remote.protocol.HandshakeProperty;
 import org.apache.nifi.remote.protocol.ResponseCode;
 import org.apache.nifi.remote.protocol.http.HttpFlowFileServerProtocol;
 import org.apache.nifi.remote.protocol.http.StandardHttpFlowFileServerProtocol;
-import org.apache.nifi.stream.io.ByteArrayOutputStream;
 import org.apache.nifi.util.NiFiProperties;
 import org.apache.nifi.web.NiFiServiceFacade;
 import org.apache.nifi.web.api.entity.TransactionResultEntity;
@@ -74,6 +73,7 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.StreamingOutput;
 import javax.ws.rs.core.UriInfo;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -212,7 +212,7 @@ public class DataTransferResource extends ApplicationResource {
             entity.setResponseCode(ResponseCode.PROPERTIES_OK.getCode());
             entity.setMessage("Handshake properties are valid, and port is running. A transaction is created:" + transactionId);
 
-            return responseCreator.locationResponse(uriInfo, portType, portId, transactionId, entity, transportProtocolVersion, transactionManager);
+            return responseCreator.locationResponse(req, uriInfo, portType, portId, transactionId, entity, transportProtocolVersion, transactionManager);
 
         } catch (HandshakeException e) {
             transactionManager.cancelTransaction(transactionId);
