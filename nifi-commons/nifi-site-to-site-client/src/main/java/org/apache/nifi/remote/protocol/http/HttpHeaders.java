@@ -26,6 +26,23 @@ public class HttpHeaders {
     public static final String CONTENT_ENCODING = "Content-Encoding";
     public static final String PROTOCOL_VERSION = "x-nifi-site-to-site-protocol-version";
     public static final String SERVER_SIDE_TRANSACTION_TTL = "x-nifi-site-to-site-server-transaction-ttl";
+    /**
+     * <p>If this header is returned by the remote NiFi cluster, then it means that
+     * a reverse proxy resides in between, and it can route requests to specific node
+     * within a remote NiFi cluster using routing header.</p>
+     * <p>In such case, Site-to-Site client is encouraged to keep using the bootstrap URL for further communication,
+     * instead of sending request to each node directly.</p>
+     * @see HttpHeaders#TARGET_PEER
+     * @apiNote Since S2S HTTP Protocol Version 2.
+     */
+    public static final String ROUTE_BY_HEADER = "x-nifi-site-to-site-route-by-header";
+    /**
+     * <p>Site-to-Site clients can specify the target peer (address:port) with this header.</p>
+     * @see HttpHeaders#ROUTE_BY_HEADER
+     * @apiNote Since S2S HTTP Protocol Version 2.
+     */
+    public static final String TARGET_PEER = "x-nifi-site-to-site-target-peer";
+
     public static final String HANDSHAKE_PROPERTY_USE_COMPRESSION = "x-nifi-site-to-site-use-compression";
     public static final String HANDSHAKE_PROPERTY_REQUEST_EXPIRATION = "x-nifi-site-to-site-request-expiration";
     public static final String HANDSHAKE_PROPERTY_BATCH_COUNT = "x-nifi-site-to-site-batch-count";

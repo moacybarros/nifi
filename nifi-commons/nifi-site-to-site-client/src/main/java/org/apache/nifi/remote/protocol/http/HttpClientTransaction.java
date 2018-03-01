@@ -74,7 +74,7 @@ public class HttpClientTransaction extends AbstractTransaction {
                             ResponseCode.CONFIRM_TRANSACTION.writeResponse(dos, "");
                         } else {
                             TransactionResultEntity transactionResult
-                                    = apiClient.commitReceivingFlowFiles(transactionUrl, ResponseCode.CONFIRM_TRANSACTION, commSession.getChecksum());
+                                    = apiClient.commitReceivingFlowFiles(transactionUrl, ResponseCode.CONFIRM_TRANSACTION, commSession.getChecksum(), peer.getDescription());
                             ResponseCode responseCode = ResponseCode.fromCode(transactionResult.getResponseCode());
                             if(responseCode.containsMessage()){
                                 String message = transactionResult.getMessage();
@@ -94,7 +94,7 @@ public class HttpClientTransaction extends AbstractTransaction {
                     ResponseCode.CONFIRM_TRANSACTION.writeResponse(dos, commSession.getChecksum());
                     break;
                 case TRANSACTION_CONFIRMED:
-                    TransactionResultEntity resultEntity = apiClient.commitTransferFlowFiles(transactionUrl, ResponseCode.CONFIRM_TRANSACTION);
+                    TransactionResultEntity resultEntity = apiClient.commitTransferFlowFiles(transactionUrl, ResponseCode.CONFIRM_TRANSACTION, peer.getDescription());
                     ResponseCode responseCode = ResponseCode.fromCode(resultEntity.getResponseCode());
                     if(responseCode.containsMessage()){
                         responseCode.writeResponse(dos, resultEntity.getMessage());
@@ -122,7 +122,7 @@ public class HttpClientTransaction extends AbstractTransaction {
                     break;
                 case CANCEL_TRANSACTION:
                     logger.debug("{} Canceling transaction. explanation={}", this, explanation);
-                    TransactionResultEntity resultEntity = apiClient.commitReceivingFlowFiles(transactionUrl, ResponseCode.CANCEL_TRANSACTION, null);
+                    TransactionResultEntity resultEntity = apiClient.commitReceivingFlowFiles(transactionUrl, ResponseCode.CANCEL_TRANSACTION, null, peer.getDescription());
                     ResponseCode cancelResponse = ResponseCode.fromCode(resultEntity.getResponseCode());
                     switch (cancelResponse) {
                         case CANCEL_TRANSACTION:
@@ -141,7 +141,7 @@ public class HttpClientTransaction extends AbstractTransaction {
                     logger.debug("{} Finished sending flow files.", this);
                     break;
                 case BAD_CHECKSUM: {
-                        TransactionResultEntity resultEntity = apiClient.commitTransferFlowFiles(transactionUrl, ResponseCode.BAD_CHECKSUM);
+                        TransactionResultEntity resultEntity = apiClient.commitTransferFlowFiles(transactionUrl, ResponseCode.BAD_CHECKSUM, peer.getDescription());
                         ResponseCode badChecksumCancelResponse = ResponseCode.fromCode(resultEntity.getResponseCode());
                         switch (badChecksumCancelResponse) {
                             case CANCEL_TRANSACTION:
@@ -160,7 +160,7 @@ public class HttpClientTransaction extends AbstractTransaction {
                     break;
                 case CANCEL_TRANSACTION: {
                         logger.debug("{} Canceling transaction.", this);
-                        TransactionResultEntity resultEntity = apiClient.commitTransferFlowFiles(transactionUrl, ResponseCode.CANCEL_TRANSACTION);
+                        TransactionResultEntity resultEntity = apiClient.commitTransferFlowFiles(transactionUrl, ResponseCode.CANCEL_TRANSACTION, peer.getDescription());
                         ResponseCode cancelResponse = ResponseCode.fromCode(resultEntity.getResponseCode());
                         switch (cancelResponse) {
                             case CANCEL_TRANSACTION:

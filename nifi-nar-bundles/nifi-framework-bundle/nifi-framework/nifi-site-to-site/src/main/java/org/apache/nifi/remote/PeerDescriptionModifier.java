@@ -39,6 +39,12 @@ public class PeerDescriptionModifier {
         Peers
     }
 
+    public static class RoutingPeerDescription extends PeerDescription {
+        private RoutingPeerDescription(String hostname, int port, boolean secure) {
+            super(hostname, port, secure);
+        }
+    }
+
     private static class Route {
         private String name;
         private SiteToSiteTransportProtocol protocol;
@@ -46,34 +52,29 @@ public class PeerDescriptionModifier {
         private PreparedQuery hostname;
         private PreparedQuery port;
         private PreparedQuery secure;
+        private PreparedQuery routeByHeader;
 
-        private boolean isValid() {
-            if (hostname == null) {
-                logger.warn("Ignore invalid route definition {} because 'hostname' is not specified.", name);return false;
-            }
-            if (port == null) {
-                logger.warn("Ignore invalid route definition {} because 'port' is not specified.", name);
-                return false;
-            }
-            return true;
+        private String safeEval(final PreparedQuery query, final Map<String, String> variables) {
+            return query == null ? null : query.evaluateExpressions(variables, null);
         }
 
-        private PeerDescription getTarget(final Map<String, String> variables) {
-            final String targetHostName = hostname.evaluateExpressions(variables, null);
+        private PeerDescription getTarget(final PeerDescription originalTarget, final Map<String, String> variables) {
+
+            final boolean isRoutingHeaderSupported = Boolean.valueOf(safeEval(routeByHeader, variables));
+
+            String targetHostName = safeEval(hostname, variables);
             if (isBlank(targetHostName)) {
-                throw new IllegalStateException("Target hostname was not resolved for the route definition " + name);
+                targetHostName = originalTarget.getHostname();
             }
 
-            final String targetPortStr = port.evaluateExpressions(variables, null);
-            if (isBlank(targetPortStr)) {
-                throw new IllegalStateException("Target port was not resolved for the route definition " + name);
-            }
+            final String targetPortStr = safeEval(port, variables);
+            final Integer targetPort = !isBlank(targetPortStr) ? Integer.valueOf(targetPortStr) : originalTarget.getPort();
 
-            String targetIsSecure = secure.evaluateExpressions(variables, null);
-            if (isBlank(targetIsSecure)) {
-                targetIsSecure = "false";
-            }
-            return new PeerDescription(targetHostName, Integer.valueOf(targetPortStr), Boolean.valueOf(targetIsSecure));
+            final String targetIsSecureStr = safeEval(secure, variables);
+            final boolean targetIsSecure = !isBlank(targetIsSecureStr) ? Boolean.valueOf(targetIsSecureStr) : originalTarget.isSecure();
+
+            return isRoutingHeaderSupported ? new RoutingPeerDescription(targetHostName, targetPort, targetIsSecure)
+                    : new PeerDescription(targetHostName, targetPort, targetIsSecure);
         }
     }
 
@@ -108,10 +109,12 @@ public class PeerDescriptionModifier {
                     case "secure":
                         route.secure = Query.prepare(value);
                         break;
+                    case "header":
+                        route.routeByHeader = Query.prepare(value);
                 }
             });
             return route;
-        }).filter(Route::isValid).collect(Collectors.groupingBy(r -> r.protocol));
+        }).collect(Collectors.groupingBy(r -> r.protocol));
 
     }
 
@@ -147,86 +150,14 @@ public class PeerDescriptionModifier {
         logger.debug("Modifying PeerDescription, variables={}", variables);
 
         return routes.get(protocol).stream().filter(r -> r.predicate == null
-                || Boolean.valueOf(r.predicate.evaluateExpressions(variables, null))).map(r -> r.getTarget(variables))
+                || Boolean.valueOf(r.predicate.evaluateExpressions(variables, null)))
+                .map(r -> {
+                    final PeerDescription t = r.getTarget(target, variables);
+                    logger.debug("Route definition {} matched, {}", r.name, t);
+                    return t;
+                })
                 // If a matched route was found, use it, else use the original target.
                 .findFirst().orElse(target);
 
-    }
-
-    public PeerDescription modifyOld(final PeerDescription source, final PeerDescription target,
-                                  final SiteToSiteTransportProtocol protocol, final RequestType requestType) {
-        // TODO: Make it configurable. Configuration should be similar to the user identifier mapping at nifi.properties.
-        if ("nginx.example.com".equals(source.getHostname()) || "192.168.99.100".equals(source.getHostname())) {
-            final int modifiedTargetPort;
-            switch (protocol) {
-                case RAW:
-                    modifiedTargetPort = target.getPort();
-                    break;
-                case HTTP:
-                    switch (target.getPort()) {
-                        // Cluster Plain NiFi 0 HTTP
-                        case 18080:
-                            modifiedTargetPort = 18070;
-                            break;
-                        // Cluster Plain NiFi 1 HTTP
-                        case 18090:
-                            modifiedTargetPort = 18071;
-                            break;
-                        // Cluster Secure NiFi 0 HTTP
-                        case 18443:
-                            switch (requestType) {
-                                case SiteToSiteDetail:
-                                    // Back to the source Proxy port (18460 or 18461)
-                                    modifiedTargetPort = source.getPort();
-                                    break;
-                                case Peers:
-                                    switch (source.getPort()) {
-                                        case 18460: // For cluster-secure-http
-                                            modifiedTargetPort = 18470;
-                                            break;
-                                        case 18461: // For cluster-secure-http-binary
-                                            modifiedTargetPort = 18475;
-                                            break;
-                                        default:
-                                            throw new RuntimeException("Unknown source port " + source.getPort());
-                                    }
-                                    break;
-                                default:
-                                    throw new RuntimeException("Unknown requestType" + source.getPort());
-                            }
-                            break;
-                        // Cluster Secure NiFi 1 HTTP
-                        case 18444:
-                            switch (requestType) {
-                                case SiteToSiteDetail:
-                                    // Back to the source Proxy port (18460 or 18461)
-                                    modifiedTargetPort = source.getPort();
-                                    break;
-                                case Peers:
-                                    switch (source.getPort()) {
-                                        case 18460: // For cluster-secure-http
-                                            modifiedTargetPort = 18471;
-                                            break;
-                                        case 18461: // For cluster-secure-http-binary
-                                            modifiedTargetPort = 18476;
-                                            break;
-                                        default:
-                                            throw new RuntimeException("Unknown source port " + source.getPort());
-                                    }
-                                    break;
-                                default:
-                                    throw new RuntimeException("Unknown requestType" + requestType);
-                            }
-                            break;
-                        default:
-                            modifiedTargetPort = target.getPort();
-                    }
-                    break;
-                default:
-                    throw new RuntimeException("Unknown protocol" + protocol);
-            }
-            return new PeerDescription("nginx.example.com", modifiedTargetPort, target.isSecure());
-        }
-        return target;
     }
 }

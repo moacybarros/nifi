@@ -16,7 +16,6 @@
  */
 package org.apache.nifi.remote.client.http;
 
-import org.apache.commons.lang3.StringUtils;
 import org.apache.nifi.remote.Peer;
 import org.apache.nifi.remote.PeerDescription;
 import org.apache.nifi.remote.PeerStatus;
@@ -34,13 +33,11 @@ import org.apache.nifi.remote.io.http.HttpCommunicationsSession;
 import org.apache.nifi.remote.protocol.CommunicationsSession;
 import org.apache.nifi.remote.protocol.http.HttpClientTransaction;
 import org.apache.nifi.remote.util.SiteToSiteRestApiClient;
-import org.apache.nifi.web.api.dto.remote.PeerDTO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.URI;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
@@ -50,6 +47,8 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import static org.apache.commons.lang3.StringUtils.isEmpty;
+
 public class HttpClient extends AbstractSiteToSiteClient implements PeerStatusProvider {
 
     private static final Logger logger = LoggerFactory.getLogger(HttpClient.class);
@@ -57,6 +56,7 @@ public class HttpClient extends AbstractSiteToSiteClient implements PeerStatusPr
     private final ScheduledExecutorService taskExecutor;
     private final PeerSelector peerSelector;
     private final Set<HttpClientTransaction> activeTransactions = Collections.synchronizedSet(new HashSet<>());
+    private volatile boolean routingHeaderSupported;
 
     public HttpClient(final SiteToSiteClientConfig config) {
         super(config);
@@ -109,14 +109,16 @@ public class HttpClient extends AbstractSiteToSiteClient implements PeerStatusPr
             apiClient.setCacheExpirationMillis(config.getCacheExpiration(TimeUnit.MILLISECONDS));
             apiClient.setLocalAddress(config.getLocalAddress());
 
-            final Collection<PeerDTO> peers = apiClient.getPeers();
-            if(peers == null || peers.size() == 0){
+            final SiteToSiteRestApiClient.Peers peers = apiClient.getPeers();
+            if(peers == null || peers.getPeers() == null || peers.getPeers().isEmpty()){
                 throw new IOException("Couldn't get any peer to communicate with. " + apiClient.getBaseUrl() + " returned zero peers.");
             }
 
+            routingHeaderSupported = peers.isRoutingHeaderSupported();
+
             // Convert the PeerDTO's to PeerStatus objects. Use 'true' for the query-peer-for-peers flag because Site-to-Site over HTTP
             // was added in NiFi 1.0.0, which means that peer-to-peer queries are always allowed.
-            return peers.stream().map(p -> new PeerStatus(new PeerDescription(p.getHostname(), p.getPort(), p.isSecure()), p.getFlowFileCount(), true))
+            return peers.getPeers().stream().map(p -> new PeerStatus(new PeerDescription(p.getHostname(), p.getPort(), p.isSecure()), p.getFlowFileCount(), true))
                     .collect(Collectors.toSet());
         }
     }
@@ -130,7 +132,10 @@ public class HttpClient extends AbstractSiteToSiteClient implements PeerStatusPr
             logger.debug("peerStatus={}", peerStatus);
 
             final CommunicationsSession commSession = new HttpCommunicationsSession();
-            final String nodeApiUrl = resolveNodeApiUrl(peerStatus.getPeerDescription());
+            // If there is a reverse proxy in the middle, then use the bootstrap peer description,
+            // which should contain the reverse proxy address.
+            final String nodeApiUrl = resolveNodeApiUrl(routingHeaderSupported
+                    ? getBootstrapPeerDescription() : peerStatus.getPeerDescription());
             final StringBuilder clusterUrls = new StringBuilder();
             config.getUrls().forEach(url -> {
                 if (clusterUrls.length() > 0) {
@@ -142,9 +147,9 @@ public class HttpClient extends AbstractSiteToSiteClient implements PeerStatusPr
 
             final int penaltyMillis = (int) config.getPenalizationPeriod(TimeUnit.MILLISECONDS);
             String portId = config.getPortIdentifier();
-            if (StringUtils.isEmpty(portId)) {
+            if (isEmpty(portId)) {
                 portId = siteInfoProvider.getPortIdentifier(config.getPortName(), direction);
-                if (StringUtils.isEmpty(portId)) {
+                if (isEmpty(portId)) {
                     peer.close();
                     throw new IOException("Failed to determine the identifier of port " + config.getPortName());
                 }
@@ -166,7 +171,7 @@ public class HttpClient extends AbstractSiteToSiteClient implements PeerStatusPr
 
             final String transactionUrl;
             try {
-                transactionUrl = apiClient.initiateTransaction(direction, portId);
+                transactionUrl = apiClient.initiateTransaction(direction, portId, peer.getDescription());
                 commSession.setUserDn(apiClient.getTrustedPeerDn());
             } catch (final Exception e) {
                 apiClient.close();

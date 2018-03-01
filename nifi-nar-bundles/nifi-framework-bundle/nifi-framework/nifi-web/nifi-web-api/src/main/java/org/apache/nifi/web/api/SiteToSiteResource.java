@@ -63,6 +63,7 @@ import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.apache.commons.lang3.StringUtils.isEmpty;
 
@@ -83,7 +84,7 @@ public class SiteToSiteResource extends ApplicationResource {
     private Authorizer authorizer;
 
     private final ResponseCreator responseCreator = new ResponseCreator();
-    private final VersionNegotiator transportProtocolVersionNegotiator = new TransportProtocolVersionNegotiator(1);
+    private final VersionNegotiator transportProtocolVersionNegotiator = new TransportProtocolVersionNegotiator(2, 1);
     private final HttpRemoteSiteListener transactionManager;
     private final PeerDescriptionModifier peerDescriptionModifier;
 
@@ -237,27 +238,33 @@ public class SiteToSiteResource extends ApplicationResource {
 
         final List<PeerDTO> peers = new ArrayList<>();
         final PeerDescription source = getSourcePeerDescription(req);
-        final Map<String, String> headers = getHttpHeaders(req);
+        final boolean modificationNeeded = peerDescriptionModifier.isModificationNeeded(SiteToSiteTransportProtocol.HTTP);
+        final AtomicBoolean supportRoutingByHeader = new AtomicBoolean(false);
+        final Map<String, String> headers = modificationNeeded ? getHttpHeaders(req) : null;
         if (properties.isNode()) {
 
             try {
                 final Map<NodeIdentifier, NodeWorkload> clusterWorkload = clusterCoordinator.getClusterWorkload();
-                clusterWorkload.entrySet().stream().forEach(entry -> {
-                    final NodeIdentifier nodeId = entry.getKey();
+                clusterWorkload.forEach((nodeId, workload) -> {
                     final String siteToSiteHostname = nodeId.getSiteToSiteAddress() == null ? nodeId.getApiAddress() : nodeId.getSiteToSiteAddress();
                     final int siteToSitePort = nodeId.getSiteToSiteHttpApiPort() == null ? nodeId.getApiPort() : nodeId.getSiteToSiteHttpApiPort();
 
                     PeerDescription target = new PeerDescription(siteToSiteHostname, siteToSitePort, nodeId.isSiteToSiteSecure());
-                    if (peerDescriptionModifier.isModificationNeeded(SiteToSiteTransportProtocol.HTTP)) {
+
+                    if (modificationNeeded) {
                         target = peerDescriptionModifier.modify(source, target,
                                 SiteToSiteTransportProtocol.HTTP, PeerDescriptionModifier.RequestType.Peers, new HashMap<>(headers));
+
+                        if (!supportRoutingByHeader.get() && target instanceof PeerDescriptionModifier.RoutingPeerDescription) {
+                            supportRoutingByHeader.set(true);
+                        }
                     }
 
                     final PeerDTO peer = new PeerDTO();
                     peer.setHostname(target.getHostname());
                     peer.setPort(target.getPort());
                     peer.setSecure(target.isSecure());
-                    peer.setFlowFileCount(entry.getValue().getFlowFileCount());
+                    peer.setFlowFileCount(workload.getFlowFileCount());
                     peers.add(peer);
                 });
             } catch (IOException e) {
@@ -270,14 +277,21 @@ public class SiteToSiteResource extends ApplicationResource {
             final String siteToSiteHostname = getSiteToSiteHostname(req);
 
 
-            final PeerDescription target = new PeerDescription(siteToSiteHostname,
+            PeerDescription target = new PeerDescription(siteToSiteHostname,
                     properties.getRemoteInputHttpPort(), properties.isSiteToSiteSecure());
-            final PeerDescription modifiedTarget = peerDescriptionModifier.modify(source, target,
-                    SiteToSiteTransportProtocol.HTTP, PeerDescriptionModifier.RequestType.Peers, new HashMap<>(headers));
 
-            peer.setHostname(modifiedTarget.getHostname());
-            peer.setPort(modifiedTarget.getPort());
-            peer.setSecure(modifiedTarget.isSecure());
+            if (modificationNeeded) {
+                target = peerDescriptionModifier.modify(source, target,
+                        SiteToSiteTransportProtocol.HTTP, PeerDescriptionModifier.RequestType.Peers, new HashMap<>(headers));
+
+                if (!supportRoutingByHeader.get() && target instanceof PeerDescriptionModifier.RoutingPeerDescription) {
+                    supportRoutingByHeader.set(true);
+                }
+            }
+
+            peer.setHostname(target.getHostname());
+            peer.setPort(target.getPort());
+            peer.setSecure(target.isSecure());
             peer.setFlowFileCount(0);  // doesn't matter how many FlowFiles we have, because we're the only host.
 
             peers.add(peer);
@@ -286,7 +300,11 @@ public class SiteToSiteResource extends ApplicationResource {
         final PeersEntity entity = new PeersEntity();
         entity.setPeers(peers);
 
-        return noCache(setCommonHeaders(Response.ok(entity), transportProtocolVersion, transactionManager)).build();
+        final Response.ResponseBuilder response = Response.ok(entity);
+        if (supportRoutingByHeader.get()) {
+            response.header(HttpHeaders.ROUTE_BY_HEADER, "true");
+        }
+        return noCache(setCommonHeaders(response, transportProtocolVersion, transactionManager)).build();
     }
 
     private String getSiteToSiteHostname(final HttpServletRequest req) {
