@@ -39,12 +39,6 @@ public class PeerDescriptionModifier {
         Peers
     }
 
-    public static class RoutingPeerDescription extends PeerDescription {
-        private RoutingPeerDescription(String hostname, int port, boolean secure) {
-            super(hostname, port, secure);
-        }
-    }
-
     private static class Route {
         private String name;
         private SiteToSiteTransportProtocol protocol;
@@ -52,29 +46,34 @@ public class PeerDescriptionModifier {
         private PreparedQuery hostname;
         private PreparedQuery port;
         private PreparedQuery secure;
-        private PreparedQuery routeByHeader;
 
-        private String safeEval(final PreparedQuery query, final Map<String, String> variables) {
-            return query == null ? null : query.evaluateExpressions(variables, null);
+        private boolean isValid() {
+            if (hostname == null) {
+                logger.warn("Ignore invalid route definition {} because 'hostname' is not specified.", name);return false;
+            }
+            if (port == null) {
+                logger.warn("Ignore invalid route definition {} because 'port' is not specified.", name);
+                return false;
+            }
+            return true;
         }
 
-        private PeerDescription getTarget(final PeerDescription originalTarget, final Map<String, String> variables) {
-
-            final boolean isRoutingHeaderSupported = Boolean.valueOf(safeEval(routeByHeader, variables));
-
-            String targetHostName = safeEval(hostname, variables);
+        private PeerDescription getTarget(final Map<String, String> variables) {
+            final String targetHostName = hostname.evaluateExpressions(variables, null);
             if (isBlank(targetHostName)) {
-                targetHostName = originalTarget.getHostname();
+                throw new IllegalStateException("Target hostname was not resolved for the route definition " + name);
             }
 
-            final String targetPortStr = safeEval(port, variables);
-            final Integer targetPort = !isBlank(targetPortStr) ? Integer.valueOf(targetPortStr) : originalTarget.getPort();
+            final String targetPortStr = port.evaluateExpressions(variables, null);
+            if (isBlank(targetPortStr)) {
+                throw new IllegalStateException("Target port was not resolved for the route definition " + name);
+            }
 
-            final String targetIsSecureStr = safeEval(secure, variables);
-            final boolean targetIsSecure = !isBlank(targetIsSecureStr) ? Boolean.valueOf(targetIsSecureStr) : originalTarget.isSecure();
-
-            return isRoutingHeaderSupported ? new RoutingPeerDescription(targetHostName, targetPort, targetIsSecure)
-                    : new PeerDescription(targetHostName, targetPort, targetIsSecure);
+            String targetIsSecure = secure.evaluateExpressions(variables, null);
+            if (isBlank(targetIsSecure)) {
+                targetIsSecure = "false";
+            }
+            return new PeerDescription(targetHostName, Integer.valueOf(targetPortStr), Boolean.valueOf(targetIsSecure));
         }
     }
 
@@ -109,12 +108,10 @@ public class PeerDescriptionModifier {
                     case "secure":
                         route.secure = Query.prepare(value);
                         break;
-                    case "header":
-                        route.routeByHeader = Query.prepare(value);
                 }
             });
             return route;
-        }).collect(Collectors.groupingBy(r -> r.protocol));
+        }).filter(Route::isValid).collect(Collectors.groupingBy(r -> r.protocol));
 
     }
 
@@ -152,7 +149,7 @@ public class PeerDescriptionModifier {
         return routes.get(protocol).stream().filter(r -> r.predicate == null
                 || Boolean.valueOf(r.predicate.evaluateExpressions(variables, null)))
                 .map(r -> {
-                    final PeerDescription t = r.getTarget(target, variables);
+                    final PeerDescription t = r.getTarget(variables);
                     logger.debug("Route definition {} matched, {}", r.name, t);
                     return t;
                 })

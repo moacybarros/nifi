@@ -63,7 +63,6 @@ import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.apache.commons.lang3.StringUtils.isEmpty;
 
@@ -84,7 +83,7 @@ public class SiteToSiteResource extends ApplicationResource {
     private Authorizer authorizer;
 
     private final ResponseCreator responseCreator = new ResponseCreator();
-    private final VersionNegotiator transportProtocolVersionNegotiator = new TransportProtocolVersionNegotiator(2, 1);
+    private final VersionNegotiator transportProtocolVersionNegotiator = new TransportProtocolVersionNegotiator(1);
     private final HttpRemoteSiteListener transactionManager;
     private final PeerDescriptionModifier peerDescriptionModifier;
 
@@ -239,7 +238,6 @@ public class SiteToSiteResource extends ApplicationResource {
         final List<PeerDTO> peers = new ArrayList<>();
         final PeerDescription source = getSourcePeerDescription(req);
         final boolean modificationNeeded = peerDescriptionModifier.isModificationNeeded(SiteToSiteTransportProtocol.HTTP);
-        final AtomicBoolean supportRoutingByHeader = new AtomicBoolean(false);
         final Map<String, String> headers = modificationNeeded ? getHttpHeaders(req) : null;
         if (properties.isNode()) {
 
@@ -254,10 +252,6 @@ public class SiteToSiteResource extends ApplicationResource {
                     if (modificationNeeded) {
                         target = peerDescriptionModifier.modify(source, target,
                                 SiteToSiteTransportProtocol.HTTP, PeerDescriptionModifier.RequestType.Peers, new HashMap<>(headers));
-
-                        if (!supportRoutingByHeader.get() && target instanceof PeerDescriptionModifier.RoutingPeerDescription) {
-                            supportRoutingByHeader.set(true);
-                        }
                     }
 
                     final PeerDTO peer = new PeerDTO();
@@ -283,10 +277,6 @@ public class SiteToSiteResource extends ApplicationResource {
             if (modificationNeeded) {
                 target = peerDescriptionModifier.modify(source, target,
                         SiteToSiteTransportProtocol.HTTP, PeerDescriptionModifier.RequestType.Peers, new HashMap<>(headers));
-
-                if (!supportRoutingByHeader.get() && target instanceof PeerDescriptionModifier.RoutingPeerDescription) {
-                    supportRoutingByHeader.set(true);
-                }
             }
 
             peer.setHostname(target.getHostname());
@@ -300,11 +290,7 @@ public class SiteToSiteResource extends ApplicationResource {
         final PeersEntity entity = new PeersEntity();
         entity.setPeers(peers);
 
-        final Response.ResponseBuilder response = Response.ok(entity);
-        if (supportRoutingByHeader.get()) {
-            response.header(HttpHeaders.ROUTE_BY_HEADER, "true");
-        }
-        return noCache(setCommonHeaders(response, transportProtocolVersion, transactionManager)).build();
+        return noCache(setCommonHeaders(Response.ok(entity), transportProtocolVersion, transactionManager)).build();
     }
 
     private String getSiteToSiteHostname(final HttpServletRequest req) {

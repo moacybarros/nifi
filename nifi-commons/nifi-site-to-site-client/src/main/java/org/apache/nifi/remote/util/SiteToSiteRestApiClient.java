@@ -51,7 +51,6 @@ import org.apache.http.impl.client.HttpClients;
 import org.apache.http.impl.nio.client.CloseableHttpAsyncClient;
 import org.apache.http.impl.nio.client.HttpAsyncClientBuilder;
 import org.apache.http.impl.nio.client.HttpAsyncClients;
-import org.apache.http.message.AbstractHttpMessage;
 import org.apache.http.nio.ContentEncoder;
 import org.apache.http.nio.IOControl;
 import org.apache.http.nio.conn.ManagedNHttpClientConnection;
@@ -62,7 +61,6 @@ import org.apache.http.protocol.HttpCoreContext;
 import org.apache.http.util.EntityUtils;
 import org.apache.nifi.events.EventReporter;
 import org.apache.nifi.remote.Peer;
-import org.apache.nifi.remote.PeerDescription;
 import org.apache.nifi.remote.TransferDirection;
 import org.apache.nifi.remote.client.http.TransportProtocolVersionNegotiator;
 import org.apache.nifi.remote.exception.HandshakeException;
@@ -140,7 +138,6 @@ import static org.apache.nifi.remote.protocol.http.HttpHeaders.HANDSHAKE_PROPERT
 import static org.apache.nifi.remote.protocol.http.HttpHeaders.LOCATION_HEADER_NAME;
 import static org.apache.nifi.remote.protocol.http.HttpHeaders.LOCATION_URI_INTENT_NAME;
 import static org.apache.nifi.remote.protocol.http.HttpHeaders.LOCATION_URI_INTENT_VALUE;
-import static org.apache.nifi.remote.protocol.http.HttpHeaders.TARGET_PEER;
 
 public class SiteToSiteRestApiClient implements Closeable {
 
@@ -174,7 +171,7 @@ public class SiteToSiteRestApiClient implements Closeable {
     private int batchCount = 0;
     private long batchSize = 0;
     private long batchDurationMillis = 0;
-    private TransportProtocolVersionNegotiator transportProtocolVersionNegotiator = new TransportProtocolVersionNegotiator(2, 1);
+    private TransportProtocolVersionNegotiator transportProtocolVersionNegotiator = new TransportProtocolVersionNegotiator(1);
 
     private String trustedPeerDn;
     private final ScheduledExecutorService ttlExtendTaskExecutor;
@@ -419,12 +416,12 @@ public class SiteToSiteRestApiClient implements Closeable {
     private ControllerDTO fetchController() throws IOException {
         try {
             final HttpGet get = createGetControllerRequest();
-            return execute(get, ControllerEntity.class, null).getController();
+            return execute(get, ControllerEntity.class).getController();
         } catch (final HttpGetFailedException e) {
             if (RESPONSE_CODE_NOT_FOUND == e.getResponseCode()) {
                 logger.debug("getController received NOT_FOUND, trying to access the old NiFi version resource url...");
                 final HttpGet get = createGet("/controller");
-                return execute(get, ControllerEntity.class, null).getController();
+                return execute(get, ControllerEntity.class).getController();
             }
             throw e;
         }
@@ -450,60 +447,13 @@ public class SiteToSiteRestApiClient implements Closeable {
         return get;
     }
 
-    public static class Peers {
-        private boolean routingHeaderSupported;
-        private Collection<PeerDTO> peers;
-
-        public Collection<PeerDTO> getPeers() {
-            return peers;
-        }
-
-        public void setPeers(Collection<PeerDTO> peers) {
-            this.peers = peers;
-        }
-
-        public boolean isRoutingHeaderSupported() {
-            return routingHeaderSupported;
-        }
-
-        public void setRoutingHeaderSupported(boolean routingHeaderSupported) {
-            this.routingHeaderSupported = routingHeaderSupported;
-        }
-    }
-
-    public Peers getPeers() throws IOException {
+    public Collection<PeerDTO> getPeers() throws IOException {
         final HttpGet get = createGet("/site-to-site/peers");
         get.setHeader(HttpHeaders.PROTOCOL_VERSION, String.valueOf(transportProtocolVersionNegotiator.getVersion()));
-        final Peers peers = new Peers();
-        final Collection<PeerDTO> peerDtos = execute(get, PeersEntity.class, headers -> {
-            boolean isVersionConfirmed = false;
-            String routeByHeader = null;
-            for (Header header : headers) {
-                switch (header.getName()) {
-                    case HttpHeaders.PROTOCOL_VERSION:
-                        confirmProtocolVersion(header);
-                        isVersionConfirmed = true;
-                        break;
-                    case HttpHeaders.ROUTE_BY_HEADER:
-                        routeByHeader = header.getValue();
-                        break;
-                }
-            }
-            if (!isEmpty(routeByHeader) && Boolean.valueOf(routeByHeader)
-                    && isVersionConfirmed && transportProtocolVersionNegotiator.getVersion() > 1) {
-                // Use returned routing header only if protocol version is confirmed with the remote peer.
-                peers.setRoutingHeaderSupported(true);
-            }
-        }).getPeers();
-        peers.setPeers(peerDtos);
-        return peers;
+        return execute(get, PeersEntity.class).getPeers();
     }
 
-    private void setTargetPeer(final AbstractHttpMessage message, final PeerDescription target) {
-        message.setHeader(TARGET_PEER, target.getHostname() + ":" + target.getPort());
-    }
-
-    public String initiateTransaction(final TransferDirection direction, final String portId, final PeerDescription target) throws IOException {
+    public String initiateTransaction(final TransferDirection direction, final String portId) throws IOException {
 
         final String portType = TransferDirection.RECEIVE.equals(direction) ? "output-ports" : "input-ports";
         logger.debug("initiateTransaction handshaking portType={}, portId={}", portType, portId);
@@ -512,7 +462,6 @@ public class SiteToSiteRestApiClient implements Closeable {
 
         post.setHeader("Accept", "application/json");
         post.setHeader(HttpHeaders.PROTOCOL_VERSION, String.valueOf(transportProtocolVersionNegotiator.getVersion()));
-        setTargetPeer(post, target);
 
         setHandshakeProperties(post);
 
@@ -535,8 +484,13 @@ public class SiteToSiteRestApiClient implements Closeable {
                 if (isEmpty(transactionUrl)) {
                     throw new ProtocolException("Server returned RESPONSE_CODE_CREATED without Location header");
                 }
-
-                confirmProtocolVersion(response.getFirstHeader(HttpHeaders.PROTOCOL_VERSION));
+                final Header transportProtocolVersionHeader = response.getFirstHeader(HttpHeaders.PROTOCOL_VERSION);
+                if (transportProtocolVersionHeader == null) {
+                    throw new ProtocolException("Server didn't return confirmed protocol version");
+                }
+                final Integer protocolVersionConfirmedByServer = Integer.valueOf(transportProtocolVersionHeader.getValue());
+                logger.debug("Finished version negotiation, protocolVersionConfirmedByServer={}", protocolVersionConfirmedByServer);
+                transportProtocolVersionNegotiator.setVersion(protocolVersionConfirmedByServer);
 
                 final Header serverTransactionTtlHeader = response.getFirstHeader(HttpHeaders.SERVER_SIDE_TRANSACTION_TTL);
                 if (serverTransactionTtlHeader == null) {
@@ -554,15 +508,6 @@ public class SiteToSiteRestApiClient implements Closeable {
         logger.debug("initiateTransaction handshaking finished, transactionUrl={}", transactionUrl);
         return transactionUrl;
 
-    }
-
-    private void confirmProtocolVersion(Header transportProtocolVersionHeader) throws ProtocolException {
-        if (transportProtocolVersionHeader == null) {
-            throw new ProtocolException("Server didn't return confirmed protocol version");
-        }
-        final Integer protocolVersionConfirmedByServer = Integer.valueOf(transportProtocolVersionHeader.getValue());
-        logger.debug("Finished version negotiation, protocolVersionConfirmedByServer={}", protocolVersionConfirmedByServer);
-        transportProtocolVersionNegotiator.setVersion(protocolVersionConfirmedByServer);
     }
 
     /**
@@ -749,8 +694,6 @@ public class SiteToSiteRestApiClient implements Closeable {
         ((HttpCommunicationsSession)peer.getCommunicationsSession()).setDataTransferUrl(get.getURI().toString());
 
         get.setHeader(HttpHeaders.PROTOCOL_VERSION, String.valueOf(transportProtocolVersionNegotiator.getVersion()));
-        final PeerDescription peerDescription = peer.getDescription();
-        setTargetPeer(get, peerDescription);
 
         setHandshakeProperties(get);
 
@@ -789,7 +732,7 @@ public class SiteToSiteRestApiClient implements Closeable {
                     };
                     ((HttpInput) peer.getCommunicationsSession().getInput()).setInputStream(streamCapture);
 
-                    startExtendingTtl(transactionUrl, peerDescription);
+                    startExtendingTtl(transactionUrl, httpIn, response);
                     keepItOpen = true;
                     return true;
 
@@ -817,8 +760,6 @@ public class SiteToSiteRestApiClient implements Closeable {
         post.setHeader("Content-Type", "application/octet-stream");
         post.setHeader("Accept", "text/plain");
         post.setHeader(HttpHeaders.PROTOCOL_VERSION, String.valueOf(transportProtocolVersionNegotiator.getVersion()));
-        final PeerDescription peerDescription = peer.getDescription();
-        setTargetPeer(post, peerDescription);
 
         setHandshakeProperties(post);
 
@@ -972,7 +913,7 @@ public class SiteToSiteRestApiClient implements Closeable {
 
             // Started.
             transferDataLatch = new CountDownLatch(1);
-            startExtendingTtl(transactionUrl, peerDescription);
+            startExtendingTtl(transactionUrl, dataPacketChannel, null);
 
         } catch (final InterruptedException e) {
             throw new IOException("Awaiting initConnectionLatch has been interrupted.", e);
@@ -1028,7 +969,7 @@ public class SiteToSiteRestApiClient implements Closeable {
         }
     }
 
-    private void startExtendingTtl(final String transactionUrl, final PeerDescription target) {
+    private void startExtendingTtl(final String transactionUrl, final Closeable stream, final CloseableHttpResponse response) {
         if (ttlExtendingFuture != null) {
             // Already started.
             return;
@@ -1046,7 +987,7 @@ public class SiteToSiteRestApiClient implements Closeable {
 
         ttlExtendingFuture = ttlExtendTaskExecutor.scheduleWithFixedDelay(() -> {
             try {
-                extendingApiClient.extendTransaction(transactionUrl, target);
+                extendingApiClient.extendTransaction(transactionUrl);
             } catch (final Exception e) {
                 logger.warn("Failed to extend transaction ttl", e);
 
@@ -1074,14 +1015,13 @@ public class SiteToSiteRestApiClient implements Closeable {
         }
     }
 
-    private TransactionResultEntity extendTransaction(final String transactionUrl, final PeerDescription target) throws IOException {
+    public TransactionResultEntity extendTransaction(final String transactionUrl) throws IOException {
         logger.debug("Sending extendTransaction request to transactionUrl: {}", transactionUrl);
 
         final HttpPut put = createPut(transactionUrl);
 
         put.setHeader("Accept", "application/json");
         put.setHeader(HttpHeaders.PROTOCOL_VERSION, String.valueOf(transportProtocolVersionNegotiator.getVersion()));
-        setTargetPeer(put, target);
 
         setHandshakeProperties(put);
 
@@ -1245,7 +1185,7 @@ public class SiteToSiteRestApiClient implements Closeable {
         return delete;
     }
 
-    private String execute(final HttpGet get, final ResponseHeaderConsumer headerConsumer) throws IOException {
+    private String execute(final HttpGet get) throws IOException {
         final CloseableHttpClient httpClient = getHttpClient();
 
         if (logger.isTraceEnabled()) {
@@ -1262,11 +1202,6 @@ public class SiteToSiteRestApiClient implements Closeable {
             if (RESPONSE_CODE_OK != statusCode) {
                 throw new HttpGetFailedException(statusCode, statusLine.getReasonPhrase(), null);
             }
-
-            if (headerConsumer != null) {
-                headerConsumer.consume(response.getAllHeaders());
-            }
-
             final HttpEntity entity = response.getEntity();
             final String responseMessage = EntityUtils.toString(entity);
             return responseMessage;
@@ -1296,13 +1231,10 @@ public class SiteToSiteRestApiClient implements Closeable {
         }
     }
 
-    @FunctionalInterface
-    private interface ResponseHeaderConsumer {
-        void consume(Header[] headers) throws IOException;
-    }
-    public <T> T execute(final HttpGet get, final Class<T> entityClass, final ResponseHeaderConsumer headerConsumer) throws IOException {
+
+    private <T> T execute(final HttpGet get, final Class<T> entityClass) throws IOException {
         get.setHeader("Accept", "application/json");
-        final String responseMessage = execute(get, headerConsumer);
+        final String responseMessage = execute(get);
 
         final ObjectMapper mapper = new ObjectMapper();
         mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
@@ -1516,7 +1448,7 @@ public class SiteToSiteRestApiClient implements Closeable {
         return this.trustedPeerDn;
     }
 
-    public TransactionResultEntity commitReceivingFlowFiles(final String transactionUrl, final ResponseCode clientResponse, final String checksum, final PeerDescription target) throws IOException {
+    public TransactionResultEntity commitReceivingFlowFiles(final String transactionUrl, final ResponseCode clientResponse, final String checksum) throws IOException {
         logger.debug("Sending commitReceivingFlowFiles request to transactionUrl: {}, clientResponse={}, checksum={}",
             transactionUrl, clientResponse, checksum);
 
@@ -1530,7 +1462,7 @@ public class SiteToSiteRestApiClient implements Closeable {
         final HttpDelete delete = createDelete(urlBuilder.toString());
         delete.setHeader("Accept", "application/json");
         delete.setHeader(HttpHeaders.PROTOCOL_VERSION, String.valueOf(transportProtocolVersionNegotiator.getVersion()));
-        setTargetPeer(delete, target);
+
         setHandshakeProperties(delete);
 
         try (CloseableHttpResponse response = getHttpClient().execute(delete)) {
@@ -1553,14 +1485,13 @@ public class SiteToSiteRestApiClient implements Closeable {
 
     }
 
-    public TransactionResultEntity commitTransferFlowFiles(final String transactionUrl, final ResponseCode clientResponse, final PeerDescription target) throws IOException {
+    public TransactionResultEntity commitTransferFlowFiles(final String transactionUrl, final ResponseCode clientResponse) throws IOException {
         final String requestUrl = transactionUrl + "?responseCode=" + clientResponse.getCode();
         logger.debug("Sending commitTransferFlowFiles request to transactionUrl: {}", requestUrl);
 
         final HttpDelete delete = createDelete(requestUrl);
         delete.setHeader("Accept", "application/json");
         delete.setHeader(HttpHeaders.PROTOCOL_VERSION, String.valueOf(transportProtocolVersionNegotiator.getVersion()));
-        setTargetPeer(delete, target);
 
         setHandshakeProperties(delete);
 
