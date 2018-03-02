@@ -69,7 +69,7 @@ public class PeerDescriptionModifier {
                 throw new IllegalStateException("Target port was not resolved for the route definition " + name);
             }
 
-            String targetIsSecure = secure.evaluateExpressions(variables, null);
+            String targetIsSecure = secure == null ? null : secure.evaluateExpressions(variables, null);
             if (isBlank(targetIsSecure)) {
                 targetIsSecure = "false";
             }
