@@ -1217,7 +1217,7 @@ public abstract class ApplicationResource {
                     .entity(entity).build();
         }
 
-        public Response locationResponse(HttpServletRequest req, UriInfo uriInfo, String portType, String portId, String transactionId, Object entity,
+        public Response locationResponse(UriInfo uriInfo, String portType, String portId, String transactionId, Object entity,
                                          Integer protocolVersion, final HttpRemoteSiteListener transactionManager) {
 
             final URI transactionUri = buildResourceUri("data-transfer", portType, portId, "transactions", transactionId);

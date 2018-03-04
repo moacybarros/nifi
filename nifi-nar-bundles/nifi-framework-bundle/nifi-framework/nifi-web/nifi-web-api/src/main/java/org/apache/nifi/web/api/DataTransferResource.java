@@ -212,7 +212,7 @@ public class DataTransferResource extends ApplicationResource {
             entity.setResponseCode(ResponseCode.PROPERTIES_OK.getCode());
             entity.setMessage("Handshake properties are valid, and port is running. A transaction is created:" + transactionId);
 
-            return responseCreator.locationResponse(req, uriInfo, portType, portId, transactionId, entity, transportProtocolVersion, transactionManager);
+            return responseCreator.locationResponse(uriInfo, portType, portId, transactionId, entity, transportProtocolVersion, transactionManager);
 
         } catch (HandshakeException e) {
             transactionManager.cancelTransaction(transactionId);

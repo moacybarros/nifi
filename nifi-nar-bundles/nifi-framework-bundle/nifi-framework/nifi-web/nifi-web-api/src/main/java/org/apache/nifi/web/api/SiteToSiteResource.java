@@ -308,7 +308,7 @@ public class SiteToSiteResource extends ApplicationResource {
             localName = req.getLocalName();
         }
 
-        return org.apache.commons.lang3.StringUtils.isEmpty(remoteInputHost) ? localName : remoteInputHost;
+        return isEmpty(remoteInputHost) ? localName : remoteInputHost;
     }
 
     // setters
