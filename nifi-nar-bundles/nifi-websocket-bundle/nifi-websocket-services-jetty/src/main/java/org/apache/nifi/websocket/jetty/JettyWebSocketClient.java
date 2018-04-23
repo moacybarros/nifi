@@ -31,6 +31,7 @@ import org.apache.nifi.ssl.SSLContextService;
 import org.apache.nifi.websocket.WebSocketClientService;
 import org.apache.nifi.websocket.WebSocketConfigurationException;
 import org.apache.nifi.websocket.WebSocketMessageRouter;
+import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.websocket.api.Session;
 import org.eclipse.jetty.websocket.client.ClientUpgradeRequest;
@@ -201,6 +202,7 @@ public class JettyWebSocketClient extends AbstractJettyWebSocketService implemen
             listener.setSessionId(sessionId);
 
             final ClientUpgradeRequest request = new ClientUpgradeRequest();
+            request.setHeader(HttpHeader.AUTHORIZATION.asString(), "Basic dGVzdDpwYXNzd29yZA==");
             final Future<Session> connect = client.connect(listener, webSocketUri, request);
             getLogger().info("Connecting to : {}", new Object[]{webSocketUri});
 

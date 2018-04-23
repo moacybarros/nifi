@@ -36,6 +36,12 @@ import org.apache.nifi.ssl.SSLContextService;
 import org.apache.nifi.websocket.WebSocketConfigurationException;
 import org.apache.nifi.websocket.WebSocketMessageRouter;
 import org.apache.nifi.websocket.WebSocketServerService;
+import org.eclipse.jetty.security.ConstraintMapping;
+import org.eclipse.jetty.security.ConstraintSecurityHandler;
+import org.eclipse.jetty.security.DefaultAuthenticatorFactory;
+import org.eclipse.jetty.security.HashLoginService;
+import org.eclipse.jetty.security.LoginService;
+import org.eclipse.jetty.security.SecurityHandler;
 import org.eclipse.jetty.server.Connector;
 import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.HttpConfiguration;
@@ -47,6 +53,7 @@ import org.eclipse.jetty.server.SslConnectionFactory;
 import org.eclipse.jetty.server.handler.ContextHandlerCollection;
 import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHandler;
+import org.eclipse.jetty.util.security.Constraint;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.websocket.api.Session;
 import org.eclipse.jetty.websocket.api.WebSocketPolicy;
@@ -174,12 +181,41 @@ public class JettyWebSocketServer extends AbstractJettyWebSocketService implemen
         final ContextHandlerCollection handlerCollection = new ContextHandlerCollection();
 
         final ServletContextHandler contextHandler = new ServletContextHandler();
+
+        // TODO: Add basic auth.
+        // TODO: Make it configurable from Service properties? Which authentication method should we support?
+        // TODO: Existing CLIENT_AUTH property overlaps with Client Cert Auth if we add that.
+        final ConstraintSecurityHandler securityHandler = new ConstraintSecurityHandler();
+        contextHandler.insertHandler(securityHandler);
+
+        final Constraint constraint = new Constraint();
+        constraint.setName("auth");
+        constraint.setAuthenticate(true);
+        // Accessible from any role and any auth
+        constraint.setRoles(new String[]{"**"});
+
+        final ConstraintMapping constraintMapping = new ConstraintMapping();
+        constraintMapping.setPathSpec("/*");
+        constraintMapping.setConstraint(constraint);
+
+        final DefaultAuthenticatorFactory authenticatorFactory = new DefaultAuthenticatorFactory();
+        securityHandler.setAuthenticatorFactory(authenticatorFactory);
+        securityHandler.setAuthMethod(Constraint.__BASIC_AUTH);
+        securityHandler.setRealmName("Basic test");
+        securityHandler.setConstraintMappings(Collections.singletonList(constraintMapping));
+
+        final String usersFilePath = getClass().getResource("/users.properties").getPath();
+        final LoginService loginService = new HashLoginService("HashLoginService", usersFilePath);
+        server.addBean(loginService);
+        securityHandler.setLoginService(loginService);
+
         servletHandler = new ServletHandler();
         contextHandler.insertHandler(servletHandler);
 
         handlerCollection.setHandlers(new Handler[]{contextHandler});
 
         server.setHandler(handlerCollection);
+
 
         listenPort = context.getProperty(LISTEN_PORT).evaluateAttributeExpressions().asInteger();
         final SslContextFactory sslContextFactory = createSslFactory(context);
